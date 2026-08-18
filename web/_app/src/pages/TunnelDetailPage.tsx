@@ -458,7 +458,7 @@ function TunnelAudit({ interfaceName }: { interfaceName: string }) {
   if (auditQuery.error) return <ErrorState error={auditQuery.error} onRetry={() => void auditQuery.refetch()} />
 
   const entries = auditQuery.data?.entries ?? []
-  if (!entries.length) return <EmptyState title={t('audit.empty')} />
+  if (!entries.length) return <EmptyState illustration="empty-log" title={t('audit.empty')} />
 
   return (
     <Card className="overflow-hidden">

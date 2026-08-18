@@ -5,6 +5,7 @@ import { ApiError, NetworkError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { Button } from './button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './disclosure'
+import { Illustration, type IllustrationName } from './illustration'
 import { TechnicalBlock } from './technical'
 
 export function Badge({
@@ -47,12 +48,20 @@ export function SkeletonText({ lines = 3, className }: { lines?: number; classNa
 
 export function EmptyState({
   icon,
+  illustration,
   title,
   body,
   action,
   className,
 }: {
   icon?: React.ReactNode
+  /**
+   * A drawing for the states an operator actually lands on and has to act
+   * from -- an account with no tunnels yet, a filter that matched nothing.
+   * The small inline panels keep the hatched disc: an illustration in every
+   * empty list would stop meaning "look here" and start meaning nothing.
+   */
+  illustration?: IllustrationName
   title: string
   body?: string
   action?: React.ReactNode
@@ -60,10 +69,14 @@ export function EmptyState({
 }) {
   return (
     <div className={cn('flex flex-col items-center justify-center gap-3 px-6 py-12 text-center', className)}>
-      {/* Emptiness is drawn, not just greyed: the disc wears the drafting hatch. */}
-      <div className="hatch rounded-full border border-border/60 p-3.5 text-muted-foreground">
-        {icon ?? <Inbox className="size-5" aria-hidden="true" />}
-      </div>
+      {illustration ? (
+        <Illustration name={illustration} className="mb-1" />
+      ) : (
+        /* Emptiness is drawn, not just greyed: the disc wears the drafting hatch. */
+        <div className="hatch rounded-full border border-border/60 p-3.5 text-muted-foreground">
+          {icon ?? <Inbox className="size-5" aria-hidden="true" />}
+        </div>
+      )}
       <div className="space-y-1">
         <p className="text-sm font-medium">{title}</p>
         {body ? <p className="mx-auto max-w-md text-xs text-muted-foreground">{body}</p> : null}

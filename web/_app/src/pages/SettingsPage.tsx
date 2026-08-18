@@ -279,7 +279,7 @@ export default function SettingsPage() {
         !grouped.size ? (
           <Card>
             <CardContent>
-              <EmptyState title={t('settings.noMatch', { query: search })} />
+              <EmptyState illustration="empty-search" title={t('settings.noMatch', { query: search })} />
             </CardContent>
           </Card>
         ) : (

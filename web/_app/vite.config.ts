@@ -20,6 +20,14 @@ export default defineConfig({
     // `go build ./...`.
     outDir: '../dist',
     emptyOutDir: true,
+    // Never inline an asset as a base64 data URI. Vite would do that below 4kB
+    // by default, which costs a third more bytes than the file it replaces --
+    // and those bytes land in the entry chunk every session pays for, to spare
+    // a request that only the one page needing the asset would have made. The
+    // bundle ships inside the Go binary, so that trade is the wrong way round
+    // here. It also kept one empty-state illustration inlined while its dark
+    // twin stayed a file, purely because they landed either side of the limit.
+    assetsInlineLimit: 0,
     // The bundle ships inside the Go binary, so size is deployment weight.
     // Charts and the QR encoder are split out because most sessions never
     // open a view that needs them.

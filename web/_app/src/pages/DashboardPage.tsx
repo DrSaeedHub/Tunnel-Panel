@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowUpCircle, Network, Plus, RefreshCw } from 'lucide-react'
+import { ArrowUpCircle, Plus, RefreshCw } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -137,7 +137,7 @@ function NoTunnelsInvite({ monitor, tunnels }: { monitor: MonitorContext; tunnel
     <Card>
       <CardContent>
         <EmptyState
-          icon={<Network className="size-5" aria-hidden="true" />}
+          illustration="empty-tunnels"
           title={t('dashboard.tunnels.emptyTitle')}
           body={t('dashboard.tunnels.emptyBody')}
           action={

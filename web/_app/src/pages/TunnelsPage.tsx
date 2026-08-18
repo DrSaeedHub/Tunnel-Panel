@@ -7,7 +7,6 @@ import {
   Download,
   Loader2,
   MoreHorizontal,
-  Network,
   Plus,
   RefreshCw,
   Search,
@@ -239,7 +238,7 @@ export default function TunnelsPage() {
         <Card>
           <CardContent>
             <EmptyState
-              icon={<Network className="size-5" aria-hidden="true" />}
+              illustration="empty-tunnels"
               title={t('tunnels.emptyTitle')}
               body={t('tunnels.emptyBody')}
               action={
@@ -261,6 +260,7 @@ export default function TunnelsPage() {
         <Card>
           <CardContent>
             <EmptyState
+              illustration="empty-search"
               title={t('tunnels.noMatchTitle')}
               body={t('tunnels.noMatchBody')}
               action={

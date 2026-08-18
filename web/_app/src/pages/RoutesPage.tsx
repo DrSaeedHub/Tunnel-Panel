@@ -14,7 +14,6 @@ import {
   Search,
   Shuffle,
   Trash2,
-  Waypoints,
 } from 'lucide-react'
 
 import { api } from '@/lib/api'
@@ -330,7 +329,7 @@ export default function RoutesPage() {
         <Card>
           <CardContent>
             <EmptyState
-              icon={<Waypoints className="size-5" aria-hidden="true" />}
+              illustration="empty-routes"
               title={t('routes.emptyTitle')}
               body={t('routes.emptyBody')}
               action={
@@ -346,6 +345,7 @@ export default function RoutesPage() {
         <Card>
           <CardContent>
             <EmptyState
+              illustration="empty-search"
               title={t('routes.noMatchTitle')}
               body={t('routes.noMatchBody')}
               action={

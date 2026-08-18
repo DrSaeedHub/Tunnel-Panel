@@ -342,7 +342,7 @@ export default function RouteDetailPage() {
               ) : auditQuery.error ? (
                 <ErrorState error={auditQuery.error} onRetry={() => void auditQuery.refetch()} compact />
               ) : !auditQuery.data?.entries.length ? (
-                <EmptyState title={t('routeDetail.audit.empty')} />
+                <EmptyState illustration="empty-log" title={t('routeDetail.audit.empty')} />
               ) : (
                 <ul className="divide-y divide-border text-xs">
                   {auditQuery.data.entries

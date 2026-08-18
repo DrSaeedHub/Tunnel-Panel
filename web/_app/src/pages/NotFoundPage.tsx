@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Compass } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/feedback'
@@ -13,7 +12,7 @@ export default function NotFoundPage() {
   useDocumentTitle(t('errors.notFound'))
   return (
     <EmptyState
-      icon={<Compass className="size-5" aria-hidden="true" />}
+      illustration="not-found"
       title={t('errors.notFound')}
       action={
         <Button asChild variant="secondary">

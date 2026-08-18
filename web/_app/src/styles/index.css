@@ -264,6 +264,25 @@
     );
   }
 
+  /*
+   * The empty-state drawings.
+   *
+   * Two sources, one box: the component hands in both variants as custom
+   * properties and the ground the panel is standing on picks which one paints.
+   * Only the named variant is ever fetched, which is why this is a background
+   * rather than a pair of <img> tags with one of them hidden.
+   */
+  .illustration {
+    background-image: var(--art-light);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+  }
+
+  [data-theme='dark'] .illustration {
+    background-image: var(--art-dark);
+  }
+
   .skeleton {
     position: relative;
     overflow: hidden;

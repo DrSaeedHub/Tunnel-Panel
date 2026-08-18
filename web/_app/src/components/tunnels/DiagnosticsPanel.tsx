@@ -664,7 +664,7 @@ export function DiagnosticRuns({ tunnelId }: { tunnelId: number }) {
   if (runsQuery.error) return <ErrorState error={runsQuery.error} onRetry={() => void runsQuery.refetch()} compact />
 
   const runs = runsQuery.data?.runs ?? []
-  if (!runs.length) return <EmptyState title={t('diagnostics.runs.empty')} />
+  if (!runs.length) return <EmptyState illustration="empty-log" title={t('diagnostics.runs.empty')} />
 
   return (
     <ul className="divide-y divide-border rounded-md border border-border">
