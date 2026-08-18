@@ -170,7 +170,7 @@ func TestResetPasswordAppliesThePanelsOwnPolicy(t *testing.T) {
 	a, dbPath := testApp(t)
 	seedPanelDatabase(t, dbPath, "operator", "correct horse battery staple")
 
-	for _, bad := range []string{"short", "password123", "operator", "123456789012"} {
+	for _, bad := range []string{"", "password123", "changeme1234", "123456789012"} {
 		if _, err := a.resetPassword(ctx, "operator", bad); err == nil {
 			t.Errorf("the password %q was accepted; the panel itself refuses it", bad)
 		}

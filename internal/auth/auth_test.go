@@ -110,21 +110,20 @@ func TestVerifyRejectsMalformedHashes(t *testing.T) {
 }
 
 func TestValidatePassword(t *testing.T) {
-	// Eight is the enforced floor; twelve is advice the interface gives and
+	// One is the enforced floor; twelve is advice the interface gives and
 	// nothing rejects. A rule that refuses a password somebody has already
 	// chosen mostly teaches them to append two digits to it.
-	if MinPasswordLength != 8 {
-		t.Fatalf("MinPasswordLength = %d, want the enforced floor of 8", MinPasswordLength)
+	if MinPasswordLength != 1 {
+		t.Fatalf("MinPasswordLength = %d, want the enforced floor of 1", MinPasswordLength)
 	}
 	if RecommendedPasswordLength != 12 {
 		t.Fatalf("RecommendedPasswordLength = %d, want 12", RecommendedPasswordLength)
 	}
-	// Between the floor and the recommendation is explicitly allowed.
+	// Anything at or above the floor is explicitly allowed.
 	if err := ValidatePassword("aB3xY7zQ", "operator"); err != nil {
 		t.Errorf("an 8-character password was refused: %v; 12 is a recommendation, not a rule", err)
 	}
-
-	tooShort := "aB3xY7" // 6 characters, under the floor
+	tooShort := "" // 0 characters, under the floor
 	if err := ValidatePassword(tooShort, "operator"); !errors.Is(err, ErrPasswordTooShort) {
 		t.Errorf("ValidatePassword(%q) = %v, want ErrPasswordTooShort", tooShort, err)
 	}
@@ -147,7 +146,13 @@ func TestValidatePassword(t *testing.T) {
 	}
 
 	if err := ValidatePassword("administrator", "administrator"); !errors.Is(err, ErrPasswordWeak) {
-		t.Error("a password identical to the username was accepted")
+		t.Error("a password on the weak list was accepted")
+	}
+	// A password identical to the username is allowed, as long as it clears
+	// the other checks: the panel no longer treats username reuse as weak on
+	// its own.
+	if err := ValidatePassword("a", "a"); err != nil {
+		t.Errorf("username equal to password was refused: %v", err)
 	}
 
 	good := []string{
@@ -310,8 +315,8 @@ func TestSetupCreatesTheFirstUserOnlyOnce(t *testing.T) {
 
 func TestSetupEnforcesThePasswordPolicy(t *testing.T) {
 	ctx, _, _, service := newTestService(t)
-	if _, err := service.Setup(ctx, "operator", "short"); !errors.Is(err, ErrPasswordTooShort) {
-		t.Errorf("Setup with a short password = %v, want ErrPasswordTooShort", err)
+	if _, err := service.Setup(ctx, "operator", ""); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("Setup with an empty password = %v, want ErrPasswordTooShort", err)
 	}
 	// A short username is allowed now: its length protects nothing. What is
 	// still refused is a shape that would not survive a URL or a log line.
@@ -492,8 +497,8 @@ func TestChangePasswordRequiresTheCurrentPassword(t *testing.T) {
 	if _, err := service.ChangePassword(ctx, user.UserID, "not the password", "a new long passphrase"); !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("ChangePassword with a wrong current password = %v, want ErrInvalidCredentials", err)
 	}
-	if _, err := service.ChangePassword(ctx, user.UserID, testPassword, "short"); !errors.Is(err, ErrPasswordTooShort) {
-		t.Errorf("ChangePassword to a short password = %v, want ErrPasswordTooShort", err)
+	if _, err := service.ChangePassword(ctx, user.UserID, testPassword, ""); !errors.Is(err, ErrPasswordTooShort) {
+		t.Errorf("ChangePassword to an empty password = %v, want ErrPasswordTooShort", err)
 	}
 }
 

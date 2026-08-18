@@ -14,7 +14,7 @@ import { useDocumentTitle } from '@/hooks/useDocumentTitle'
  * The hard floor the backend enforces. Below it the form will not submit,
  * because the request would only come back rejected.
  */
-const MIN_PASSWORD_LENGTH = 8
+const MIN_PASSWORD_LENGTH = 1
 
 /**
  * Advice, not a rule. A longer password is better and the hint says so, but

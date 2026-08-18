@@ -14,7 +14,7 @@ import { Field, Input } from '../ui/form'
 import { Badge, describeError } from '../ui/feedback'
 import { Technical } from '../ui/technical'
 
-const MIN_PASSWORD_LENGTH = 12
+const MIN_PASSWORD_LENGTH = 1
 
 export function AccountSection() {
   const { t } = useTranslation()

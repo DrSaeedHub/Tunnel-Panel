@@ -46,7 +46,7 @@ readonly CLI_ENV_PATH="$SUPPORT_DIR/cli.env"
 # The backend refuses anything shorter, so the installer refuses it too rather
 # than creating an account the panel will reject. Twelve is advice, said once
 # where the password is chosen and never enforced.
-readonly MIN_PASSWORD_LENGTH=8
+readonly MIN_PASSWORD_LENGTH=1
 readonly RECOMMENDED_PASSWORD_LENGTH=12
 # The marker the panel writes into every file it generates. It is what tells a
 # file the panel owns from one adopted from a previous setup, and it is the only

@@ -14,20 +14,13 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// MinPasswordLength is the hard floor: short enough to stay out of an
-// operator's way, long enough that the account is not trivially guessable.
-//
-// It was 12, which is a good password and a bad requirement. A rule that
-// refuses what somebody has already chosen mostly teaches them to append "12"
-// to it, and the panel is not the right place to argue about it. Twelve is now
-// RecommendedPasswordLength — said once, where the password is chosen, and
-// never enforced.
-//
-// It is not zero, because an account reachable over the internet with a
-// two-character password is a different kind of problem from an inconvenient
-// one, and eight is the common floor a reader will recognise rather than a
-// number argued from first principles here.
-const MinPasswordLength = 8
+// MinPasswordLength is the hard floor. It used to be 8, then 12 before that —
+// both are good passwords and a bad requirement. A rule that refuses what
+// somebody has already chosen mostly teaches them to append "12" to it, and
+// the panel is not the right place to argue about it. RecommendedPasswordLength
+// says the recommendation once, where the password is chosen, and enforces
+// nothing.
+const MinPasswordLength = 1
 
 // RecommendedPasswordLength is advice, not a rule. Nothing rejects a password
 // for being shorter than this.
@@ -95,9 +88,6 @@ func ValidatePassword(password, username string) error {
 	if _, bad := weakPasswords[lower]; bad {
 		return ErrPasswordWeak
 	}
-	if username != "" && lower == strings.ToLower(username) {
-		return fmt.Errorf("%w: it is the same as the username", ErrPasswordWeak)
-	}
 	if isSingleRepeatedRune(password) {
 		return fmt.Errorf("%w: it is one character repeated", ErrPasswordWeak)
 	}
@@ -110,10 +100,14 @@ func ValidatePassword(password, username string) error {
 	return nil
 }
 
+// isSingleRepeatedRune reports whether a password of two or more characters
+// is the same character over and over ("aaaaaaaa"). A single character is
+// short, not repeated, so it is not flagged here — MinPasswordLength is what
+// decides whether it is long enough.
 func isSingleRepeatedRune(s string) bool {
 	runes := []rune(s)
 	if len(runes) < 2 {
-		return true
+		return false
 	}
 	for _, r := range runes[1:] {
 		if r != runes[0] {
