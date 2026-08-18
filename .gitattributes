@@ -1,0 +1,25 @@
+# Line endings are part of this repository's contract, not a local preference.
+#
+# The panel's tests compare rendered output byte for byte against golden files,
+# and the renderers emit LF because that is what the kernel, systemd and nft
+# read. A checkout that converts those goldens to CRLF cannot pass its own test
+# suite: every golden comparison fails with a diff whose two halves look
+# identical, which is a genuinely hard failure to read. The same conversion
+# turns scripts/install.sh into a file whose shebang line ends in \r, and bash
+# answers that with "set: pipefail: invalid option name".
+#
+# Windows sets core.autocrlf=true by default, so without this file the
+# repository is not safely checkout-able there at all. Attributes beat the
+# core.autocrlf setting, so this fixes it for every clone regardless of what the
+# machine's git is configured to do.
+* text=auto eol=lf
+
+# Binaries, so nothing tries to translate them.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.gz binary
+*.tar binary
+*.zip binary

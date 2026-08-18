@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+#
+# Reject a commit message that names an AI assistant.
+#
+# The rule is the project's, and it kept being broken for a reason worth writing
+# down: it lived only in a brief. A tool with its own commit convention will
+# reapply that convention every time the instruction against it drops out of
+# view, and three commits carried a Co-Authored-By trailer before anyone
+# noticed. An instruction that has to be remembered is not a control; this is.
+#
+# Installed to .git/hooks/commit-msg, which is not tracked by git, so this
+# tracked copy is the source and scripts/install-hooks.sh puts it in place. A
+# test asserts the two are identical.
+set -euo pipefail
+
+message_file="$1"
+[[ -f "$message_file" ]] || exit 0
+
+# Comment lines are git's own scaffolding and are stripped before the message is
+# stored, so matching them would reject a commit for text that never lands.
+body="$(grep -v '^#' "$message_file" || true)"
+
+# CLAUDE.md is a file in this repository, and a commit that adds or changes it
+# has to be able to say so. Removing the filename before matching is the
+# difference between a rule and an obstacle — the first version of this hook
+# rejected the very commit that introduced it.
+body="$(printf '%s' "$body" | sed -E 's/[Cc][Ll][Aa][Uu][Dd][Ee]\.md//g')"
+
+# What is actually being prevented is an assistant appearing as an author or a
+# co-author, not the word being written down. So the attribution forms are
+# matched at the start of a line, and the names are matched anywhere: there is
+# no innocent reason for a commit message to name one, once the filename above
+# is accounted for.
+patterns=(
+  'claude'
+  'anthropic'
+  'copilot'
+  'chatgpt'
+  'openai'
+  # "Generated with ..." as a trailer, which is how it actually appears: at the
+  # start of its own line, sometimes behind an emoji. Anchoring it this way lets
+  # a sentence use the words — the first version matched anywhere and rejected a
+  # message that merely described the rule.
+  '^[[:space:]]*[^[:alnum:]]*generated with'
+  'ai assistant'
+  'ai-assistant'
+  'written by an ai'
+)
+# Deliberately not here: a blanket ban on Co-Authored-By. A human co-author is
+# legitimate, and the trailer this exists to stop always carries one of the
+# names above, so banning the whole trailer would refuse real work to catch
+# nothing extra.
+#
+# Deliberately still here, and not anchored: the assistant phrases. A message
+# discussing this rule cannot use them and has to say "an assistant" instead,
+# which is a small cost paid once. The filename exemption above is different in
+# kind — a filename is mechanically unavoidable, a turn of phrase is not.
+
+matched=""
+for pattern in "${patterns[@]}"; do
+  # GNU grep spells a word boundary \b; the [[:<:]] form above is BSD. Try the
+  # pattern as written and fall back, rather than assuming which grep this is.
+  if hit="$(printf '%s' "$body" | grep -inE "$pattern" 2>/dev/null)" && [[ -n "$hit" ]]; then
+    matched+="$hit"$'\n'
+  fi
+done
+
+if [[ -n "$matched" ]]; then
+  # One line per offending line, not one per pattern that matched it: a trailer
+  # trips several of these and reporting it three times reads like three faults.
+  matched="$(printf '%s' "$matched" | sort -u -t: -k1,1n)"
+  cat >&2 <<MESSAGE
+
+  This commit message names an AI assistant, which this project does not allow.
+
+$(printf '%s' "$matched" | sed 's/^/      /')
+
+  Remove those lines and commit again. If a tool added a Co-Authored-By trailer
+  on its own, it will do it again: the message is what has to change, not the
+  tool's habit.
+
+MESSAGE
+  exit 1
+fi
+
+exit 0

@@ -1,0 +1,228 @@
+# Build fully offline installation bundles on every push.
+#
+# Four artefacts per run: {Ubuntu 22.04, 24.04} x {standard, bootstrap}, all
+# amd64. Each is a tar.gz that installs the panel on a server with no
+# internet access — the static binaries, the installer, and a local APT
+# repository for that exact Ubuntu release.
+#
+# The dependency closure of a bundle is resolved by apt against one
+# release's package universe, so each bundle job runs inside a container of
+# its own target release rather than trusting ubuntu-latest to stand in for
+# either. Validation runs in the same container, with apt's network access
+# pointed at a dead proxy, so a bundle that would secretly reach for a
+# mirror fails here rather than on an air-gapped host.
+name: offline-bundles
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-bundles-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    name: Build and test release binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      commit: ${{ steps.version.outputs.commit }}
+      source_date: ${{ steps.version.outputs.source_date }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so `git describe` can name the version from tags.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 18
+          cache: npm
+          cache-dependency-path: web/_app/package-lock.json
+
+      - name: Determine the version
+        id: version
+        run: |
+          VERSION="$(git describe --tags --exact-match 2>/dev/null || echo "0.0.0-$(git rev-parse --short HEAD)")"
+          {
+            echo "version=$VERSION"
+            echo "commit=$(git rev-parse --short HEAD)"
+            echo "source_date=$(git show -s --format=%cI HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building $VERSION from $(git rev-parse HEAD)"
+
+      - name: Lint the offline scripts
+        run: |
+          bash -n scripts/install.sh scripts/build-release.sh
+          bash -n scripts/offline/build_bundle.sh scripts/offline/install_offline.sh scripts/offline/validate_bundle.sh
+          shellcheck --severity=warning scripts/offline/*.sh
+
+      # Ahead of the Go suite on purpose: web/dist is generated rather than
+      # committed, and web/embed.go embeds it, so every Go package fails to
+      # compile with "pattern all:dist: no matching files found" until the
+      # frontend has been built once.
+      - name: Build and test the frontend
+        working-directory: web/_app
+        run: |
+          npm ci
+          npm run build
+          npm test
+
+      - name: Run the Go suite
+        run: bash scripts/test-go.sh
+
+      - name: Build the release binaries
+        run: bash scripts/build-release.sh --version "${{ steps.version.outputs.version }}" --output "dist/release/${{ steps.version.outputs.version }}" --arch amd64,arm64
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-binaries-${{ steps.version.outputs.version }}
+          path: dist/release/${{ steps.version.outputs.version }}/
+          if-no-files-found: error
+          retention-days: 14
+
+  bundle:
+    name: Bundle ubuntu${{ matrix.ubuntu }} amd64
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["22.04", "24.04"]
+    container:
+      image: ubuntu:${{ matrix.ubuntu }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      GRE_PANEL_BUILD_COMMIT: ${{ needs.build.outputs.commit }}
+      GRE_PANEL_BUILD_DATE: ${{ needs.build.outputs.source_date }}
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Prepare the container
+        # Installed before checkout so checkout can use git, and dpkg-dev so
+        # the repository index comes from dpkg-scanpackages proper.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git tar gzip dpkg-dev
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-binaries-${{ needs.build.outputs.version }}
+          path: dist/release/${{ needs.build.outputs.version }}/
+
+      - name: Build the standard bundle
+        run: bash scripts/offline/build_bundle.sh --ubuntu "${{ matrix.ubuntu }}" --flavor standard --arch amd64 --version "$VERSION"
+
+      - name: Build the bootstrap bundle
+        run: bash scripts/offline/build_bundle.sh --ubuntu "${{ matrix.ubuntu }}" --flavor bootstrap --arch amd64 --version "$VERSION"
+
+      # Bootstrap first, deliberately: its install test places the core
+      # packages from the bundle's own repository, which leaves the container
+      # looking like the normal server installation the standard bundle is
+      # for — so both install tests run against the host profile they claim
+      # to support.
+      - name: Validate the bootstrap bundle (offline, in-container install)
+        run: bash scripts/offline/validate_bundle.sh "dist/offline/tunnel-panel-$VERSION-ubuntu${{ matrix.ubuntu }}-amd64-bootstrap.tar.gz" --install-test
+
+      - name: Validate the standard bundle (offline, in-container install)
+        run: bash scripts/offline/validate_bundle.sh "dist/offline/tunnel-panel-$VERSION-ubuntu${{ matrix.ubuntu }}-amd64-standard.tar.gz" --install-test
+
+      - name: Write the job summary
+        run: |
+          {
+            echo "### Offline bundles for Ubuntu ${{ matrix.ubuntu }} (amd64)"
+            echo ""
+            echo "Source: \`${{ github.sha }}\` — version \`$VERSION\`"
+            echo ""
+            echo "| Bundle | Size | SHA-256 |"
+            echo "|---|---|---|"
+            for flavor in standard bootstrap; do
+              f="dist/offline/tunnel-panel-$VERSION-ubuntu${{ matrix.ubuntu }}-amd64-$flavor.tar.gz"
+              echo "| $(basename "$f") | $(du -h "$f" | cut -f1) | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
+            done
+            echo ""
+            echo "Validation: both bundles verified and installed inside an ubuntu:${{ matrix.ubuntu }} container with apt's network access poisoned."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnel-panel-${{ needs.build.outputs.version }}-ubuntu${{ matrix.ubuntu }}-amd64-standard
+          path: |
+            dist/offline/tunnel-panel-${{ needs.build.outputs.version }}-ubuntu${{ matrix.ubuntu }}-amd64-standard.tar.gz
+            dist/offline/tunnel-panel-${{ needs.build.outputs.version }}-ubuntu${{ matrix.ubuntu }}-amd64-standard.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tunnel-panel-${{ needs.build.outputs.version }}-ubuntu${{ matrix.ubuntu }}-amd64-bootstrap
+          path: |
+            dist/offline/tunnel-panel-${{ needs.build.outputs.version }}-ubuntu${{ matrix.ubuntu }}-amd64-bootstrap.tar.gz
+            dist/offline/tunnel-panel-${{ needs.build.outputs.version }}-ubuntu${{ matrix.ubuntu }}-amd64-bootstrap.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Attach bundles to the release
+    # Only tags publish; ordinary pushes stop at Actions artifacts. This is
+    # the one job that can write to the repository, and the only one that
+    # needs to.
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build, bundle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: tunnel-panel-*
+          path: upload
+          merge-multiple: true
+
+      # The binaries themselves, which are what the one-liner installer
+      # downloads: it resolves --version to a release and fetches
+      # gre-panel-linux-<arch> and its .sha256 from that release's assets. A
+      # release carrying only the offline bundles would leave every online
+      # install failing on a 404 while looking, from here, like a success.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-binaries-*
+          path: upload
+          merge-multiple: true
+
+      - name: Verify checksums before publishing
+        run: |
+          cd upload
+          for sum in *.tar.gz.sha256; do
+            sha256sum --check "$sum"
+          done
+          # SHA256SUMS covers the binaries, and is published alongside them so
+          # a deployed host can be compared against what the release serves.
+          sha256sum --check SHA256SUMS
+          ls -lh
+
+      - name: Create or update the release
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # --latest is explicit because the installer's default version is
+            # "latest", which GitHub resolves to whichever release carries that
+            # flag rather than to the newest tag.
+            gh release create "$TAG" --title "$TAG" --latest --notes "Static binaries for amd64 and arm64, installed by the one-liner in the README, plus offline installation bundles for Ubuntu 22.04 and 24.04 (amd64). See README_OFFLINE.md inside each bundle."
+          fi
+          gh release upload "$TAG" upload/* --clobber

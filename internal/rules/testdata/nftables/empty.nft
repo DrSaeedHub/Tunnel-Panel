@@ -1,0 +1,21 @@
+# gre-panel:managed=1
+#
+# The panel's port forwarding ruleset, rendered from the database. Every change
+# rewrites this file in full and applies it with a single nft transaction, so the
+# kernel never holds a partial ruleset.
+#
+# Everything the panel installs lives in the one table below. Replacing that table
+# replaces the panel's rules and touches nothing else on this host: rules belonging
+# to Docker, firewalld or anything else live in their own tables and are never read,
+# flushed or reordered from here.
+#
+# Every rule carries the comment grep:<RouteRuleID>, which is what lets a rule read
+# back from the kernel be matched to the database row that generated it.
+
+# Declaring the table before flushing it makes this file work on a host that has
+# never seen it; flushing a table that does not exist is an error.
+table inet gre_panel
+flush table inet gre_panel
+
+table inet gre_panel {
+}

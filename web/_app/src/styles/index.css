@@ -1,0 +1,322 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Fonts are bundled at build time (@fontsource, imported from main.tsx): the
+ * panel runs on servers that may have no outbound access at all, and a webfont
+ * request that hangs would delay first paint on exactly the page an operator
+ * opens when something is wrong. The stacks below fall back to the system.
+ */
+@layer base {
+  :root {
+    --font-ui: 'Inter Variable', 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    --font-display: 'Bricolage Grotesque Variable', 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
+    --font-fa: 'Vazirmatn', 'Noto Sans Arabic', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', 'SFMono-Regular', ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+
+    --radius: 1rem;
+
+    /*
+     * Light: a warm drafting-room. The canvas is warm greige paper; content
+     * sits on a lighter plate; cards are white and cast soft shadows instead
+     * of leaning on borders. Ink is near-black with a violet cast so it
+     * harmonises with the ultramarine accent.
+     */
+    --background: 30 12% 91%;
+    --foreground: 256 12% 13%;
+    --plate: 40 20% 96.5%;
+    --surface: 0 0% 100%;
+    --surface-raised: 0 0% 100%;
+    --surface-sunken: 36 14% 94.5%;
+    --border: 34 10% 86%;
+    --input: 34 10% 80%;
+    --ring: 243 72% 55%;
+    --muted: 36 14% 93.5%;
+    --muted-foreground: 256 6% 42%;
+
+    --accent: 243 72% 55%;
+    --accent-foreground: 0 0% 100%;
+    --accent-muted: 243 70% 94%;
+
+    /* The ink slab: one inverted card per page for the figure that matters.
+       In dark mode the pair flips and the slab becomes paper. */
+    --ink: 256 14% 11%;
+    --ink-foreground: 40 24% 96%;
+    --ink-muted: 254 10% 62%;
+
+    /* Semantic status. Reserved for state; never decorative. */
+    --ok: 152 58% 30%;
+    --ok-foreground: 0 0% 100%;
+    --ok-muted: 150 45% 92%;
+    --warn: 33 88% 34%;
+    --warn-foreground: 0 0% 100%;
+    --warn-muted: 40 90% 92%;
+    --danger: 4 70% 43%;
+    --danger-foreground: 0 0% 100%;
+    --danger-muted: 4 75% 95%;
+    --neutral: 256 7% 40%;
+    --neutral-foreground: 0 0% 100%;
+    --neutral-muted: 36 10% 91%;
+
+    /* Drafting hatch. Absence — a down tunnel, a disabled rule, an empty
+       chart — is drawn, not just greyed. */
+    --hatch: 256 8% 60%;
+
+    --shadow-card: 0 1px 2px hsl(256 30% 20% / 0.05), 0 14px 32px -18px hsl(256 30% 20% / 0.22);
+    --shadow-slab: 0 2px 4px hsl(256 40% 10% / 0.14), 0 24px 48px -20px hsl(256 40% 10% / 0.4);
+    --shadow-pop: 0 4px 12px hsl(256 30% 20% / 0.1), 0 20px 44px -16px hsl(256 30% 20% / 0.28);
+  }
+
+  [data-theme='dark'] {
+    /* Night desk: warm charcoal with the same violet cast, warm paper text. */
+    --background: 259 11% 7.5%;
+    --foreground: 36 18% 92%;
+    --plate: 258 10% 10.5%;
+    --surface: 258 10% 12.5%;
+    --surface-raised: 257 10% 15.5%;
+    --surface-sunken: 260 12% 6%;
+    --border: 257 8% 21%;
+    --input: 257 8% 27%;
+    --ring: 243 95% 74%;
+    --muted: 258 9% 17%;
+    --muted-foreground: 255 9% 67%;
+
+    --accent: 243 95% 74%;
+    --accent-foreground: 250 40% 12%;
+    --accent-muted: 245 40% 24%;
+
+    /* At night the slab is a deep indigo lift, not a white flashlight: it
+       stays the most important surface without glaring in a dark room. */
+    --ink: 250 26% 21%;
+    --ink-foreground: 240 40% 97%;
+    --ink-muted: 249 16% 68%;
+
+    --ok: 152 55% 52%;
+    --ok-foreground: 150 40% 10%;
+    --ok-muted: 152 35% 18%;
+    --warn: 38 92% 60%;
+    --warn-foreground: 35 45% 12%;
+    --warn-muted: 38 45% 19%;
+    --danger: 4 80% 66%;
+    --danger-foreground: 0 40% 12%;
+    --danger-muted: 4 40% 20%;
+    --neutral: 255 10% 64%;
+    --neutral-foreground: 258 25% 12%;
+    --neutral-muted: 258 9% 19%;
+
+    --hatch: 255 10% 46%;
+
+    --shadow-card: 0 1px 2px hsl(260 40% 3% / 0.5), 0 14px 32px -18px hsl(260 40% 3% / 0.7);
+    --shadow-slab: 0 2px 4px hsl(260 40% 3% / 0.5), 0 24px 48px -20px hsl(260 40% 3% / 0.8);
+    --shadow-pop: 0 4px 12px hsl(260 40% 3% / 0.5), 0 20px 44px -16px hsl(260 40% 3% / 0.7);
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  html {
+    font-family: var(--font-ui);
+    -webkit-text-size-adjust: 100%;
+    /* clip, not hidden: it forbids the accidental horizontal scrollbar while
+       leaving position: sticky working inside the page. */
+    overflow-x: clip;
+  }
+
+  body {
+    overflow-x: clip;
+  }
+
+  /* The Persian face carries the whole UI when Farsi is active, including the
+     Latin words inside it, so the two scripts share a baseline. The display
+     face falls back with it: Bricolage has no Arabic script. */
+  html[lang='fa'] {
+    font-family: var(--font-fa);
+    --font-display: 'Vazirmatn', 'Noto Sans Arabic', 'Segoe UI', system-ui, sans-serif;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    /* Logical, so the scrollbar gutter is on the correct side under RTL. */
+    margin-block: 0;
+    margin-inline: 0;
+    min-block-size: 100vh;
+    text-align: start;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Density is a document-level switch so one attribute changes the whole
+     product rather than every component carrying two sets of paddings.
+
+     The defaults come first in source order and the override carries higher
+     specificity: data-density sits on the html element, where a bare
+     [data-density] selector ties with :root and loses to whichever comes
+     last — which is exactly how compact silently never applied. */
+  :root {
+    --row-padding-block: 0.625rem;
+    --card-padding: 1.25rem;
+  }
+  :root[data-density='compact'] {
+    /* The root font-size carries the mode to every rem-derived measurement —
+       text, control heights, gaps, radii — and the two tokens tighten the
+       paddings further on top of that. */
+    font-size: 87.5%;
+    --row-padding-block: 0.375rem;
+    --card-padding: 0.875rem;
+  }
+}
+
+@layer components {
+  /*
+   * Bidirectional isolation for Latin technical values.
+   *
+   * Without this an address like 172.17.7.1/30 beside Farsi text is reordered
+   * by the bidi algorithm and displays scrambled. `unicode-bidi: isolate`
+   * combined with an explicit dir makes the value one opaque left-to-right run
+   * regardless of what surrounds it. Tabular numerals keep columns aligned as
+   * live figures update.
+   */
+  .technical {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    unicode-bidi: isolate;
+    direction: ltr;
+    white-space: nowrap;
+  }
+
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Display voice: headings, card titles, the wordmark. */
+  .display {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+  }
+
+  /*
+   * The big instrument readout: mono numerals so live updates never jitter,
+   * with the fraction and unit stepped back — the number is the signal, the
+   * unit is the caption.
+   */
+  .readout {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 650;
+    letter-spacing: -0.04em;
+    line-height: 1;
+  }
+  .readout-dim {
+    font-weight: 450;
+    opacity: 0.45;
+  }
+
+  /* Cards lean on light and shadow in the day theme, hairlines at night. */
+  .card-surface {
+    background-color: hsl(var(--surface));
+    border: 1px solid hsl(var(--border) / 0.6);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* The one inverted card per page. Status hues are remapped inside it to the
+     bright set, because the slab ground is dark in both themes (near-black by
+     day, deep indigo by night). */
+  .ink-slab {
+    background-color: hsl(var(--ink));
+    color: hsl(var(--ink-foreground));
+    border-radius: calc(var(--radius) + 0.25rem);
+    box-shadow: var(--shadow-slab);
+    --ok: 152 55% 52%;
+    --warn: 38 92% 60%;
+    --danger: 4 80% 66%;
+    --hatch: 254 10% 62%;
+  }
+
+  /*
+   * Drafting hatch: the texture of absence. A down tunnel, a disabled rule and
+   * an empty chart are hatched like a void on a technical drawing — visibly
+   * "nothing here", not faintly grey. Colour-independent, so it survives both
+   * themes and colour-vision deficiencies.
+   */
+  .hatch {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      hsl(var(--hatch) / 0.28) 0,
+      hsl(var(--hatch) / 0.28) 1px,
+      transparent 1px,
+      transparent 6px
+    );
+  }
+  .hatch-soft {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      hsl(var(--hatch) / 0.14) 0,
+      hsl(var(--hatch) / 0.14) 1px,
+      transparent 1px,
+      transparent 7px
+    );
+  }
+
+  .skeleton {
+    position: relative;
+    overflow: hidden;
+    background-color: hsl(var(--muted));
+    border-radius: calc(var(--radius) - 6px);
+  }
+
+  .skeleton::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    inline-size: 100%;
+    transform: translateX(-100%);
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--foreground) / 0.06),
+      transparent
+    );
+    animation: shimmer 1.6s infinite;
+  }
+
+  /* Directional icons mirror under RTL; non-directional ones must not, so this
+     is opt-in per icon rather than a blanket rule on every svg. */
+  [dir='rtl'] .icon-directional {
+    transform: scaleX(-1);
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+}
+
+/*
+ * Motion clarifies change on a page that updates constantly. When the operator
+ * has asked for less of it, every movement becomes an instant state change and
+ * only opacity survives.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .skeleton::after {
+    animation: none;
+  }
+}

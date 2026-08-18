@@ -1,0 +1,76 @@
+# gre-panel:managed=1
+#
+# The panel's port forwarding ruleset, rendered from the database. Every change
+# rewrites this file in full and applies it with a single nft transaction, so the
+# kernel never holds a partial ruleset.
+#
+# Everything the panel installs lives in the one table below. Replacing that table
+# replaces the panel's rules and touches nothing else on this host: rules belonging
+# to Docker, firewalld or anything else live in their own tables and are never read,
+# flushed or reordered from here.
+#
+# Every rule carries the comment grep:<RouteRuleID>, which is what lets a rule read
+# back from the kernel be matched to the database row that generated it.
+
+# Declaring the table before flushing it makes this file work on a host that has
+# never seen it; flushing a table that does not exist is an error.
+table inet gre_panel
+flush table inet gre_panel
+
+table inet gre_panel {
+	# Named counter objects, one pair per rule. Byte accounting reads these,
+	# never the nat chains: a nat hook only ever sees the first packet of a
+	# connection, so counting there would report connections as if they were
+	# bytes and under-report traffic by orders of magnitude.
+	counter route_1_rx {
+	}
+	counter route_1_tx {
+	}
+
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+		# Destination NAT: traffic arriving for a rule is redirected to its destination.
+		# route 1 "Web relay": both 203.0.113.10:2044 -> 172.31.7.2:2044 [nat masquerade]
+		ip daddr 203.0.113.10 tcp dport 2044 dnat ip to 172.31.7.2:2044 comment "grep:1"
+		ip daddr 203.0.113.10 udp dport 2044 dnat ip to 172.31.7.2:2044 comment "grep:1"
+	}
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		# Source NAT. Absent for a rule whose NAT mode is None, which preserves the
+		# client address and needs the return path to come back through this server.
+		# route 1 "Web relay": both 203.0.113.10:2044 -> 172.31.7.2:2044 [nat masquerade]
+		ip daddr 172.31.7.2 tcp dport 2044 masquerade comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 masquerade comment "grep:1"
+	}
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		# Forward permission. The established/related rule covers the return direction,
+		# so no reverse rule matching on source port is emitted: conntrack expresses the
+		# intent exactly, and matching on the far end's source port would accept traffic
+		# that belongs to no flow this server ever started.
+		ct state established,related accept comment "gre-panel:structural"
+		# route 1 "Web relay": both 203.0.113.10:2044 -> 172.31.7.2:2044 [nat masquerade]
+		ip daddr 172.31.7.2 tcp dport 2044 accept comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 accept comment "grep:1"
+	}
+	chain accounting {
+		type filter hook forward priority filter - 10; policy accept;
+		# Accounting. These rules carry no verdict, so they count and fall through
+		# without influencing policy, and they sit at their own priority so they see
+		# traffic whatever the forward chain decides.
+		# route 1 "Web relay": both 203.0.113.10:2044 -> 172.31.7.2:2044 [nat masquerade]
+		ip daddr 172.31.7.2 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 172.31.7.2 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 172.31.7.2 udp sport 2044 counter name "route_1_rx" comment "grep:1"
+	}
+	chain mss_clamp {
+		type filter hook forward priority mangle; policy accept;
+		# MSS clamping. A relay whose destination is reached across a tunnel hands the
+		# client an MSS the path cannot carry; connections then establish and stall on
+		# the first large transfer. The mask form matches a SYN without RST, so a
+		# reset is not rewritten.
+		# route 1 "Web relay": both 203.0.113.10:2044 -> 172.31.7.2:2044 [nat masquerade]
+		ip daddr 172.31.7.2 tcp dport 2044 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:1"
+	}
+}

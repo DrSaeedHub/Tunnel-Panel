@@ -1,0 +1,60 @@
+table inet gre_panel {
+	counter route_1_rx {
+		packets 0 bytes 0
+	}
+
+	counter route_1_tx {
+		packets 0 bytes 0
+	}
+
+	set route_1_conn {
+		type ipv4_addr
+		size 65535
+		flags dynamic
+	}
+
+	set route_1_rate {
+		type ipv4_addr
+		size 65535
+		flags dynamic,timeout
+		timeout 1m
+	}
+
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+		ip daddr 203.0.113.10 tcp dport 2044 dnat ip to 198.51.100.20:2044 comment "grep:1"
+	}
+
+	chain output {
+		type nat hook output priority dstnat; policy accept;
+	}
+
+	chain postrouting {
+		type nat hook postrouting priority srcnat; policy accept;
+		ip daddr 198.51.100.20 tcp dport 2044 masquerade comment "grep:1"
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		ct state established,related accept comment "gre-panel:structural"
+		ip daddr 198.51.100.20 tcp dport 2044 ct state new add @route_1_conn { ip saddr ct count over 10 } drop comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct state new add @route_1_rate { ip saddr limit rate over 60/minute burst 5 packets } drop comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct state new limit rate 5/minute burst 5 packets log prefix "gre-panel route 1: " comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 accept comment "grep:1"
+	}
+
+	chain accounting {
+		type filter hook forward priority filter - 10; policy accept;
+		ip daddr 198.51.100.20 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 198.51.100.20 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
+	}
+
+	chain mss {
+		type filter hook forward priority mangle; policy accept;
+	}
+
+	chain marking {
+		type filter hook prerouting priority mangle; policy accept;
+		ip daddr 203.0.113.10 tcp dport 2044 meta mark set 0x00000064 comment "grep:1"
+	}
+}

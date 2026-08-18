@@ -1,0 +1,83 @@
+# gre-panel:managed=1
+#
+# The panel's port forwarding rules for IPv4, rendered from the database.
+# Restored with --noflush against the panel's own chains only: no other chain on
+# this host is read, flushed or reordered, and no whole-system snapshot is ever
+# taken, and the distribution's firewall persistence package is deliberately unused.
+#
+# Each chain is declared so it exists, then flushed explicitly, because --noflush
+# leaves an existing chain's rules in place. The jump rules that reach these
+# chains are installed separately, checked before they are added, so a second
+# apply cannot duplicate them.
+#
+# Every rule carries the comment grep:<RouteRuleID>, which is what lets a rule read
+# back from the kernel be matched to the database row that generated it.
+
+*mangle
+:GRE_PANEL_MARK - [0:0]
+:GRE_PANEL_MSS - [0:0]
+-F GRE_PANEL_MARK
+-F GRE_PANEL_MSS
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_MARK -d 203.0.113.10/32 -p tcp --dport 2044 -i eth0 -s 10.0.0.0/8 -m comment --comment "grep:1" -j MARK --set-mark 0x1f
+-A GRE_PANEL_MARK -d 203.0.113.10/32 -p udp --dport 2044 -i eth0 -s 10.0.0.0/8 -m comment --comment "grep:1" -j MARK --set-mark 0x1f
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_MSS -d 172.31.7.2/32 -p tcp --dport 2044 --tcp-flags SYN,RST SYN -m comment --comment "grep:1" -j TCPMSS --clamp-mss-to-pmtu
+-A GRE_PANEL_MSS -d 172.31.7.6/32 -p tcp --dport 2044 --tcp-flags SYN,RST SYN -m comment --comment "grep:1" -j TCPMSS --clamp-mss-to-pmtu
+COMMIT
+*nat
+:GRE_PANEL_PRE - [0:0]
+:GRE_PANEL_OUT - [0:0]
+:GRE_PANEL_POST - [0:0]
+-F GRE_PANEL_PRE
+-F GRE_PANEL_OUT
+-F GRE_PANEL_POST
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_PRE -d 203.0.113.10/32 -p tcp --dport 2044 -i eth0 -s 10.0.0.0/8 -m statistic --mode nth --every 1 --packet 0 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.2:2044
+-A GRE_PANEL_PRE -d 203.0.113.10/32 -p tcp --dport 2044 -i eth0 -s 10.0.0.0/8 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.6:2044
+-A GRE_PANEL_PRE -d 203.0.113.10/32 -p udp --dport 2044 -i eth0 -s 10.0.0.0/8 -m statistic --mode nth --every 1 --packet 0 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.2:2044
+-A GRE_PANEL_PRE -d 203.0.113.10/32 -p udp --dport 2044 -i eth0 -s 10.0.0.0/8 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.6:2044
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_OUT -d 203.0.113.10/32 -p tcp --dport 2044 -i eth0 -s 10.0.0.0/8 -m statistic --mode nth --every 1 --packet 0 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.2:2044
+-A GRE_PANEL_OUT -d 203.0.113.10/32 -p tcp --dport 2044 -i eth0 -s 10.0.0.0/8 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.6:2044
+-A GRE_PANEL_OUT -d 203.0.113.10/32 -p udp --dport 2044 -i eth0 -s 10.0.0.0/8 -m statistic --mode nth --every 1 --packet 0 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.2:2044
+-A GRE_PANEL_OUT -d 203.0.113.10/32 -p udp --dport 2044 -i eth0 -s 10.0.0.0/8 -m comment --comment "grep:1" -j DNAT --to-destination 172.31.7.6:2044
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_POST -d 172.31.7.2/32 -p tcp --dport 2044 -m comment --comment "grep:1" -j SNAT --to-source 203.0.113.10
+-A GRE_PANEL_POST -d 172.31.7.6/32 -p tcp --dport 2044 -m comment --comment "grep:1" -j SNAT --to-source 203.0.113.10
+-A GRE_PANEL_POST -d 172.31.7.2/32 -p udp --dport 2044 -m comment --comment "grep:1" -j SNAT --to-source 203.0.113.10
+-A GRE_PANEL_POST -d 172.31.7.6/32 -p udp --dport 2044 -m comment --comment "grep:1" -j SNAT --to-source 203.0.113.10
+COMMIT
+*filter
+:GRE_PANEL_ACCT - [0:0]
+:GRE_PANEL_FWD - [0:0]
+-F GRE_PANEL_ACCT
+-F GRE_PANEL_FWD
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_ACCT -d 172.31.7.2/32 -p tcp --dport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -s 172.31.7.2/32 -p tcp --sport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -d 172.31.7.6/32 -p tcp --dport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -s 172.31.7.6/32 -p tcp --sport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -d 172.31.7.2/32 -p udp --dport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -s 172.31.7.2/32 -p udp --sport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -d 172.31.7.6/32 -p udp --dport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_ACCT -s 172.31.7.6/32 -p udp --sport 2044 -m comment --comment "grep:1"
+-A GRE_PANEL_FWD -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment "gre-panel:structural" -j ACCEPT
+# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p tcp --dport 2044 -m connlimit --connlimit-above 25 --connlimit-mask 32 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p tcp --dport 2044 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 120/minute --hashlimit-mode srcip --hashlimit-name grep_1 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p tcp --dport 2044 -m conntrack --ctstate NEW -m limit --limit 5/minute -m comment --comment "grep:1" -j LOG --log-prefix "gre-panel route 1: "
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p tcp --dport 2044 -s 10.0.0.0/8 -m comment --comment "grep:1" -j ACCEPT
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p tcp --dport 2044 -m connlimit --connlimit-above 25 --connlimit-mask 32 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p tcp --dport 2044 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 120/minute --hashlimit-mode srcip --hashlimit-name grep_1 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p tcp --dport 2044 -m conntrack --ctstate NEW -m limit --limit 5/minute -m comment --comment "grep:1" -j LOG --log-prefix "gre-panel route 1: "
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p tcp --dport 2044 -s 10.0.0.0/8 -m comment --comment "grep:1" -j ACCEPT
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p udp --dport 2044 -m connlimit --connlimit-above 25 --connlimit-mask 32 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p udp --dport 2044 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 120/minute --hashlimit-mode srcip --hashlimit-name grep_1 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p udp --dport 2044 -m conntrack --ctstate NEW -m limit --limit 5/minute -m comment --comment "grep:1" -j LOG --log-prefix "gre-panel route 1: "
+-A GRE_PANEL_FWD -d 172.31.7.2/32 -p udp --dport 2044 -s 10.0.0.0/8 -m comment --comment "grep:1" -j ACCEPT
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p udp --dport 2044 -m connlimit --connlimit-above 25 --connlimit-mask 32 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p udp --dport 2044 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 120/minute --hashlimit-mode srcip --hashlimit-name grep_1 -m comment --comment "grep:1" -j DROP
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p udp --dport 2044 -m conntrack --ctstate NEW -m limit --limit 5/minute -m comment --comment "grep:1" -j LOG --log-prefix "gre-panel route 1: "
+-A GRE_PANEL_FWD -d 172.31.7.6/32 -p udp --dport 2044 -s 10.0.0.0/8 -m comment --comment "grep:1" -j ACCEPT
+COMMIT

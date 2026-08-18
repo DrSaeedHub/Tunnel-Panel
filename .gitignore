@@ -1,0 +1,41 @@
+ssh.env
+.env
+.env.example
+web.config
+# Build output
+/bin/
+/dist/
+/gre-panel
+/gre-panel-*
+CLAUDE.md
+# The CLI, built to the repo root by `go build ./...` the same way the panel is.
+/tnp
+/tnp-*
+*.exe
+
+# Go test and profiling artefacts
+*.test
+*.out
+/coverage.*
+
+# Frontend build output and inputs. web/dist is generated, not committed: CI
+# builds it before anything Go touches it, and scripts/build-release.sh builds
+# it as its first step. It is embedded by web/embed.go, so `go build` fails with
+# "pattern all:dist: no matching files found" until it exists — build the
+# frontend once (cd web/_app && npm ci && npm run build) in a fresh checkout.
+/web/dist/
+/web/_app/node_modules/
+/web/_app/.vite/
+# A stale build output directory whose files this checkout cannot delete: the
+# 9p mount reported them as root-owned. It is outside the embed path and safe
+# to remove from Windows.
+/web/dist.stale-root-owned*/
+npm-debug.log*
+yarn-error.log*
+
+# Local runtime state, should any ever be created inside the checkout
+/var/
+*.db
+*.db-wal
+*.db-shm
+jwt.key

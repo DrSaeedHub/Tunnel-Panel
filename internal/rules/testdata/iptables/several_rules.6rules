@@ -1,0 +1,45 @@
+# gre-panel:managed=1
+#
+# The panel's port forwarding rules for IPv6, rendered from the database.
+# Restored with --noflush against the panel's own chains only: no other chain on
+# this host is read, flushed or reordered, and no whole-system snapshot is ever
+# taken, and the distribution's firewall persistence package is deliberately unused.
+#
+# Each chain is declared so it exists, then flushed explicitly, because --noflush
+# leaves an existing chain's rules in place. The jump rules that reach these
+# chains are installed separately, checked before they are added, so a second
+# apply cannot duplicate them.
+#
+# Every rule carries the comment grep:<RouteRuleID>, which is what lets a rule read
+# back from the kernel be matched to the database row that generated it.
+
+*mangle
+:GRE_PANEL_MARK - [0:0]
+:GRE_PANEL_MSS - [0:0]
+-F GRE_PANEL_MARK
+-F GRE_PANEL_MSS
+COMMIT
+*nat
+:GRE_PANEL_PRE - [0:0]
+:GRE_PANEL_OUT - [0:0]
+:GRE_PANEL_POST - [0:0]
+-F GRE_PANEL_PRE
+-F GRE_PANEL_OUT
+-F GRE_PANEL_POST
+# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
+-A GRE_PANEL_PRE -d 2001:db8::10/128 -p tcp --dport 993 -m comment --comment "grep:9" -j DNAT --to-destination [2001:db8:1::20]:993
+# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
+-A GRE_PANEL_POST -d 2001:db8:1::20/128 -p tcp --dport 993 -m comment --comment "grep:9" -j MASQUERADE
+COMMIT
+*filter
+:GRE_PANEL_ACCT - [0:0]
+:GRE_PANEL_FWD - [0:0]
+-F GRE_PANEL_ACCT
+-F GRE_PANEL_FWD
+# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
+-A GRE_PANEL_ACCT -d 2001:db8:1::20/128 -p tcp --dport 993 -m comment --comment "grep:9"
+-A GRE_PANEL_ACCT -s 2001:db8:1::20/128 -p tcp --sport 993 -m comment --comment "grep:9"
+-A GRE_PANEL_FWD -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment "gre-panel:structural" -j ACCEPT
+# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
+-A GRE_PANEL_FWD -d 2001:db8:1::20/128 -p tcp --dport 993 -m comment --comment "grep:9" -j ACCEPT
+COMMIT

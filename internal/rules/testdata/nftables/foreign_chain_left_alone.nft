@@ -1,0 +1,37 @@
+# gre-panel:managed=1
+#
+# The panel's port forwarding ruleset, rendered from the database. Every change
+# rewrites this file in full and applies it with a single nft transaction, so the
+# kernel never holds a partial ruleset.
+#
+# Everything the panel installs lives in the one table below. Replacing that table
+# replaces the panel's rules and touches nothing else on this host: rules belonging
+# to Docker, firewalld or anything else live in their own tables and are never read,
+# flushed or reordered from here.
+#
+# Every rule carries the comment grep:<RouteRuleID>, which is what lets a rule read
+# back from the kernel be matched to the database row that generated it.
+
+# Declaring the table before flushing it makes this file work on a host that has
+# never seen it; flushing a table that does not exist is an error.
+table inet gre_panel
+flush table inet gre_panel
+
+# Flushing a table empties its chains but does not remove them, so a chain this
+# ruleset no longer declares would otherwise sit in the kernel indefinitely,
+# hooked and owned by nobody, and the table's shape would be a function of the
+# host's install history rather than of what the panel declares. These are the
+# panel's own chains this host still holds and this ruleset has no use for.
+#
+# `add` before `delete` is what makes the statement idempotent, and it has to
+# be: this same file is what the boot-time restore replays, against a table
+# that does not exist yet, where deleting a chain outright is an error that
+# would take the whole transaction — and every rule in it — down with it.
+# Adding a chain that is already there changes nothing, including its hook.
+#
+# The counters are untouched: they are objects of the table, not of a chain.
+add chain inet gre_panel prerouting
+delete chain inet gre_panel prerouting
+
+table inet gre_panel {
+}
