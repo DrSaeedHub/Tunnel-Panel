@@ -932,6 +932,24 @@ function AddressingSection({
       ) : (
         <p className="text-xs text-muted-foreground">{t('tunnelForm.addressing.noPools')}</p>
       )}
+
+      {/* A pairing code brings the addresses the other end already committed
+          to. They are kept even in automatic mode — the far end cannot be
+          re-allocated — so they are shown rather than silently applied. */}
+      {!manual && primary?.address ? (
+        <p className="text-xs text-muted-foreground">
+          {t('tunnelForm.addressing.pinned')}{' '}
+          <Technical>
+            {primary.address}/{primary.prefix_length}
+          </Technical>
+          {primary.peer_address ? (
+            <>
+              {' → '}
+              <Technical>{primary.peer_address}</Technical>
+            </>
+          ) : null}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -1058,7 +1076,7 @@ function formFromTunnel(tunnel: Tunnel): FormState {
  * interface name means "render it from the template", not "name it the empty
  * string".
  */
-function toPatch(form: FormState, manual: boolean): Record<string, unknown> {
+export function toPatch(form: FormState, manual: boolean): Record<string, unknown> {
   const patch: Record<string, unknown> = {
     tunnel_type_id: form.tunnel_type_id,
     tunnel_side_id: form.tunnel_side_id,
@@ -1089,8 +1107,21 @@ function toPatch(form: FormState, manual: boolean): Record<string, unknown> {
   if (manual) {
     patch.address_pool_id = null
     patch.addresses = form.addresses.filter((address) => address.address)
-  } else if (form.address_pool_id !== null) {
-    patch.address_pool_id = form.address_pool_id
+  } else {
+    if (form.address_pool_id !== null) patch.address_pool_id = form.address_pool_id
+    // Automatic addressing means "let the panel allocate", not "discard what
+    // the form already holds". A pairing code arrives carrying both the pool
+    // and the exact addresses the other end already committed to, and dropping
+    // them here made this end allocate its own subnet — the two ends came up
+    // healthy and carried nothing, which is the mismatch the pairing code
+    // exists to prevent. The backend allocates only when no address is given,
+    // so sending them pins the pair while keeping the tunnel in its pool.
+    const explicit = form.addresses.filter((address) => address.address)
+    if (explicit.length > 0) patch.addresses = explicit
+    // The number picks the subnet and renders the name; both ends must agree.
+    if (form.tunnel_number !== null && form.tunnel_number !== undefined) {
+      patch.tunnel_number = form.tunnel_number
+    }
   }
 
   // The monitoring overrides. null is meaningful rather than absent: it is how

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -342,6 +343,23 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		in.AddressPoolID = &pool.AddressPoolID
 	}
 
+	// The panel renders the name itself only when the operator left the field
+	// blank. A name it renders has to be one that is free, and the number that
+	// renders it is not always the number the address allocator would pick: a
+	// tunnel whose addresses were set by hand holds its name without holding
+	// the subnet that number maps to, so the subnet reads as free while the
+	// name is already taken. Collecting the taken names before allocating lets
+	// both steps agree on one number (§7.1).
+	isAutoName := strings.TrimSpace(in.InterfaceName) == ""
+	var taken map[string]bool
+	if isAutoName {
+		var err error
+		taken, err = s.takenNames(ctx, in.TunnelID)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Allocate a subnet when the request named no addresses of its own.
 	if len(in.Addresses) == 0 && in.AddressPoolID != nil {
 		pool, err := s.alloc.Repo.PoolByID(ctx, *in.AddressPoolID)
@@ -354,7 +372,7 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		if in.TunnelNumber != nil {
 			allocation, err = alloc.At(pool, prefixLen, *in.TunnelNumber)
 		} else {
-			allocation, err = s.alloc.NextFree(ctx, pool, prefixLen)
+			allocation, err = s.nextFreeAllocation(ctx, *in, pool, prefixLen, taken)
 		}
 		if err != nil {
 			return err
@@ -371,14 +389,138 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		}}
 	}
 
-	if strings.TrimSpace(in.InterfaceName) == "" {
+	if isAutoName {
+		// Addressing by hand skips the allocator above, so there may still be
+		// no number to render from. Every tunnel would then render the same
+		// name; the lowest number whose name is free gives each one its own.
+		if in.TunnelNumber == nil {
+			number, err := s.firstFreeNumber(*in, taken)
+			if err != nil {
+				return err
+			}
+			in.TunnelNumber = &number
+		}
 		name, err := s.RenderName(*in)
 		if err != nil {
 			return err
 		}
-		in.InterfaceName = name
+		in.InterfaceName = freeName(name, taken)
 	}
 	return nil
+}
+
+// nameSearchLimit bounds the searches below. It is far above any real tunnel
+// count and exists only so a naming template that ignores {number} cannot spin
+// forever looking for a name it will never render differently.
+const nameSearchLimit = 4096
+
+// takenNames is every interface name that would collide with a new tunnel:
+// the panel's own records and the interfaces the kernel already has, because a
+// name free in one and taken in the other still fails validation (§7.1, §7.5).
+//
+// selfID is excluded so a tunnel keeps its own name across an update.
+func (s *Service) takenNames(ctx context.Context, selfID int64) (map[string]bool, error) {
+	taken := map[string]bool{}
+
+	records, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range records {
+		if rec.TunnelID == selfID {
+			continue
+		}
+		taken[rec.InterfaceName] = true
+	}
+
+	// A foreign interface of the same name is adoptable when the operator asks
+	// for that name deliberately, but a name the panel picks itself should not
+	// land the operator in an adoption they did not ask for.
+	if s.links != nil {
+		links, err := s.links.List(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("reading the existing interfaces: %w", err)
+		}
+		for _, l := range links {
+			taken[l.Name] = true
+		}
+	}
+	return taken, nil
+}
+
+// nextFreeAllocation returns the lowest-numbered free subnet whose rendered
+// name is also free. Passing a nil taken set means the operator named the
+// tunnel, so only the addresses have to be free.
+func (s *Service) nextFreeAllocation(
+	ctx context.Context, in validate.TunnelInput, pool alloc.Pool, prefixLen int, taken map[string]bool,
+) (alloc.Allocation, error) {
+	used, err := s.alloc.UsedAddressSet(ctx)
+	if err != nil {
+		return alloc.Allocation{}, err
+	}
+	for attempt := 0; attempt < nameSearchLimit; attempt++ {
+		allocation, err := alloc.NextFreeIn(pool, prefixLen, used)
+		if err != nil {
+			return alloc.Allocation{}, err
+		}
+		if taken == nil {
+			return allocation, nil
+		}
+		probe := in
+		number := allocation.TunnelNumber
+		probe.TunnelNumber = &number
+		name, err := s.RenderName(probe)
+		if err != nil {
+			return alloc.Allocation{}, err
+		}
+		if !taken[name] {
+			return allocation, nil
+		}
+		// The subnet is free but its name is not, which is what a hand-addressed
+		// tunnel leaves behind. Take the number out of circulation and look at
+		// the next one, so the number, the subnet and the name still agree.
+		for _, address := range []string{allocation.AddressA, allocation.AddressB} {
+			if parsed, err := netip.ParseAddr(address); err == nil {
+				used[parsed.Unmap()] = true
+			}
+		}
+	}
+	return alloc.Allocation{}, fmt.Errorf(
+		"no free tunnel number in pool %q renders a name that is not already taken", pool.Title)
+}
+
+// firstFreeNumber is the same search without an allocation: the lowest number
+// from 1 whose rendered name is free.
+func (s *Service) firstFreeNumber(in validate.TunnelInput, taken map[string]bool) (int64, error) {
+	for number := int64(1); number <= nameSearchLimit; number++ {
+		probe := in
+		candidate := number
+		probe.TunnelNumber = &candidate
+		name, err := s.RenderName(probe)
+		if err != nil {
+			return 0, err
+		}
+		if !taken[name] {
+			return number, nil
+		}
+	}
+	return 0, fmt.Errorf("no tunnel number under %d renders a name that is not already taken", nameSearchLimit)
+}
+
+// freeName is the last resort for a naming template that renders the same name
+// whatever the number: it suffixes until the name is free rather than handing
+// back one that is certain to be rejected.
+func freeName(name string, taken map[string]bool) string {
+	if !taken[name] {
+		return name
+	}
+	for suffix := 2; suffix < nameSearchLimit; suffix++ {
+		candidate := fmt.Sprintf("%s-%d", name, suffix)
+		if !taken[candidate] {
+			return candidate
+		}
+	}
+	return name
 }
 
 // RenderName builds an interface name from the naming template, the side labels

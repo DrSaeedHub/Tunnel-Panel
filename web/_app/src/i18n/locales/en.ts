@@ -493,6 +493,7 @@ export default {
       nextFree: 'Next free subnet',
       allocated: 'This tunnel will use {{subnet}}',
       noPools: 'No address pools are configured.',
+      pinned: 'Addresses carried by the pairing code, kept as they are:',
       addAddress: 'Add address',
       removeAddress: 'Remove address',
       primary: 'Primary',
