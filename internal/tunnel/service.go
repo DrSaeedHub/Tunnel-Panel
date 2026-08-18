@@ -631,10 +631,12 @@ func (s *Service) Update(ctx context.Context, id int64, req Request) (Result, er
 }
 
 // storedFieldsDiffer reports whether a change touches something the database
-// keeps but the kernel never sees — today, the per-tunnel monitoring overrides.
-// They are resolved by monitor.ConfigFor at probe time rather than written to
-// an interface, so they produce no kernel diff and would otherwise be dropped
-// by the "nothing to do" path.
+// keeps but the kernel never sees: the per-tunnel monitoring overrides, which
+// are resolved by monitor.ConfigFor at probe time rather than written to an
+// interface, and the display name, which is only ever shown in the panel.
+// Neither produces a kernel diff, so both would otherwise be dropped by the
+// "nothing to do" path — renaming a tunnel and changing nothing else would
+// return 200 and save nothing.
 func storedFieldsDiffer(current, desired Record) bool {
 	sameFloat := func(a, b *float64) bool {
 		switch {
@@ -656,7 +658,8 @@ func storedFieldsDiffer(current, desired Record) bool {
 			return *a == *b
 		}
 	}
-	return !sameFloat(current.MonitorIntervalSeconds, desired.MonitorIntervalSeconds) ||
+	return derefString(current.DisplayName) != derefString(desired.DisplayName) ||
+		!sameFloat(current.MonitorIntervalSeconds, desired.MonitorIntervalSeconds) ||
 		!sameFloat(current.MonitorTimeoutSeconds, desired.MonitorTimeoutSeconds) ||
 		!sameInt(current.MonitorPacketSize, desired.MonitorPacketSize) ||
 		!sameInt(current.MonitorWindowSize, desired.MonitorWindowSize) ||
@@ -674,6 +677,7 @@ func mergedInput(rec Record) validate.TunnelInput {
 		TunnelSideID:      rec.TunnelSideID,
 		PersistenceTypeID: rec.PersistenceTypeID,
 		InterfaceName:     rec.InterfaceName,
+		DisplayName:       derefString(rec.DisplayName),
 		TunnelNumber:      rec.TunnelNumber,
 		LocalEndpoint:     rec.LocalEndpoint,
 		RemoteEndpoint:    rec.RemoteEndpoint,

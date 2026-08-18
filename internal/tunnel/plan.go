@@ -250,6 +250,7 @@ func recordFromInput(in validate.TunnelInput) model.Tunnel {
 		TunnelSideID:      in.TunnelSideID,
 		PersistenceTypeID: in.PersistenceTypeID,
 		InterfaceName:     in.InterfaceName,
+		DisplayName:       stringPtr(in.DisplayName),
 		TunnelNumber:      in.TunnelNumber,
 		LocalEndpoint:     in.LocalEndpoint,
 		RemoteEndpoint:    in.RemoteEndpoint,
