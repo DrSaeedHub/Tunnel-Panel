@@ -194,6 +194,7 @@ export interface Tunnel {
   tunnel_side_id: number
   persistence_type_id: number
   interface_name: string
+  display_name: string | null
   tunnel_number: number | null
   local_endpoint: string
   remote_endpoint: string
@@ -416,6 +417,7 @@ export interface TunnelInput {
   tunnel_side_id: number
   persistence_type_id: number
   interface_name: string
+  display_name?: string
   tunnel_number: number | null
   local_endpoint: string
   remote_endpoint: string

@@ -76,6 +76,7 @@ type tunnelPatch struct {
 	TunnelSideID      *int64      `json:"tunnel_side_id,omitempty"`
 	PersistenceTypeID *int64      `json:"persistence_type_id,omitempty"`
 	InterfaceName     *string     `json:"interface_name,omitempty"`
+	DisplayName       *string     `json:"display_name,omitempty"`
 	TunnelNumber      nullableInt `json:"tunnel_number,omitempty"`
 
 	LocalEndpoint  *string `json:"local_endpoint,omitempty"`
@@ -158,6 +159,7 @@ func (p tunnelPatch) applyTo(in *validate.TunnelInput) {
 	setInt(&in.TunnelSideID, p.TunnelSideID)
 	setInt(&in.PersistenceTypeID, p.PersistenceTypeID)
 	setString(&in.InterfaceName, p.InterfaceName)
+	setString(&in.DisplayName, p.DisplayName)
 	setNullable(&in.TunnelNumber, p.TunnelNumber)
 
 	setString(&in.LocalEndpoint, p.LocalEndpoint)

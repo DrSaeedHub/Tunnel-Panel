@@ -102,6 +102,7 @@ export default function TunnelsPage() {
       if (needle) {
         const haystack = [
           tunnel.interface_name,
+          tunnel.display_name ?? '',
           tunnel.local_endpoint,
           tunnel.remote_endpoint,
           ...(tunnel.addresses ?? []).map((address) => address.address),
@@ -131,7 +132,9 @@ export default function TunnelsPage() {
       }
       if (sortKey === 'type') return a.tunnel.tunnel_type_id - b.tunnel.tunnel_type_id
       if (sortKey === 'side') return a.tunnel.tunnel_side_id - b.tunnel.tunnel_side_id
-      return a.tunnel.interface_name.localeCompare(b.tunnel.interface_name)
+      const left = a.tunnel.display_name || a.tunnel.interface_name
+      const right = b.tunnel.display_name || b.tunnel.interface_name
+      return left.localeCompare(right)
     })
   }, [listQuery.data, monitor.byTunnel, search, statusFilter, typeFilter, sideFilter, applyFilter, sortKey])
 
@@ -464,8 +467,9 @@ function TunnelRow({
             to={`/tunnels/${tunnel.tunnel_id}`}
             className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Technical>{tunnel.interface_name}</Technical>
+            {tunnel.display_name ? tunnel.display_name : <Technical>{tunnel.interface_name}</Technical>}
           </Link>
+          {tunnel.display_name ? <Technical className="block text-xs text-muted-foreground">{tunnel.interface_name}</Technical> : null}
           <div className="mt-0.5 flex flex-wrap items-center gap-1">
             <Badge>{tunnel.tunnel_side_id === TunnelSide.A ? t('tunnel.side.a') : t('tunnel.side.b')}</Badge>
             {!tunnel.is_enabled ? <Badge tone="neutral">{t('states.disabled')}</Badge> : null}

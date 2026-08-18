@@ -430,6 +430,9 @@ func tunnelInputOf(rec tunnel.Record) validate.TunnelInput {
 		MonitorDegradedRttMs:       rec.MonitorDegradedRttMs,
 		MonitorStateChangeSamples:  rec.MonitorStateChangeSamples,
 	}
+	if rec.DisplayName != nil {
+		in.DisplayName = *rec.DisplayName
+	}
 	if rec.BindDevice != nil {
 		in.BindDevice = *rec.BindDevice
 	}

@@ -49,6 +49,7 @@ type Tunnel struct {
 	TunnelSideID      int64   `json:"tunnel_side_id"`
 	PersistenceTypeID int64   `json:"persistence_type_id"`
 	InterfaceName     string  `json:"interface_name"`
+	DisplayName       *string `json:"display_name"`
 	TunnelNumber      *int64  `json:"tunnel_number"`
 	LocalEndpoint     string  `json:"local_endpoint"`
 	RemoteEndpoint    string  `json:"remote_endpoint"`

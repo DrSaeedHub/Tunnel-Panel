@@ -360,6 +360,8 @@ export default {
     fields: {
       type: 'Tunnel type',
       side: 'Side',
+      displayName: 'Display name',
+      displayNamePlaceholder: 'e.g. Frankfurt ↔ Singapore',
       interfaceName: 'Interface name',
       tunnelNumber: 'Tunnel number',
       localEndpoint: 'Local endpoint',
@@ -402,6 +404,7 @@ export default {
       mtu: 'The largest packet the tunnel carries. Too high and packets are dropped silently.',
       ttl: 'Hop limit on the outer packet. 255 keeps the tunnel from being dropped by hop count.',
       key: 'A number shared by both ends. It separates tunnels between the same pair of hosts; it is not a secret and provides no security.',
+      displayName: 'A friendly name shown in the panel to help you recognize this tunnel. Purely cosmetic — it has no effect on the tunnel itself.',
       interfaceName: 'The kernel interface name. Generated from the naming template unless you set it.',
       bindDevice: 'Force the tunnel out of one interface rather than following the routing table.',
       fwmark: 'Marks the tunnel\'s packets, for policy routing rules you have set up elsewhere. Leave empty for none.',

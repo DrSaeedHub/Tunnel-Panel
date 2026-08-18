@@ -202,7 +202,7 @@ export function TunnelFormDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{tunnel ? t('tunnelForm.editTitle', { name: tunnel.interface_name }) : t('tunnelForm.createTitle')}</DialogTitle>
+            <DialogTitle>{tunnel ? t('tunnelForm.editTitle', { name: tunnel.display_name || tunnel.interface_name }) : t('tunnelForm.createTitle')}</DialogTitle>
           </DialogHeader>
           <DialogBody>
             <p className="text-sm text-muted-foreground">{t('states.loading')}</p>
@@ -227,7 +227,7 @@ export function TunnelFormDialog({
       <DialogContent size="xl">
         <DialogHeader>
           <DialogTitle>
-            {tunnel ? t('tunnelForm.editTitle', { name: tunnel.interface_name }) : t('tunnelForm.createTitle')}
+            {tunnel ? t('tunnelForm.editTitle', { name: tunnel.display_name || tunnel.interface_name }) : t('tunnelForm.createTitle')}
           </DialogTitle>
         </DialogHeader>
 
@@ -243,6 +243,20 @@ export function TunnelFormDialog({
             <h3 className="display text-xs font-bold text-muted-foreground">
               {t('tunnelForm.sectionType')}
             </h3>
+            <Field
+              label={t('tunnel.fields.displayName')}
+              description={t('tunnel.help.displayName')}
+              error={fieldErrors['display_name']}
+            >
+              {(props) => (
+                <Input
+                  {...props}
+                  value={form.display_name ?? ''}
+                  onChange={(event) => set('display_name', event.target.value)}
+                  placeholder={t('tunnel.fields.displayNamePlaceholder')}
+                />
+              )}
+            </Field>
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label={t('tunnel.fields.type')} error={fieldErrors['tunnel_type_id']}>
                 {(props) => (
@@ -964,6 +978,7 @@ function defaultsFrom(settings: Record<string, unknown>): FormState {
     tunnel_side_id: TunnelSide.A,
     persistence_type_id: number('tunnel.default_persistence', PersistenceType.Systemd),
     interface_name: '',
+    display_name: '',
     tunnel_number: null,
     local_endpoint: '',
     remote_endpoint: '',
@@ -995,6 +1010,7 @@ function formFromTunnel(tunnel: Tunnel): FormState {
     tunnel_side_id: tunnel.tunnel_side_id,
     persistence_type_id: tunnel.persistence_type_id,
     interface_name: tunnel.interface_name,
+    display_name: tunnel.display_name ?? '',
     tunnel_number: tunnel.tunnel_number,
     local_endpoint: tunnel.local_endpoint,
     remote_endpoint: tunnel.remote_endpoint,
@@ -1061,6 +1077,10 @@ function toPatch(form: FormState, manual: boolean): Record<string, unknown> {
     is_path_mtu_discovery: form.is_path_mtu_discovery,
     is_ignore_df: form.is_ignore_df,
     is_enabled: form.is_enabled,
+    // Always sent, unlike interface_name/bind_device below: display_name has
+    // no "leave it alone" empty meaning, so clearing the field in the form
+    // must clear it on the tunnel too.
+    display_name: form.display_name ?? '',
   }
 
   if (form.interface_name) patch.interface_name = form.interface_name

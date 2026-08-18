@@ -60,6 +60,7 @@ var entityDDL = []string{
 		TunnelSideID      INTEGER NOT NULL,
 		PersistenceTypeID INTEGER NOT NULL,
 		InterfaceName     TEXT    NOT NULL,
+		DisplayName       TEXT,
 		TunnelNumber      INTEGER,
 		LocalEndpoint     TEXT    NOT NULL,
 		RemoteEndpoint    TEXT    NOT NULL,
