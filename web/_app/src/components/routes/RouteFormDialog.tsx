@@ -21,7 +21,7 @@ import {
 } from '@/lib/types'
 import { useToast } from '@/providers/ToastProvider'
 import { usePreferences } from '@/providers/PreferencesProvider'
-import { formatMs } from '@/lib/format'
+import { formatMs, hasDisplayName, tunnelLabel } from '@/lib/format'
 import { describeError } from '../ui/feedback'
 import { routeVerificationFailures, routeVerificationPassed } from '@/hooks/useRouteActions'
 import { Button } from '../ui/button'
@@ -762,21 +762,26 @@ function TunnelDestination({
             placeholder={t('routeForm.destination.pickTunnel')}
             options={tunnels.map((entry) => ({
               value: String(entry.tunnel.tunnel_id),
-              label: entry.tunnel.interface_name,
-              description: `${entry.tunnel.local_endpoint} → ${entry.tunnel.remote_endpoint}`,
+              // Named by what the operator called it; the interface name joins
+              // the endpoints below, where it is still the thing that has to
+              // match what `ip link` shows.
+              label: tunnelLabel(entry.tunnel),
+              description: hasDisplayName(entry.tunnel)
+                ? `${entry.tunnel.interface_name} · ${entry.tunnel.local_endpoint} → ${entry.tunnel.remote_endpoint}`
+                : `${entry.tunnel.local_endpoint} → ${entry.tunnel.remote_endpoint}`,
             }))}
           />
         )}
       </Field>
       {selected && peerQuery.data?.peer_address ? (
         <p className="text-2xs text-muted-foreground">
-          {t('routeForm.destination.prefilled', { name: selected.tunnel.interface_name })}
+          {t('routeForm.destination.prefilled', { name: tunnelLabel(selected.tunnel) })}
         </p>
       ) : null}
       {down ? (
         <p className="flex items-start gap-2 text-2xs text-warn">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
-          {t('routeForm.destination.tunnelDown', { name: selected.tunnel.interface_name })}
+          {t('routeForm.destination.tunnelDown', { name: tunnelLabel(selected.tunnel) })}
         </p>
       ) : null}
     </div>

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
-import { CopyButton, Technical, TechnicalBlock } from './technical'
+import { CopyButton, Technical, TechnicalBlock, TunnelName } from './technical'
 
 /**
  * Bidirectional isolation is the most common way a bilingual panel gets a
@@ -116,5 +116,36 @@ describe('CopyButton fallback', () => {
     await waitFor(() =>
       expect(within(container).getByRole('button')).toHaveAccessibleName('Could not copy'),
     )
+  })
+})
+
+/**
+ * The naming rule, asserted on the component every tunnel label goes through.
+ * A panel that shows the operator's name on one screen and `gre-a-1` on the
+ * next makes them hold two names for one thing.
+ */
+describe('TunnelName', () => {
+  it('shows the display name, as prose rather than as a technical value', () => {
+    render(<TunnelName tunnel={{ interface_name: 'gre-a-1', display_name: 'Frankfurt ↔ Singapore' }} />)
+
+    const name = screen.getByText('Frankfurt ↔ Singapore')
+    expect(name).not.toHaveClass('technical')
+    expect(screen.queryByText('gre-a-1')).toBeNull()
+  })
+
+  it('falls back to the interface name, isolated the way every technical value is', () => {
+    render(<TunnelName tunnel={{ interface_name: 'gre-a-1' }} />)
+
+    const name = screen.getByText('gre-a-1')
+    expect(name).toHaveClass('technical')
+    expect(name).toHaveAttribute('dir', 'ltr')
+  })
+
+  it('offers the copy control only for the interface name', () => {
+    const { container, rerender } = render(<TunnelName tunnel={{ interface_name: 'gre-a-1' }} copyable />)
+    expect(within(container).getByRole('button')).toBeInTheDocument()
+
+    rerender(<TunnelName tunnel={{ interface_name: 'gre-a-1', display_name: 'Frankfurt' }} copyable />)
+    expect(within(container).queryByRole('button')).toBeNull()
   })
 })

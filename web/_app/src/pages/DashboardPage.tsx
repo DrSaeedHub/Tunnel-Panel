@@ -6,7 +6,7 @@ import { ArrowUpCircle, Plus, RefreshCw } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import type { SettingsResponse, SystemInfo, TunnelListResponse } from '@/lib/types'
+import type { SettingsResponse, SystemInfo, Tunnel, TunnelListResponse } from '@/lib/types'
 import { formatCount, formatDuration } from '@/lib/format'
 import { useMetrics, series } from '@/hooks/useMetrics'
 import type { useMonitorSummary } from '@/hooks/useMonitorSummary'
@@ -52,12 +52,13 @@ export default function DashboardPage() {
   const criticalPercent = numberSetting(settings, 'metrics.disk_critical_pct', 95)
   const hideLoopback = settings['metrics.hide_loopback'] !== false
 
-  // Interface name to tunnel identifier, so a tunnel row in the traffic
-  // breakdown navigates to the tunnel it belongs to.
+  // Interface name to the tunnel behind it, so a tunnel row in the traffic
+  // breakdown navigates to the tunnel it belongs to and is named the way the
+  // operator named it.
   const tunnelsByInterface = useMemo(() => {
-    const map = new Map<string, number>()
+    const map = new Map<string, Tunnel>()
     for (const entry of tunnelsQuery.data?.tunnels ?? []) {
-      map.set(entry.tunnel.interface_name, entry.tunnel.tunnel_id)
+      map.set(entry.tunnel.interface_name, entry.tunnel)
     }
     return map
   }, [tunnelsQuery.data])

@@ -52,6 +52,7 @@ type StaticHandler struct {
 
 	basePath    string
 	apiBasePath string
+	version     string
 
 	// index is the rendered index.html: the embedded file with the base path
 	// injected. It is rendered once at startup because the prefix cannot change
@@ -72,8 +73,10 @@ type StaticHandler struct {
 func (h *StaticHandler) ScriptHash() string { return h.scriptHash }
 
 // NewStaticHandler prepares the embedded assets for serving under basePath,
-// which must begin and end with a slash.
-func NewStaticHandler(basePath, apiBasePath string) (*StaticHandler, error) {
+// which must begin and end with a slash. The version is the build serving the
+// page, injected so the frontend can tell a page it is still showing from the
+// build now answering it.
+func NewStaticHandler(basePath, apiBasePath, version string) (*StaticHandler, error) {
 	sub, err := fs.Sub(webui.Assets, "dist")
 	if err != nil {
 		return nil, fmt.Errorf("opening the embedded frontend: %w", err)
@@ -83,8 +86,8 @@ func NewStaticHandler(basePath, apiBasePath string) (*StaticHandler, error) {
 		return nil, fmt.Errorf("reading the embedded %s: %w", indexFile, err)
 	}
 
-	h := &StaticHandler{files: sub, basePath: basePath, apiBasePath: apiBasePath}
-	h.index, h.scriptHash = injectBasePath(raw, basePath, apiBasePath)
+	h := &StaticHandler{files: sub, basePath: basePath, apiBasePath: apiBasePath, version: version}
+	h.index, h.scriptHash = injectBasePath(raw, basePath, apiBasePath, version)
 	sum := sha256.Sum256(h.index)
 	h.indexETag = `"` + hex.EncodeToString(sum[:16]) + `"`
 	return h, nil
@@ -98,10 +101,16 @@ func NewStaticHandler(basePath, apiBasePath string) (*StaticHandler, error) {
 // client the same prefix without a second source of truth.
 // It returns the rendered page and the CSP source expression for the inline
 // script it injected, since script-src 'self' does not cover inline code.
-func injectBasePath(raw []byte, basePath, apiBasePath string) ([]byte, string) {
+func injectBasePath(raw []byte, basePath, apiBasePath, version string) ([]byte, string) {
 	bootstrap, err := json.Marshal(map[string]string{
 		"base_path":     basePath,
 		"api_base_path": apiBasePath,
+		// The build that served this page. An update replaces the binary and
+		// restarts it, so a page whose version no longer matches the running
+		// one is the old interface: the frontend uses this to know it must be
+		// reloaded, and the ETag below changes with it so a cached index.html
+		// is not what comes back.
+		"version": version,
 	})
 	if err != nil {
 		// The input is two strings from our own config; this cannot fail, but

@@ -14,7 +14,14 @@ import {
   type MonitorStatusResponse,
   type TunnelResponse,
 } from '@/lib/types'
-import { formatDateTime, formatMs, formatPercent, formatRelative } from '@/lib/format'
+import {
+  formatDateTime,
+  formatMs,
+  formatPercent,
+  formatRelative,
+  hasDisplayName,
+  tunnelLabel,
+} from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useTunnelActions } from '@/hooks/useTunnelActions'
 import { Button } from '@/components/ui/button'
@@ -22,7 +29,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge, EmptyState, ErrorState, Skeleton } from '@/components/ui/feedback'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/disclosure'
 import { ApplyStatusBadge, StatusDot, StatusPill } from '@/components/ui/status'
-import { Technical } from '@/components/ui/technical'
+import { Technical, TunnelName } from '@/components/ui/technical'
 import { SwitchField } from '@/components/ui/form'
 import { HealthChart } from '@/components/tunnels/HealthChart'
 import { DiagnosticRuns, DiagnosticsPanel } from '@/components/tunnels/DiagnosticsPanel'
@@ -92,7 +99,7 @@ export default function TunnelDetailPage() {
   // Named for the tunnel once it is known, and for the page until then. The
   // effect this replaces only ever set a title when the tunnel loaded, so the
   // loading, error and not-found states all kept the previous page's title.
-  useDocumentTitle(tunnel ? tunnel.display_name || tunnel.interface_name : t('tunnels.title'))
+  useDocumentTitle(tunnel ? tunnelLabel(tunnel) : t('tunnels.title'))
 
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params)
@@ -122,7 +129,7 @@ export default function TunnelDetailPage() {
           </Button>
           <div className="flex flex-wrap items-center gap-2.5">
             <h2 className="text-2xl font-semibold tracking-tight">
-              {tunnel.display_name ? tunnel.display_name : <Technical copyable>{tunnel.interface_name}</Technical>}
+              <TunnelName tunnel={tunnel} copyable />
             </h2>
             <StatusPill
               stateId={status?.monitor_state_id ?? MonitorState.Unknown}
@@ -131,7 +138,7 @@ export default function TunnelDetailPage() {
             <ApplyStatusBadge statusId={tunnel.apply_status_id} />
             <Badge>{tunnel.tunnel_side_id === TunnelSide.A ? t('tunnel.side.a') : t('tunnel.side.b')}</Badge>
           </div>
-          {tunnel.display_name ? (
+          {hasDisplayName(tunnel) ? (
             <p className="mt-0.5">
               <Technical copyable className="text-xs text-muted-foreground">{tunnel.interface_name}</Technical>
             </p>
@@ -152,7 +159,7 @@ export default function TunnelDetailPage() {
             variant="secondary"
             size="sm"
             loading={busy}
-            onClick={() => void actions.run(tunnelId, 'restart', tunnel.interface_name)}
+            onClick={() => void actions.run(tunnelId, 'restart', tunnelLabel(tunnel))}
           >
             <RefreshCw className="size-4" aria-hidden="true" />
             {t('actions.restart')}
@@ -266,7 +273,7 @@ export default function TunnelDetailPage() {
                         label={t('monitor.enableMonitoring')}
                         checked={status.enabled}
                         onCheckedChange={(value) =>
-                          void actions.setMonitoring(tunnelId, value, tunnel.interface_name)
+                          void actions.setMonitoring(tunnelId, value, tunnelLabel(tunnel))
                         }
                       />
                     </>

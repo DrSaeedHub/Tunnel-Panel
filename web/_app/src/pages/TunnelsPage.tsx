@@ -25,7 +25,7 @@ import {
   type TunnelListResponse,
   type TunnelResponse,
 } from '@/lib/types'
-import { formatMs, formatPercent } from '@/lib/format'
+import { formatMs, formatPercent, hasDisplayName, tunnelLabel } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useTunnelActions } from '@/hooks/useTunnelActions'
 import type { useMonitorSummary } from '@/hooks/useMonitorSummary'
@@ -41,7 +41,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/overlay'
 import { ApplyStatusBadge, StatusPill, monitorStateKey } from '@/components/ui/status'
-import { Technical } from '@/components/ui/technical'
+import { Technical, TunnelName } from '@/components/ui/technical'
 import { cn } from '@/lib/utils'
 import { TunnelFormDialog } from '@/components/tunnels/TunnelFormDialog'
 import { DeleteTunnelDialog } from '@/components/tunnels/DeleteTunnelDialog'
@@ -131,9 +131,7 @@ export default function TunnelsPage() {
       }
       if (sortKey === 'type') return a.tunnel.tunnel_type_id - b.tunnel.tunnel_type_id
       if (sortKey === 'side') return a.tunnel.tunnel_side_id - b.tunnel.tunnel_side_id
-      const left = a.tunnel.display_name || a.tunnel.interface_name
-      const right = b.tunnel.display_name || b.tunnel.interface_name
-      return left.localeCompare(right)
+      return tunnelLabel(a.tunnel).localeCompare(tunnelLabel(b.tunnel))
     })
   }, [listQuery.data, monitor.byTunnel, search, statusFilter, typeFilter, sideFilter, applyFilter, sortKey])
 
@@ -223,7 +221,7 @@ export default function TunnelsPage() {
           onAction={async (action) => {
             const chosen = rows.filter((row) => selected.has(row.tunnel.tunnel_id))
             for (const row of chosen) {
-              await actions.run(row.tunnel.tunnel_id, action, row.tunnel.interface_name)
+              await actions.run(row.tunnel.tunnel_id, action, tunnelLabel(row.tunnel))
             }
             setSelected(new Set())
           }}
@@ -314,7 +312,7 @@ export default function TunnelsPage() {
                       setParam('expanded', expandedId === String(row.tunnel.tunnel_id) ? '' : String(row.tunnel.tunnel_id))
                     }
                     busy={actions.pending === row.tunnel.tunnel_id}
-                    onAction={(action) => void actions.run(row.tunnel.tunnel_id, action, row.tunnel.interface_name)}
+                    onAction={(action) => void actions.run(row.tunnel.tunnel_id, action, tunnelLabel(row.tunnel))}
                     onEdit={() => {
                       setEditing(row.tunnel)
                       setPrefill(null)
@@ -449,7 +447,7 @@ function TunnelRow({
           <Checkbox
             checked={selected}
             onCheckedChange={onSelect}
-            aria-label={t('a11y.selectRow', { name: tunnel.interface_name })}
+            aria-label={t('a11y.selectRow', { name: tunnelLabel(tunnel) })}
           />
         </td>
         <td className="px-2 py-[var(--row-padding-block)]">
@@ -467,9 +465,11 @@ function TunnelRow({
             to={`/tunnels/${tunnel.tunnel_id}`}
             className="font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            {tunnel.display_name ? tunnel.display_name : <Technical>{tunnel.interface_name}</Technical>}
+            <TunnelName tunnel={tunnel} />
           </Link>
-          {tunnel.display_name ? <Technical className="block text-xs text-muted-foreground">{tunnel.interface_name}</Technical> : null}
+          {hasDisplayName(tunnel) ? (
+            <Technical className="block text-xs text-muted-foreground">{tunnel.interface_name}</Technical>
+          ) : null}
           <div className="mt-0.5 flex flex-wrap items-center gap-1">
             <Badge>{tunnel.tunnel_side_id === TunnelSide.A ? t('tunnel.side.a') : t('tunnel.side.b')}</Badge>
             {!tunnel.is_enabled ? <Badge tone="neutral">{t('states.disabled')}</Badge> : null}

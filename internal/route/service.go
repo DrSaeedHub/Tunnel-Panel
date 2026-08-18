@@ -50,7 +50,12 @@ type TunnelSource interface {
 type TunnelHealth struct {
 	TunnelID      int64  `json:"tunnel_id"`
 	InterfaceName string `json:"interface_name"`
-	IsEnabled     bool   `json:"is_enabled"`
+	// DisplayName is what the operator called the tunnel, when they named it.
+	// The panel names a tunnel by this everywhere it is labelled, so a rule
+	// that reports an impaired path can say which tunnel in the operator's own
+	// words rather than only in the kernel's.
+	DisplayName string `json:"display_name,omitempty"`
+	IsEnabled   bool   `json:"is_enabled"`
 	// IsUp is the kernel's UP and LOWER_UP flags, never the operational state:
 	// a healthy GRE tunnel reports UNKNOWN.
 	IsUp bool `json:"is_up"`

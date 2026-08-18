@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle, CheckCircle2, Download, ExternalLink, Loader2, RefreshCw } from 'lucide-react'
 
-import { panelUrl } from '@/lib/bootstrap'
+import { panelUrl, servedVersion } from '@/lib/bootstrap'
 import { useUpdate } from '@/providers/UpdateProvider'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { formatDateTime } from '@/lib/format'
@@ -39,12 +39,19 @@ export function UpdateDialog() {
   const latest = status?.latest.version ?? ''
   const running = applying || stage === 'running'
   const available = Boolean(status?.update_available)
+  const current = status?.current_version ?? ''
 
   // The record of the last run outlives that run: a panel updated in March
-  // still reports it in June. So a version on offer takes precedence over a
-  // finished run — otherwise the success screen from the last update would
-  // stand between the operator and the next one, with no button on it.
-  const showDone = !running && stage === 'succeeded' && !available
+  // still reports it in June. What does not outlive it is this page being the
+  // wrong one — that is true only while the build that served the page differs
+  // from the build now answering, which is exactly what reloading fixes. Tying
+  // the success screen to the version and not to the stage is what stops it
+  // standing in front of the next update forever, with no way past it.
+  const pageIsStale = Boolean(servedVersion) && Boolean(current) && servedVersion !== current
+  // With no injected version there is nothing to compare, so fall back to the
+  // older rule: a page under `vite dev`, or one served by a panel from before
+  // the version was injected.
+  const showDone = !running && stage === 'succeeded' && (pageIsStale || (!servedVersion && !available))
   const showFailed = !running && stage === 'failed' && !available
   const showOffer = !running && !showDone && !showFailed
 
@@ -111,7 +118,11 @@ export function UpdateDialog() {
           <Button variant="ghost" onClick={close}>
             {t('actions.close')}
           </Button>
-          {!running && !showDone ? (
+          {/* Offered in every settled state, the finished one included: an
+              operator who has just updated is the one most likely to want to
+              know what has landed since, and hiding it here is what left the
+              last run's success screen as the whole dialog. */}
+          {!running ? (
             <Button variant="secondary" onClick={check} loading={isChecking}>
               <RefreshCw className="size-4" aria-hidden="true" />
               {t('update.actions.check')}

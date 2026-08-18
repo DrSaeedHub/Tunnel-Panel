@@ -4,6 +4,7 @@ import { AlertTriangle } from 'lucide-react'
 
 import { ApiError } from '@/lib/api'
 import { PersistenceType, type Tunnel } from '@/lib/types'
+import { tunnelLabel } from '@/lib/format'
 import { useTunnelActions } from '@/hooks/useTunnelActions'
 import { Button } from '../ui/button'
 import { Checkbox, Field, TechnicalInput } from '../ui/form'
@@ -64,7 +65,7 @@ export function DeleteTunnelDialog({
     if (!nameMatches || blocked || submitting) return
     setSubmitting(true)
     try {
-      const done = await actions.remove(tunnel.tunnel_id, tunnel.interface_name, {
+      const done = await actions.remove(tunnel.tunnel_id, tunnelLabel(tunnel), {
         iUnderstandIMayLoseAccess: acknowledged,
       })
       if (done) {
@@ -95,7 +96,7 @@ export function DeleteTunnelDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-danger">
             <AlertTriangle className="size-4" aria-hidden="true" />
-            {t('deleteDialog.title', { name: tunnel.interface_name })}
+            {t('deleteDialog.title', { name: tunnelLabel(tunnel) })}
           </DialogTitle>
           <DialogDescription>{t('deleteDialog.body')}</DialogDescription>
         </DialogHeader>

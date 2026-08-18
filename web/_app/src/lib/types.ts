@@ -887,6 +887,8 @@ export interface FieldDiff {
 export interface ReconcileItem {
   tunnel_id?: number
   interface_name: string
+  /** What the operator called the tunnel, when the panel has a record for it. */
+  display_name?: string
   reconcile_status_id: number
   status: string
   detail: string
@@ -1118,6 +1120,8 @@ export interface RouteRule {
 export interface RouteTunnelHealth {
   tunnel_id: number
   interface_name: string
+  /** What the operator called the tunnel, when they named it. */
+  display_name?: string
   is_enabled: boolean
   /** The kernel's UP and LOWER_UP flags, never the operational state. */
   is_up: boolean

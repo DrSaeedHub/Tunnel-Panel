@@ -1069,7 +1069,7 @@ func TestSinglePageAppAtTheRootWithoutAWebPath(t *testing.T) {
 
 func TestInjectBasePathAddsTheTagAfterHead(t *testing.T) {
 	rendered, hash := injectBasePath([]byte("<html><head><title>x</title></head><body></body></html>"),
-		"/p/", "/p/api/v1")
+		"/p/", "/p/api/v1", "v0.1.7")
 	out := string(rendered)
 	if !strings.HasPrefix(hash, "'sha256-") || !strings.HasSuffix(hash, "'") {
 		t.Errorf("script hash = %q, want a quoted sha256- source expression", hash)
@@ -1082,6 +1082,12 @@ func TestInjectBasePathAddsTheTagAfterHead(t *testing.T) {
 	}
 	if !(headAt < baseAt && baseAt < titleAt) {
 		t.Errorf("the base tag is not immediately inside head: %s", out)
+	}
+	// The build that served the page rides along with the paths: it is how the
+	// frontend knows a page it is still showing came from a binary that has
+	// since been replaced.
+	if !strings.Contains(out, `"version":"v0.1.7"`) {
+		t.Errorf("the serving version was not injected: %s", out)
 	}
 }
 

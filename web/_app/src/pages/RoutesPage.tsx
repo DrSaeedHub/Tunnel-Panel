@@ -28,7 +28,14 @@ import {
   type RouteRule,
   type TunnelListResponse,
 } from '@/lib/types'
-import { formatCount, formatThroughput, formatVolume } from '@/lib/format'
+import {
+  formatCount,
+  formatThroughput,
+  formatVolume,
+  hasDisplayName,
+  tunnelLabel,
+  type NamedTunnel,
+} from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useMetrics } from '@/hooks/useMetrics'
 import { useRouteActions } from '@/hooks/useRouteActions'
@@ -45,7 +52,7 @@ import {
   Tooltip,
 } from '@/components/ui/overlay'
 import { ApplyStatusBadge, RouteStatusPill } from '@/components/ui/status'
-import { Technical, TechnicalBlock } from '@/components/ui/technical'
+import { Technical, TechnicalBlock, TunnelName } from '@/components/ui/technical'
 import { StaleWrapper } from '@/components/layout/LiveIndicator'
 import { cn } from '@/lib/utils'
 import { RouteFlow, endpointLabel } from '@/components/routes/RouteFlow'
@@ -105,10 +112,10 @@ export default function RoutesPage() {
     queryFn: () => api.get<TunnelListResponse>('/tunnels'),
     staleTime: 60_000,
   })
-  const tunnelNames = useMemo(() => {
-    const map = new Map<number, string>()
+  const tunnelsById = useMemo(() => {
+    const map = new Map<number, NamedTunnel>()
     for (const entry of tunnelsQuery.data?.tunnels ?? []) {
-      map.set(entry.tunnel.tunnel_id, entry.tunnel.interface_name)
+      map.set(entry.tunnel.tunnel_id, entry.tunnel)
     }
     return map
   }, [tunnelsQuery.data])
@@ -276,7 +283,7 @@ export default function RoutesPage() {
           ]}
         />
 
-        {tunnelNames.size ? (
+        {tunnelsById.size ? (
           <Select
             value={tunnelFilter}
             onValueChange={(value) => setParam('tunnel', value === 'all' ? '' : value)}
@@ -285,7 +292,10 @@ export default function RoutesPage() {
             options={[
               { value: 'all', label: t('routes.filter.all') },
               { value: 'none', label: t('routes.filter.noTunnel') },
-              ...[...tunnelNames].map(([id, name]) => ({ value: String(id), label: name })),
+              ...[...tunnelsById].map(([id, tunnel]) => ({
+                value: String(id),
+                label: tunnelLabel(tunnel),
+              })),
             ]}
           />
         ) : null}
@@ -407,7 +417,7 @@ export default function RoutesPage() {
                       index={index}
                       count={rows.length}
                       traffic={trafficById.get(row.route.route_rule_id)}
-                      tunnelName={row.route.tunnel_id ? tunnelNames.get(row.route.tunnel_id) : undefined}
+                      tunnel={row.route.tunnel_id ? tunnelsById.get(row.route.tunnel_id) : undefined}
                       selected={selected.has(row.route.route_rule_id)}
                       onSelect={() => toggleSelected(row.route.route_rule_id)}
                       expanded={expandedId === String(row.route.route_rule_id)}
@@ -538,7 +548,7 @@ function RouteRow({
   index,
   count,
   traffic,
-  tunnelName,
+  tunnel,
   selected,
   onSelect,
   expanded,
@@ -563,7 +573,7 @@ function RouteRow({
   index: number
   count: number
   traffic?: RelayTraffic
-  tunnelName?: string
+  tunnel?: NamedTunnel
   selected: boolean
   onSelect: () => void
   expanded: boolean
@@ -657,9 +667,9 @@ function RouteRow({
           </Link>
           <div className="mt-0.5 flex flex-wrap items-center gap-1">
             <Badge>{t(`routes.protocol.${rule.route_protocol_id}`)}</Badge>
-            {tunnelName ? (
+            {tunnel ? (
               <Badge tone="neutral">
-                <Technical className="text-2xs">{tunnelName}</Technical>
+                <TunnelName tunnel={tunnel} className="text-2xs" />
               </Badge>
             ) : null}
             {index === 0 && count > 1 ? <Badge tone="neutral">{t('routes.order.hint')}</Badge> : null}
@@ -735,7 +745,7 @@ function RouteRow({
       {expanded ? (
         <tr className="bg-surface-sunken">
           <td colSpan={9} className="p-3">
-            <RouteExpansion entry={entry} tunnelName={tunnelName} />
+            <RouteExpansion entry={entry} tunnel={tunnel} />
           </td>
         </tr>
       ) : null}
@@ -744,7 +754,7 @@ function RouteRow({
 }
 
 /** The full parameter set and the rules the panel generates from it. */
-function RouteExpansion({ entry, tunnelName }: { entry: RouteResponse; tunnelName?: string }) {
+function RouteExpansion({ entry, tunnel }: { entry: RouteResponse; tunnel?: NamedTunnel }) {
   const { t } = useTranslation()
   const rule = entry.route
 
@@ -771,7 +781,13 @@ function RouteExpansion({ entry, tunnelName }: { entry: RouteResponse; tunnelNam
             plain
           />
         ) : null}
-        {tunnelName ? <Detail label={t('routeForm.destination.pickTunnel')} value={tunnelName} /> : null}
+        {tunnel ? (
+          <Detail
+            label={t('routeForm.destination.pickTunnel')}
+            value={tunnelLabel(tunnel)}
+            plain={hasDisplayName(tunnel)}
+          />
+        ) : null}
         {rule.bind_interface ? (
           <Detail label={t('routeForm.fields.bindInterface')} value={rule.bind_interface} />
         ) : null}

@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, ChevronDown, Gauge, Info } from 'lucide-react'
 
-import type { MetricsSnapshot, NetInterface, RelayTraffic } from '@/lib/types'
-import { formatThroughput, formatVolume } from '@/lib/format'
+import type { MetricsSnapshot, NetInterface, RelayTraffic, Tunnel } from '@/lib/types'
+import { formatThroughput, formatVolume, hasDisplayName, tunnelLabel } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
@@ -42,8 +42,12 @@ export function TrafficCard({
 }: {
   snapshot: MetricsSnapshot
   history: MetricsSnapshot[]
-  /** Lets a tunnel row link to the tunnel it belongs to. */
-  tunnelsByInterface: Map<string, number>
+  /**
+   * The tunnel behind an interface, when the panel manages one. It lets a
+   * tunnel row link to its tunnel and, more importantly, wear the name the
+   * operator gave it rather than only the one the kernel uses.
+   */
+  tunnelsByInterface: Map<string, Tunnel>
   hideLoopbackByDefault: boolean
 }) {
   const { t } = useTranslation()
@@ -175,7 +179,7 @@ export function TrafficCard({
                           iface={iface}
                           basis={basis}
                           history={historyFor(iface.name)}
-                          tunnelId={tunnelsByInterface.get(iface.name)}
+                          tunnel={tunnelsByInterface.get(iface.name)}
                         />
                       ))}
                     </ul>
@@ -339,12 +343,12 @@ function InterfaceRow({
   iface,
   basis,
   history,
-  tunnelId,
+  tunnel,
 }: {
   iface: NetInterface
   basis: VolumeBasis
   history: number[]
-  tunnelId?: number
+  tunnel?: Tunnel
 }) {
   const { units } = usePreferences()
 
@@ -364,7 +368,18 @@ function InterfaceRow({
           aria-hidden="true"
         />
         <div className="min-w-0">
-          <Technical className="block truncate text-xs">{iface.name}</Technical>
+          {/* A named tunnel leads with its name and keeps the interface name
+              underneath, which is still what the counters are read from. */}
+          {tunnel && hasDisplayName(tunnel) ? (
+            <>
+              <span className="block truncate text-xs">{tunnelLabel(tunnel)}</span>
+              <Technical className="block truncate text-2xs text-muted-foreground">
+                {iface.name}
+              </Technical>
+            </>
+          ) : (
+            <Technical className="block truncate text-xs">{iface.name}</Technical>
+          )}
           {iface.primary_address ? (
             <Technical className="block truncate text-2xs text-muted-foreground">
               {iface.primary_address}
@@ -394,9 +409,9 @@ function InterfaceRow({
 
   return (
     <li>
-      {tunnelId ? (
+      {tunnel ? (
         <Link
-          to={`/tunnels/${tunnelId}`}
+          to={`/tunnels/${tunnel.tunnel_id}`}
           className="flex items-center gap-3 rounded-full bg-surface-sunken/70 px-4 py-[var(--row-padding-block)] transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {body}

@@ -13,7 +13,13 @@ import {
   type RouteTrafficPoint,
   type RouteTrafficSample,
 } from '@/lib/types'
-import { formatCount, formatDateTime, formatThroughput, formatVolume } from '@/lib/format'
+import {
+  formatCount,
+  formatDateTime,
+  formatThroughput,
+  formatVolume,
+  tunnelLabel,
+} from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useMetrics } from '@/hooks/useMetrics'
 import { useRouteActions } from '@/hooks/useRouteActions'
@@ -22,7 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmptyState, ErrorState, Skeleton } from '@/components/ui/feedback'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/disclosure'
 import { ApplyStatusBadge, RouteStatusPill } from '@/components/ui/status'
-import { Technical } from '@/components/ui/technical'
+import { Technical, TunnelName } from '@/components/ui/technical'
 import { StaleWrapper } from '@/components/layout/LiveIndicator'
 import { RouteFlow, endpointLabel } from '@/components/routes/RouteFlow'
 import { RouteFormDialog } from '@/components/routes/RouteFormDialog'
@@ -201,9 +207,9 @@ export default function RouteDetailPage() {
         <p className="flex items-start gap-2 rounded-md border border-warn/40 bg-warn-muted p-3 text-xs">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
           <span>
-            {t('routeDetail.impairedBanner', { tunnel: health.tunnel.interface_name })}{' '}
+            {t('routeDetail.impairedBanner', { tunnel: tunnelLabel(health.tunnel) })}{' '}
             <Link to={`/tunnels/${health.tunnel.tunnel_id}`} className="underline">
-              {health.tunnel.interface_name}
+              <TunnelName tunnel={health.tunnel} />
             </Link>
           </span>
         </p>

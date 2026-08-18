@@ -110,8 +110,12 @@ type FieldDiff struct {
 
 // Item is one line of the reconcile report.
 type Item struct {
-	TunnelID          *int64      `json:"tunnel_id,omitempty"`
-	InterfaceName     string      `json:"interface_name"`
+	TunnelID      *int64 `json:"tunnel_id,omitempty"`
+	InterfaceName string `json:"interface_name"`
+	// DisplayName is what the operator called the tunnel, when the panel has a
+	// record for this interface and that record carries a name. An unmanaged
+	// interface has none, and the report names it by the interface alone.
+	DisplayName       string      `json:"display_name,omitempty"`
 	ReconcileStatusID int64       `json:"reconcile_status_id"`
 	Status            string      `json:"status"`
 	Detail            string      `json:"detail"`
@@ -281,6 +285,9 @@ func (s *Service) classify(rec tunnel.Record, observed link.Link, exists bool) I
 	item := Item{
 		TunnelID: &id, InterfaceName: rec.InterfaceName,
 		Actions: []string{ActionReapply, ActionForget, ActionDelete},
+	}
+	if rec.DisplayName != nil {
+		item.DisplayName = *rec.DisplayName
 	}
 	if legacy, ok := ParseLegacyName(rec.InterfaceName); ok {
 		item.Legacy = &legacy

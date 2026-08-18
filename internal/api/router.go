@@ -180,7 +180,7 @@ func New(d Deps) (*Server, error) {
 		health = NewHealthRegistry()
 	}
 
-	static, err := NewStaticHandler(d.Config.BasePath(), d.Config.APIBasePath())
+	static, err := NewStaticHandler(d.Config.BasePath(), d.Config.APIBasePath(), d.Build.Version)
 	if err != nil {
 		return nil, fmt.Errorf("api: preparing the embedded frontend: %w", err)
 	}

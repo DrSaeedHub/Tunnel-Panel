@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useRef, useState } from 'react'
 import { Check, Copy } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { hasDisplayName, tunnelLabel, type NamedTunnel } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 export interface TechnicalProps extends React.HTMLAttributes<HTMLSpanElement> {
@@ -50,6 +51,36 @@ export const Technical = forwardRef<HTMLSpanElement, TechnicalProps>(
   },
 )
 Technical.displayName = 'Technical'
+
+/**
+ * What a tunnel is called: its display name when it has one, its interface name
+ * otherwise.
+ *
+ * The two are typeset differently on purpose. A display name is prose the
+ * operator wrote and is set in the body face; an interface name is a technical
+ * value and goes through `Technical`, with the bidi isolation that keeps it
+ * readable inside Farsi text. Rendering both through this component is what
+ * stops one screen showing `gre-a-1` while the next shows the name beside it.
+ */
+export function TunnelName({
+  tunnel,
+  className,
+  copyable,
+}: {
+  tunnel: NamedTunnel
+  className?: string
+  /** Only honoured for the interface name; a display name is not a value to copy. */
+  copyable?: boolean
+}) {
+  if (!hasDisplayName(tunnel)) {
+    return (
+      <Technical className={className} copyable={copyable}>
+        {tunnel.interface_name}
+      </Technical>
+    )
+  }
+  return <span className={className}>{tunnelLabel(tunnel)}</span>
+}
 
 /**
  * A block of technical text — a rendered unit file, a command, a diagnostic

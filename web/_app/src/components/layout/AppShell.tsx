@@ -33,6 +33,7 @@ import { UpdateProvider } from '@/providers/UpdateProvider'
 import { useMonitorSummary } from '@/hooks/useMonitorSummary'
 import { Button } from '../ui/button'
 import { StatusDot } from '../ui/status'
+import { TunnelName } from '../ui/technical'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -331,7 +332,7 @@ function TunnelTree({ monitor }: { monitor: ReturnType<typeof useMonitorSummary>
             stateId={monitor.byTunnel.get(tunnel.tunnel_id)?.monitor_state_id ?? MonitorState.Unknown}
             className="shrink-0 [&>svg]:size-3"
           />
-          <span className="technical truncate text-xs">{tunnel.interface_name}</span>
+          <TunnelName tunnel={tunnel} className="truncate text-xs" />
         </TreeLeaf>
       ))}
     </TreeRail>

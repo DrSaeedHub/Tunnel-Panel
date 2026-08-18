@@ -9,7 +9,8 @@ import { useToast } from '@/providers/ToastProvider'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, describeError } from '../ui/feedback'
-import { Technical } from '../ui/technical'
+import { Technical, TunnelName } from '../ui/technical'
+import { hasDisplayName } from '@/lib/format'
 
 /**
  * What the panel and the server disagree about.
@@ -142,13 +143,20 @@ function AttentionRow({
         <p className="flex flex-wrap items-center gap-2 text-sm">
           {item.tunnel_id ? (
             <Link to={`/tunnels/${item.tunnel_id}`} className="font-medium hover:underline">
-              <Technical>{item.interface_name}</Technical>
+              <TunnelName tunnel={item} />
             </Link>
           ) : (
+            // No record, so no name but the kernel's: this is an interface the
+            // panel found rather than one it made.
             <Technical className="font-medium">{item.interface_name}</Technical>
           )}
           <Badge tone={tone}>{t(`reconcile.status.${statusKey}`)}</Badge>
         </p>
+        {hasDisplayName(item) ? (
+          <Technical className="mt-0.5 block text-2xs text-muted-foreground">
+            {item.interface_name}
+          </Technical>
+        ) : null}
         <p className="mt-0.5 text-xs text-muted-foreground">{item.detail}</p>
 
         {item.diffs?.length ? (

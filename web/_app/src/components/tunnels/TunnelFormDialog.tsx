@@ -33,6 +33,7 @@ import {
 } from '../ui/overlay'
 import { Badge } from '../ui/feedback'
 import { Technical } from '../ui/technical'
+import { tunnelLabel } from '@/lib/format'
 import { SideSelector } from './SideSelector'
 import { PreviewPanel } from './PreviewPanel'
 import { InheritedNumberField } from './InheritedField'
@@ -182,7 +183,7 @@ export function TunnelFormDialog({
       toast({
         tone: 'success',
         title: tunnel ? t('tunnelForm.updatedTitle') : t('tunnelForm.createdTitle'),
-        description: t('tunnelForm.createdBody', { name: result.tunnel.interface_name }),
+        description: t('tunnelForm.createdBody', { name: tunnelLabel(result.tunnel) }),
       })
       onOpenChange(false)
       if (!tunnel) onCreated?.(result.tunnel)
@@ -202,7 +203,7 @@ export function TunnelFormDialog({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{tunnel ? t('tunnelForm.editTitle', { name: tunnel.display_name || tunnel.interface_name }) : t('tunnelForm.createTitle')}</DialogTitle>
+            <DialogTitle>{tunnel ? t('tunnelForm.editTitle', { name: tunnelLabel(tunnel) }) : t('tunnelForm.createTitle')}</DialogTitle>
           </DialogHeader>
           <DialogBody>
             <p className="text-sm text-muted-foreground">{t('states.loading')}</p>
@@ -227,7 +228,7 @@ export function TunnelFormDialog({
       <DialogContent size="xl">
         <DialogHeader>
           <DialogTitle>
-            {tunnel ? t('tunnelForm.editTitle', { name: tunnel.display_name || tunnel.interface_name }) : t('tunnelForm.createTitle')}
+            {tunnel ? t('tunnelForm.editTitle', { name: tunnelLabel(tunnel) }) : t('tunnelForm.createTitle')}
           </DialogTitle>
         </DialogHeader>
 

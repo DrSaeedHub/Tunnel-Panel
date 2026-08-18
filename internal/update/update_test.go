@@ -386,6 +386,44 @@ func TestTheOutcomeIsReadBackFromTheUnitAfterTheRestart(t *testing.T) {
 	}
 }
 
+// The installer colours its progress lines. A terminal renders that; the
+// log pane in the browser renders the escape bytes themselves, so what the
+// operator reads is the evidence wrapped in `[1;34m`. They come off on the
+// way out, where both sources of the log pass through.
+func TestTheInstallersColoursDoNotReachTheBrowser(t *testing.T) {
+	runner := exec.NewFakeRunner()
+	runner.Handler = func(argv []string) (exec.Result, error) {
+		if strings.Contains(strings.Join(argv, " "), "systemctl show") {
+			return exec.Result{Stdout: "LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\nExecMainStatus=0\n"}, nil
+		}
+		return exec.Result{}, nil
+	}
+	applier, dir := newApplier(t, runner, nil)
+
+	if _, err := applier.Start(context.Background(), "v0.2.0", "admin"); err != nil {
+		t.Fatalf("starting the update failed: %v", err)
+	}
+
+	coloured := "\x1b[1;34m==>\x1b[0m Installing to /usr/local/bin/gre-panel\n" +
+		"\x1b[1;32mdone\x1b[0m\n"
+	if err := os.WriteFile(filepath.Join(dir, "update.log"), []byte(coloured), 0o600); err != nil {
+		t.Fatalf("writing the log: %v", err)
+	}
+
+	state := applier.State(context.Background())
+	if len(state.Log) != 2 {
+		t.Fatalf("log = %q, want the two lines the installer wrote", state.Log)
+	}
+	if state.Log[0] != "==> Installing to /usr/local/bin/gre-panel" {
+		t.Errorf("log[0] = %q, want the line without its colours", state.Log[0])
+	}
+	for _, line := range state.Log {
+		if strings.ContainsRune(line, 0x1b) {
+			t.Errorf("an escape byte survived into %q", line)
+		}
+	}
+}
+
 // A host that rebooted mid-update has no unit left to ask. The running version
 // is then the only evidence, and it is good evidence.
 func TestAVanishedUnitIsResolvedFromTheRunningVersion(t *testing.T) {

@@ -181,6 +181,9 @@ func (s *Service) TunnelHealth(ctx context.Context, tunnelID int64) (route.Tunne
 		PeerAddress:   PeerAddressOf(rec),
 		MonitorState:  s.monitorStateFor(tunnelID),
 	}
+	if rec.DisplayName != nil {
+		health.DisplayName = *rec.DisplayName
+	}
 	if observed, exists := s.observe(ctx, rec.InterfaceName); exists {
 		health.IsUp = observed.IsUp && observed.IsLowerUp
 		for _, address := range observed.Addresses {

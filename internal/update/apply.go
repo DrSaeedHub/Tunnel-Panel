@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -480,9 +481,16 @@ func (a *Applier) tail(ctx context.Context) []string {
 	return lastLines(res.Stdout, logTailLines)
 }
 
+// ansiRe matches the escape sequences the installer colours its output
+// with. The browser is not a terminal: left in, they reach the log pane as
+// literal `[1;34m` noise wrapped around every line the installer meant to
+// highlight, and the operator reads the evidence through it.
+var ansiRe = regexp.MustCompile("\x1b\\[[0-9;?]*[ -/]*[@-~]|\x1b[@-Z\\\\-_]")
+
 func lastLines(body string, n int) []string {
 	lines := []string{}
 	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		line = ansiRe.ReplaceAllString(line, "")
 		if strings.TrimSpace(line) != "" {
 			lines = append(lines, line)
 		}

@@ -11,6 +11,11 @@ export interface PanelBootstrap {
   base_path: string
   /** API root, no trailing slash: `/abc123/api/v1`. */
   api_base_path: string
+  /**
+   * The build that served this page. Empty under `vite dev`, where nothing is
+   * injected, and empty on a page served by a panel too old to inject it.
+   */
+  version: string
 }
 
 declare global {
@@ -28,7 +33,11 @@ function readBootstrap(): PanelBootstrap {
   const basePath = normaliseBase(injected?.base_path ?? '/')
   const apiBasePath = injected?.api_base_path ?? `${basePath}api/v1`.replace(/\/{2,}/g, '/')
 
-  return { base_path: basePath, api_base_path: apiBasePath.replace(/\/$/, '') }
+  return {
+    base_path: basePath,
+    api_base_path: apiBasePath.replace(/\/$/, ''),
+    version: injected?.version ?? '',
+  }
 }
 
 function normaliseBase(value: string): string {
@@ -56,3 +65,14 @@ export function apiUrl(path: string): string {
 export function panelUrl(path: string): string {
   return `${bootstrap.base_path}${path.replace(/^\//, '')}`
 }
+
+/**
+ * The build that served this page, which is not necessarily the build now
+ * answering it: updating replaces the binary and restarts it under the open
+ * page. The bundle is content-hashed, so the interface in front of the operator
+ * stays the old one until it is reloaded, and this is how that is known.
+ *
+ * Empty when it could not be known, in which case nothing may be concluded from
+ * it — never treat empty as "different".
+ */
+export const servedVersion = bootstrap.version

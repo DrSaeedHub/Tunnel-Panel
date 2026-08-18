@@ -5,7 +5,9 @@ import {
   formatBytes,
   formatThroughput,
   formatVolume,
+  hasDisplayName,
   toDigits,
+  tunnelLabel,
   type UnitPreferences,
 } from './format'
 
@@ -67,5 +69,28 @@ describe('digit systems', () => {
     // converter is opt-in rather than global.
     const address = '172.17.7.1/30'
     expect(address).toBe('172.17.7.1/30')
+  })
+})
+
+describe('what a tunnel is called', () => {
+  it('is the display name whenever there is one', () => {
+    const tunnel = { interface_name: 'gre-a-1', display_name: 'Frankfurt ↔ Singapore' }
+    expect(tunnelLabel(tunnel)).toBe('Frankfurt ↔ Singapore')
+    expect(hasDisplayName(tunnel)).toBe(true)
+  })
+
+  it('falls back to the interface name, which is the only name always present', () => {
+    expect(tunnelLabel({ interface_name: 'gre-a-1' })).toBe('gre-a-1')
+    expect(tunnelLabel({ interface_name: 'gre-a-1', display_name: null })).toBe('gre-a-1')
+  })
+
+  it('treats a blank display name as no name rather than as an empty label', () => {
+    // The form always sends the field, so a cleared name arrives as '' or as
+    // whitespace. Neither is something to show in place of the interface.
+    for (const blank of ['', '   ', '\n']) {
+      const tunnel = { interface_name: 'gre-a-1', display_name: blank }
+      expect(tunnelLabel(tunnel)).toBe('gre-a-1')
+      expect(hasDisplayName(tunnel)).toBe(false)
+    }
   })
 })

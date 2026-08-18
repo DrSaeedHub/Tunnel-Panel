@@ -230,3 +230,39 @@ export function formatCount(value: number, digits: 'latin' | 'persian', locale =
     return toDigits(String(value), digits)
   }
 }
+
+// ------------------------------------------------------------------- naming
+
+/**
+ * The two names a tunnel carries. The interface name is what the kernel calls
+ * it and is always present; the display name is what the operator called it and
+ * is optional.
+ */
+export interface NamedTunnel {
+  interface_name: string
+  display_name?: string | null
+}
+
+/**
+ * What a tunnel is called in the panel: its display name when it has one, its
+ * interface name otherwise.
+ *
+ * The rule is one-way and applies everywhere a tunnel is named — a row, a menu,
+ * a toast, a page title. An operator who named a tunnel "Frankfurt ↔ Singapore"
+ * should never have to recognise it as `gre-a-1`. The interface name still
+ * appears wherever it is the subject rather than the label: the identity line
+ * under the heading, the field on the detail page, the typed delete
+ * confirmation.
+ */
+export function tunnelLabel(tunnel: NamedTunnel): string {
+  return tunnel.display_name?.trim() || tunnel.interface_name
+}
+
+/**
+ * Whether {@link tunnelLabel} would return a display name. Call sites use it to
+ * decide the typography: an interface name is a technical value and goes
+ * through `Technical`, a display name is prose and does not.
+ */
+export function hasDisplayName(tunnel: NamedTunnel): boolean {
+  return Boolean(tunnel.display_name?.trim())
+}
