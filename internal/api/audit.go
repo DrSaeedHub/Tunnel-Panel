@@ -32,22 +32,29 @@ type auditEntry struct {
 	CreatedDate  string `json:"created_date"`
 }
 
-// auditActionNames maps the lookup identifiers onto the names a filter accepts.
-var auditActionNames = map[int64]string{
-	model.AuditActionLogin:          "Login",
-	model.AuditActionLoginFailed:    "LoginFailed",
-	model.AuditActionLogout:         "Logout",
-	model.AuditActionTunnelCreate:   "TunnelCreate",
-	model.AuditActionTunnelUpdate:   "TunnelUpdate",
-	model.AuditActionTunnelDelete:   "TunnelDelete",
-	model.AuditActionTunnelEnable:   "TunnelEnable",
-	model.AuditActionTunnelDisable:  "TunnelDisable",
-	model.AuditActionTunnelReapply:  "TunnelReapply",
-	model.AuditActionTunnelAdopt:    "TunnelAdopt",
-	model.AuditActionSettingUpdate:  "SettingUpdate",
-	model.AuditActionPasswordChange: "PasswordChange",
-	model.AuditActionPoolChange:     "PoolChange",
-	model.AuditActionBackupImport:   "BackupImport",
+// auditActionNames maps the lookup identifiers onto the names a filter accepts
+// and the history page renders.
+//
+// It is read off the declared lookup table rather than written out again here.
+// The hand-written copy it replaces had fallen fourteen actions behind: every
+// forwarding-rule action, the panel address change, the password reset and both
+// database actions were recorded with an identifier the response then rendered
+// as an empty name, so the history page showed a blank Action column for them
+// and the filter did not offer them at all. A list maintained in two places
+// drifts; this one cannot.
+var auditActionNames = declaredAuditActions()
+
+func declaredAuditActions() map[int64]string {
+	out := map[int64]string{}
+	for _, table := range model.LookupTables() {
+		if table.Name != "AuditAction" {
+			continue
+		}
+		for _, value := range table.Values {
+			out[value.ID] = value.Title
+		}
+	}
+	return out
 }
 
 func auditActionByName(name string) (int64, bool) {

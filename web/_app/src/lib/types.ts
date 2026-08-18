@@ -77,6 +77,54 @@ export interface HealthResponse {
   checked_at: string
 }
 
+/** One release, as the release host describes it. */
+export interface UpdateRelease {
+  version: string
+  name?: string
+  url?: string
+  published_at?: string
+  notes?: string
+}
+
+/**
+ * The last update this panel started, including one that is still going.
+ *
+ * It outlives the panel process: an update restarts the panel, so the stage is
+ * read back from the transient unit the installer runs in rather than held in
+ * memory by the process that started it.
+ */
+export interface UpdateRun {
+  stage: 'idle' | 'running' | 'succeeded' | 'failed'
+  target_version?: string
+  from_version?: string
+  started_at?: string
+  finished_at?: string
+  error?: string
+  unit?: string
+  started_by?: string
+  /** The tail of the installer's own output, which is the evidence on a failure. */
+  log?: string[]
+}
+
+export interface UpdateStatus {
+  current_version: string
+  latest: UpdateRelease
+  update_available: boolean
+  checked_at?: string
+  /** A lookup is in flight; the answer is worth asking for again shortly. */
+  checking: boolean
+  error?: string
+  /** Why a newer release is not offered, when the reason is not "up to date". */
+  note?: string
+  source: string
+  /** Whether the panel checks by itself, as opposed to only when asked. */
+  enabled: boolean
+  state: UpdateRun
+  /** Whether this installation can install an update from the panel at all. */
+  can_apply: boolean
+  reason?: string
+}
+
 export interface SystemInfo {
   build: BuildInfo
   runtime: {

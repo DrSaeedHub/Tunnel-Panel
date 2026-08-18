@@ -2,6 +2,7 @@ package scripts
 
 import (
 	"github.com/drs/gre-panel/internal/persist"
+	"github.com/drs/gre-panel/internal/update"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -377,7 +378,7 @@ func TestABareRerunHandsOverToTheCli(t *testing.T) {
 }
 
 // An empty web path is a supported configuration, and the installer is where
-// it was impossible: require_value rejected --web-path '' outright, the
+// it was impossible: require_value rejected --web-path ” outright, the
 // non-interactive check demanded a value for it, and every URL was built by
 // interpolating it between two slashes.
 func TestTheInstallerAcceptsAnEmptyWebPath(t *testing.T) {
@@ -573,5 +574,30 @@ func TestResolveAddressIsDefinedBeforeItIsCalled(t *testing.T) {
 		t.Errorf("resolve_address is called at byte %d but defined at byte %d; bash resolves the "+
 			"name when the call runs, so that call is a 'command not found' and the branch it "+
 			"guards never executes", call, define)
+	}
+}
+
+// The panel checks one repository and the installer fetches from another only
+// if these two literals ever disagree, and nothing would report that: the check
+// would keep answering "up to date" from a repository this installation has
+// nothing to do with, or offer a version its release base cannot serve. The
+// panel also reads the file the installer writes to find out where this
+// installation came from, so the path to it is part of the same contract.
+func TestThePanelChecksTheRepositoryTheInstallerInstallsFrom(t *testing.T) {
+	script := readScript(t, "install.sh")
+
+	if !strings.Contains(script, `readonly DEFAULT_RELEASE_BASE="`+update.DefaultReleaseBase+`"`) {
+		t.Errorf("the panel defaults to the release base %s, which the installer does not use",
+			update.DefaultReleaseBase)
+	}
+	if !strings.Contains(expandInstallerConstants(script, `"$CLI_ENV_PATH"`), update.CLIEnvPath) {
+		t.Errorf("the panel reads what the installation came from at %s, and the installer "+
+			"writes that file somewhere else", update.CLIEnvPath)
+	}
+	// And the variable the panel reads out of it is the one the installer
+	// writes into it.
+	if !strings.Contains(script, "GRE_PANEL_RELEASE_BASE=") {
+		t.Error("the installer records no release base, so the panel cannot follow the " +
+			"installation it belongs to")
 	}
 }

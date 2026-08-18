@@ -29,6 +29,7 @@ import {
 } from '@/lib/types'
 import { useAuth } from '@/providers/AuthProvider'
 import { usePreferences } from '@/providers/PreferencesProvider'
+import { UpdateProvider } from '@/providers/UpdateProvider'
 import { useMonitorSummary } from '@/hooks/useMonitorSummary'
 import { Button } from '../ui/button'
 import { StatusDot } from '../ui/status'
@@ -94,56 +95,62 @@ export function AppShell() {
   }, [collapsed])
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* The <base href> that makes assets resolve under the secret web path
-          also makes a bare fragment resolve against the base, so following this
-          link would leave the current page for the panel root -- sending a
-          keyboard user to the dashboard instead of past the navigation. Move
-          the focus here instead. */}
-      <a
-        href="#main"
-        onClick={(event) => {
-          const main = document.getElementById('main')
-          if (!main) return
-          event.preventDefault()
-          main.focus()
-          main.scrollIntoView({ block: 'start' })
-        }}
-        className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded-full focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:shadow-pop"
-      >
-        {t('nav.skipToContent')}
-      </a>
+    // The update check lives here rather than on a page: the shell is what
+    // stays mounted as the operator moves between tabs, so the poll, the
+    // dialog and the notice are one of each for the whole session rather than
+    // one per page visit.
+    <UpdateProvider>
+      <div className="flex min-h-screen bg-background">
+        {/* The <base href> that makes assets resolve under the secret web path
+            also makes a bare fragment resolve against the base, so following this
+            link would leave the current page for the panel root -- sending a
+            keyboard user to the dashboard instead of past the navigation. Move
+            the focus here instead. */}
+        <a
+          href="#main"
+          onClick={(event) => {
+            const main = document.getElementById('main')
+            if (!main) return
+            event.preventDefault()
+            main.focus()
+            main.scrollIntoView({ block: 'start' })
+          }}
+          className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:rounded-full focus:bg-surface focus:px-4 focus:py-2 focus:text-sm focus:shadow-pop"
+        >
+          {t('nav.skipToContent')}
+        </a>
 
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((v) => !v)}
-        monitor={monitor}
-        className="hidden lg:flex"
-      />
+        <Sidebar
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((v) => !v)}
+          monitor={monitor}
+          className="hidden lg:flex"
+        />
 
-      <div className="flex min-w-0 flex-1 flex-col sm:p-3 lg:p-4 lg:ps-0">
-        {/* The plate: everything the pages draw floats on this. On a phone it
-            runs edge to edge, the way an app does. */}
-        <div className="flex min-w-0 flex-1 flex-col bg-plate sm:rounded-[1.75rem] sm:border sm:border-border/50 sm:shadow-card">
-          <TopBar monitor={monitor} onShowShortcuts={() => setShortcutsOpen(true)} />
-          {/* tabIndex -1 so the skip link can move focus here; it is not a tab
-              stop. The bottom padding under lg clears the tab bar. */}
-          <main
-            id="main"
-            tabIndex={-1}
-            className="mx-auto w-full max-w-screen-2xl min-w-0 flex-1 p-4 pb-28 focus:outline-none sm:p-6 sm:pb-28 lg:pb-6"
-          >
-            <Outlet context={monitor} />
-          </main>
+        <div className="flex min-w-0 flex-1 flex-col sm:p-3 lg:p-4 lg:ps-0">
+          {/* The plate: everything the pages draw floats on this. On a phone it
+              runs edge to edge, the way an app does. */}
+          <div className="flex min-w-0 flex-1 flex-col bg-plate sm:rounded-[1.75rem] sm:border sm:border-border/50 sm:shadow-card">
+            <TopBar monitor={monitor} onShowShortcuts={() => setShortcutsOpen(true)} />
+            {/* tabIndex -1 so the skip link can move focus here; it is not a tab
+                stop. The bottom padding under lg clears the tab bar. */}
+            <main
+              id="main"
+              tabIndex={-1}
+              className="mx-auto w-full max-w-screen-2xl min-w-0 flex-1 p-4 pb-28 focus:outline-none sm:p-6 sm:pb-28 lg:pb-6"
+            >
+              <Outlet context={monitor} />
+            </main>
+          </div>
         </div>
+
+        {/* On a phone the navigation is a thumb-reach tab bar, not a drawer:
+            every destination is one tap, the way a native app does it. */}
+        <MobileTabBar />
+
+        <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
       </div>
-
-      {/* On a phone the navigation is a thumb-reach tab bar, not a drawer:
-          every destination is one tap, the way a native app does it. */}
-      <MobileTabBar />
-
-      <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-    </div>
+    </UpdateProvider>
   )
 }
 

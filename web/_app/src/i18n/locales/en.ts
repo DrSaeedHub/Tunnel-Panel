@@ -163,6 +163,51 @@ export default {
     inactive: 'This account is not active.',
   },
 
+  update: {
+    source: 'Checked against',
+    checkedAt: 'Last checked',
+    notes: 'Release notes',
+    log: 'Installer output',
+    releasePage: 'Open the release page',
+    upToDate: 'This panel is on {{version}}, which is the current release.',
+    latestSeen: 'The release host is serving {{version}}.',
+    checkingOff:
+      'Automatic checking is turned off in settings, so this only looks when you ask it to.',
+    badge: {
+      upToDate: 'Check for updates',
+      applying: 'Updating…',
+    },
+    available: {
+      title: 'Version {{version}} is available',
+      body: 'This panel is running {{current}}. Updating restarts it, which briefly interrupts the panel — tunnels and forwarding rules stay up.',
+    },
+    actions: {
+      open: 'View update',
+      check: 'Check again',
+      install: 'Update to {{version}}',
+      updateTo: 'Update to {{version}}',
+      reload: 'Reload the panel',
+    },
+    dialog: {
+      availableTitle: 'Update to {{version}}',
+      currentTitle: 'Panel version',
+      applyingTitle: 'Updating the panel',
+      doneTitle: 'The panel was updated',
+      failedTitle: 'The update did not finish',
+      running: 'Running {{version}}',
+      whatHappens:
+        'The installer downloads the new binary, verifies its checksum and restarts the panel. Tunnels and forwarding rules are not touched, and the panel is unreachable for a few seconds while it restarts.',
+      applying: 'Installing {{version}}. This takes a minute or two.',
+      restartWarning:
+        'The panel restarts partway through, so this page will lose contact with it for a few seconds. Leaving this page does not stop the update.',
+      done: 'Updated from {{from}} to {{to}}.',
+      reloadHint: 'Reload to load the new interface; this page is still the old one.',
+      failed: 'The installer did not finish.',
+      failedHint:
+        'The panel is still on the version it was. The installer output below says what happened; `tnp update` from a shell on the server does the same thing with the full log.',
+    },
+  },
+
   restore: {
     title: 'Restore a database',
     intro:
@@ -894,6 +939,7 @@ export default {
       UsernameChange: 'Username changed',
       DatabaseDownload: 'Database downloaded',
       DatabaseRestore: 'Database restored',
+      PanelUpdate: 'Panel updated',
     },
   },
 

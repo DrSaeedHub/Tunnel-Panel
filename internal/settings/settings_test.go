@@ -125,6 +125,12 @@ var additionalKeys = []string{
 	// of them an operator wants to stop hearing about is a policy, so it is a
 	// setting rather than a hardcoded exclusion list.
 	"system.ignored_interfaces",
+	// Whether the panel asks the release host about newer versions, and how
+	// long it reuses the answer. Both are policy: a server that must make no
+	// outbound connections turns the first off, and the second is what keeps
+	// one dashboard from becoming a stream of requests to the release host.
+	"system.update_check_enabled",
+	"system.update_check_interval_hours",
 }
 
 func TestEverySpecifiedKeyIsDeclared(t *testing.T) {

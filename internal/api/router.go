@@ -31,7 +31,17 @@ import (
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/settings"
 	"github.com/drs/gre-panel/internal/tunnel"
+	"github.com/drs/gre-panel/internal/update"
 )
+
+// Updates is the pair the update endpoints work through: what the release host
+// is serving, and what this host can do about it. Both are optional together —
+// a server built without them reports the feature as unavailable rather than
+// pretending every installation is up to date.
+type Updates struct {
+	Checker *update.Checker
+	Applier *update.Applier
+}
 
 // BuildInfo is stamped at link time and reported by --version and
 // GET /system/info (§20).
@@ -70,6 +80,10 @@ type Deps struct {
 	Diag    *diag.Service
 	// Persist reports which persistence backends can actually be offered here.
 	Persist *persist.Store
+	// Updates answers whether a newer panel exists and installs it. Optional:
+	// without it the update endpoints report the feature as unavailable, which
+	// is the honest answer for a server built without the plumbing.
+	Updates *Updates
 	// RuleBackend is what startup concluded about this host's netfilter
 	// interface. It is reported through the capabilities endpoint so the
 	// frontend can explain which one is carrying the forwarding rules.
@@ -118,6 +132,7 @@ type Server struct {
 	metrics     *metrics.Sampler
 	diag        *diag.Service
 	persist     *persist.Store
+	updates     *Updates
 	ruleBackend rules.Detection
 	started     time.Time
 
@@ -190,6 +205,7 @@ func New(d Deps) (*Server, error) {
 		metrics:     d.Metrics,
 		diag:        d.Diag,
 		persist:     d.Persist,
+		updates:     d.Updates,
 		ruleBackend: d.RuleBackend,
 		started:     time.Now(),
 
@@ -289,6 +305,18 @@ func (s *Server) buildRouter() http.Handler {
 				// configured and is unreachable at the next boot.
 				r.Get("/system/address", s.handleGetAddress)
 				r.Post("/system/address", s.handleSetAddress)
+
+				// Whether the release host is serving something newer, and
+				// installing it. The status is separate from /system/info
+				// because it is a live question with a network answer, while
+				// the build stamp beside it in the footer is a constant.
+				r.Group(func(r chi.Router) {
+					r.Use(s.requireUpdates)
+
+					r.Get("/system/update", s.handleUpdateStatus)
+					r.Post("/system/update/check", s.handleUpdateCheck)
+					r.Post("/system/update", s.handleUpdateStart)
+				})
 
 				// The tunnel endpoints need the lifecycle service; without it the
 				// route answers that the feature is unavailable rather than

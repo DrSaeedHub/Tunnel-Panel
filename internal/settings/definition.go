@@ -595,6 +595,21 @@ var definitions = []Definition{
 		Constraints: Constraints{JsonShape: "array", Pattern: "interface names"},
 		validate:    validateInterfaceNameList,
 	},
+	{
+		Key: "system.update_check_enabled", Type: KindBool, Category: CategorySystem,
+		Description: "Let the panel ask the release host whether a newer version exists. Turn this " +
+			"off on a server that must make no outbound connections; the update button still works, " +
+			"and checks then happen only when an operator asks for one.",
+		Default: true,
+	},
+	{
+		Key: "system.update_check_interval_hours", Type: KindInt, Category: CategorySystem, Unit: "hours",
+		Description: "How long an answer from the release host is reused before asking again. The " +
+			"dashboard reads this answer on every load, so this is what stops one panel becoming " +
+			"a stream of requests to the release host.",
+		Default:     int64(6),
+		Constraints: Constraints{Min: f64(1), Max: f64(168)},
+	},
 }
 
 func validateInterfaceNameList(v any) error {

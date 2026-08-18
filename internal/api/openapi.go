@@ -95,6 +95,17 @@ var routeDescriptions = map[string]routeSummary{
 			"asking the question is the one the restart breaks.", "system"},
 	"GET /api/v1/system/health":       {"Component health", "Unauthenticated and reachable before setup, for the installer's readiness poll.", "system"},
 
+	"GET /api/v1/system/update": {"Whether a newer panel is being served",
+		"Answers from a cached lookup and refreshes in the background when it has aged past the " +
+			"check interval, so a server with no outbound access never makes this the slowest " +
+			"endpoint on the page. Carries the last update run, including one still going.", "system"},
+	"POST /api/v1/system/update/check": {"Ask the release host now",
+		"The explicit check, which waits for the answer rather than serving the cached one.", "system"},
+	"POST /api/v1/system/update": {"Install a newer panel",
+		"Runs the installer in a transient systemd unit, so the restart of the panel in the middle " +
+			"of it does not kill the update. The response is sent before that restart; progress is " +
+			"read back from GET /system/update, which survives it.", "system"},
+
 	"GET /api/v1/audit": {"The audit log", "Every mutating request with its actor, client address and the exact operations performed. Secrets are redacted.", "audit"},
 
 	"GET /api/v1/backup/export":  {"Export the configuration", "Settings, pools and tunnels. Carries no accounts, no password hashes and no signing key.", "backup"},

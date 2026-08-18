@@ -145,6 +145,11 @@ const (
 	// that exists. Both are the first thing anyone will look for afterwards.
 	AuditActionDatabaseDownload int64 = 240
 	AuditActionDatabaseRestore  int64 = 250
+	// The panel replacing itself. Recorded before the installer starts, because
+	// what happens next is this process being stopped: an entry written after
+	// the fact may never be written at all, and "which version did we jump from,
+	// and who asked for it" is the first question after a bad upgrade.
+	AuditActionPanelUpdate int64 = 260
 )
 
 // tunnelTypeKinds maps a TunnelType identifier to the name the kernel and
@@ -374,6 +379,7 @@ func LookupTables() []LookupTable {
 			{AuditActionUsernameChange, "UsernameChange"},
 			{AuditActionDatabaseDownload, "DatabaseDownload"},
 			{AuditActionDatabaseRestore, "DatabaseRestore"},
+			{AuditActionPanelUpdate, "PanelUpdate"},
 		}},
 	}
 }

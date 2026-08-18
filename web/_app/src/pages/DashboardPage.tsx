@@ -2,17 +2,19 @@ import { useMemo } from 'react'
 import { Link, useOutletContext } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { Network, Plus } from 'lucide-react'
+import { ArrowUpCircle, Network, Plus, RefreshCw } from 'lucide-react'
 
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import type { SettingsResponse, SystemInfo, TunnelListResponse } from '@/lib/types'
 import { formatCount, formatDuration } from '@/lib/format'
 import { useMetrics, series } from '@/hooks/useMetrics'
 import type { useMonitorSummary } from '@/hooks/useMonitorSummary'
 import { usePreferences } from '@/providers/PreferencesProvider'
+import { useUpdate } from '@/providers/UpdateProvider'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { EmptyState, ErrorState, Skeleton } from '@/components/ui/feedback'
+import { Badge, EmptyState, ErrorState, Skeleton } from '@/components/ui/feedback'
 import { Technical } from '@/components/ui/technical'
 import { StaleWrapper } from '@/components/layout/LiveIndicator'
 import { AttentionCard } from '@/components/dashboard/AttentionCard'
@@ -180,7 +182,7 @@ function SystemStrip() {
         second: t('units.second'),
       }),
     ],
-    [t('dashboard.system.version'), <Technical key="version">{info.build.version}</Technical>],
+    [t('dashboard.system.version'), <PanelVersion key="version" version={info.build.version} />],
   ]
 
   // The machine's identity plate: a quiet strip on the plate itself rather
@@ -198,6 +200,50 @@ function SystemStrip() {
   )
 }
 
+/**
+ * The version, and what to do about it.
+ *
+ * The build stamp is where an operator already looks to answer "what is this
+ * running", so it is where the answer to "is there anything newer" belongs, and
+ * the button that closes the gap belongs beside both. Everything behind it —
+ * the check, the notice, the dialog — lives in the shell, so this stays a
+ * button and the state does not restart when the operator leaves the page.
+ */
+function PanelVersion({ version }: { version: string }) {
+  const { t } = useTranslation()
+  const { status, open, applying } = useUpdate()
+
+  const available = Boolean(status?.update_available)
+
+  return (
+    <span className="flex flex-wrap items-center gap-1.5">
+      <Technical>{version}</Technical>
+      {applying ? (
+        <Badge tone="accent">{t('update.badge.applying')}</Badge>
+      ) : (
+        // One button in both states, opening the same dialog: an operator who
+        // wants to know whether anything is newer looks in the same place as
+        // one who has been told that something is, and the dialog is where
+        // checking again, the release notes and the install all live.
+        <Button
+          variant={available ? 'primary' : 'ghost'}
+          size="sm"
+          className={cn('h-6 px-2.5 text-2xs', !available && 'px-2 text-muted-foreground')}
+          onClick={open}
+        >
+          {available ? (
+            <ArrowUpCircle className="size-3" aria-hidden="true" />
+          ) : (
+            <RefreshCw className="size-3" aria-hidden="true" />
+          )}
+          {available
+            ? t('update.actions.updateTo', { version: status?.latest.version ?? '' })
+            : t('update.badge.upToDate')}
+        </Button>
+      )}
+    </span>
+  )
+}
 /** Skeletons shaped like the cards they stand in for. */
 function ResourceSkeleton() {
   return (

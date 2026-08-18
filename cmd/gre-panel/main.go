@@ -42,6 +42,7 @@ import (
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/settings"
 	"github.com/drs/gre-panel/internal/tunnel"
+	"github.com/drs/gre-panel/internal/update"
 	"github.com/drs/gre-panel/internal/validate"
 )
 
@@ -360,6 +361,28 @@ func run() error {
 	// (§5.3).
 	store.Subscribe(func(changed []string) { monitorSupervisor.SettingsChanged(changed) })
 
+	// Whether a newer panel exists, and installing it from the panel itself.
+	// The checker keeps its answer for as long as the interval setting says;
+	// the applier runs the same `tnp update` an operator would run from a
+	// shell, in a transient unit so that the restart in the middle of an
+	// update does not kill the update.
+	updates := &api.Updates{
+		Checker: update.NewChecker(update.CheckerDeps{
+			CurrentVersion: version, Settings: store, Log: log,
+		}),
+		Applier: update.NewApplier(update.ApplierDeps{
+			CurrentVersion: version,
+			DataDir:        cfg.DataDir,
+			CLIBin:         lookupBinary("tnp", "/usr/local/bin/tnp"),
+			SystemdRunBin:  lookupBinary("systemd-run", "/usr/bin/systemd-run"),
+			SystemctlBin:   cfg.SystemctlBin,
+			JournalctlBin:  lookupBinary("journalctl", "/usr/bin/journalctl"),
+			UnderSystemd:   underSystemd(),
+			Runner:         runner,
+			Log:            log,
+		}),
+	}
+
 	server, err := api.New(api.Deps{
 		Config:          cfg,
 		DB:              database,
@@ -377,6 +400,7 @@ func run() error {
 		Metrics:         metricsSampler,
 		Diag:            diagService,
 		Persist:         persistStore,
+		Updates:         updates,
 		RuleBackend:     ruleBackend,
 		RouteGuard:      routeGuard,
 		AddressFallback: fallback,
