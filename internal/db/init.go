@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/drs/gre-panel/internal/model"
 )
@@ -24,6 +25,9 @@ func Init(ctx context.Context, d *DB) error {
 		if _, err := d.Write.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("applying schema: %w\nstatement: %s", err, stmt)
 		}
+	}
+	if err := applyColumnAdditions(ctx, d.Write); err != nil {
+		return err
 	}
 	if err := recordSchemaVersion(ctx, d.Write); err != nil {
 		return err
@@ -167,6 +171,63 @@ func seedAddressPools(ctx context.Context, x *sql.DB) error {
 		return fmt.Errorf("committing address pool seeds: %w", err)
 	}
 	return nil
+}
+
+// columnAddition is one column added to an existing table after its initial
+// release. CREATE TABLE IF NOT EXISTS never touches a table that already
+// exists, so a column added straight to entityDDL would silently never reach
+// an installation whose table predates it — every query mentioning the new
+// column would fail on it forever. Listing it here instead gets it added on
+// the next startup.
+type columnAddition struct {
+	table  string
+	column string
+	ddl    string // the column definition, e.g. "TEXT"
+}
+
+var columnAdditions = []columnAddition{
+	{"Tunnel", "DisplayName", "TEXT"},
+}
+
+// applyColumnAdditions adds every column in columnAdditions that is missing
+// from its table.
+func applyColumnAdditions(ctx context.Context, x *sql.DB) error {
+	for _, c := range columnAdditions {
+		has, err := hasColumn(ctx, x, c.table, c.column)
+		if err != nil {
+			return fmt.Errorf("checking for %s.%s: %w", c.table, c.column, err)
+		}
+		if has {
+			continue
+		}
+		stmt := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, c.table, c.column, c.ddl)
+		if _, err := x.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("adding %s.%s: %w", c.table, c.column, err)
+		}
+	}
+	return nil
+}
+
+// hasColumn reports whether table already has the given column.
+func hasColumn(ctx context.Context, x *sql.DB, table, column string) (bool, error) {
+	rows, err := x.QueryContext(ctx, fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return false, fmt.Errorf("reading the columns of %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, ctype string
+		var dfltValue any
+		if err := rows.Scan(&cid, &name, &ctype, &notNull, &dfltValue, &pk); err != nil {
+			return false, fmt.Errorf("reading a column of %s: %w", table, err)
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // recordSchemaVersion writes the single SchemaVersion row, advancing it when

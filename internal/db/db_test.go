@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
@@ -340,6 +341,93 @@ func TestInitIsIdempotent(t *testing.T) {
 
 	if got := count(t, second, `SELECT COUNT(*) FROM AppUser`); got != 1 {
 		t.Errorf("AppUser has %d rows after re-initialisation, want the 1 that was inserted", got)
+	}
+}
+
+// TestColumnAdditionsReachAnExistingTable reproduces upgrading an
+// installation whose Tunnel table predates a column in columnAdditions:
+// CREATE TABLE IF NOT EXISTS is a no-op against a table that already exists,
+// so without an explicit ALTER TABLE the column would never arrive and every
+// query mentioning it (the whole tunnel list, in DisplayName's case) would
+// fail forever.
+func TestColumnAdditionsReachAnExistingTable(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "panel.db")
+
+	d, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open returned an unexpected error: %v", err)
+	}
+	defer d.Close()
+
+	// Build the schema as it looked before DisplayName existed, by running
+	// every entity statement except the one that creates the Tunnel table
+	// with a hand-written definition missing the column, then everything
+	// else Init would normally do.
+	if err := createLookupTables(ctx, d.Write); err != nil {
+		t.Fatalf("createLookupTables returned an unexpected error: %v", err)
+	}
+	if _, err := d.Write.ExecContext(ctx, `
+		CREATE TABLE Tunnel (
+			TunnelID          INTEGER PRIMARY KEY AUTOINCREMENT,
+			TunnelTypeID      INTEGER NOT NULL,
+			TunnelSideID      INTEGER NOT NULL,
+			PersistenceTypeID INTEGER NOT NULL,
+			InterfaceName     TEXT    NOT NULL,
+			LocalEndpoint     TEXT    NOT NULL,
+			RemoteEndpoint    TEXT    NOT NULL,
+			ApplyStatusID     INTEGER NOT NULL DEFAULT 10,
+			IsEnabled         INTEGER NOT NULL DEFAULT 1,
+			IsManaged         INTEGER NOT NULL DEFAULT 1,
+			IsNameTemplated   INTEGER NOT NULL DEFAULT 1,
+			CreatedDate       TEXT    NOT NULL,
+			UpdatedDate       TEXT    NOT NULL,
+			IsDeleted         INTEGER NOT NULL DEFAULT 0
+		)`); err != nil {
+		t.Fatalf("creating the pre-migration Tunnel table failed: %v", err)
+	}
+	if has, err := hasColumn(ctx, d.Write, "Tunnel", "DisplayName"); err != nil {
+		t.Fatalf("hasColumn returned an unexpected error: %v", err)
+	} else if has {
+		t.Fatal("the pre-migration table already has DisplayName; the test fixture is wrong")
+	}
+
+	// A real tunnel row, to prove the migration does not disturb existing data.
+	now := model.NowUTC()
+	if _, err := d.Write.ExecContext(ctx, `
+		INSERT INTO Tunnel (TunnelTypeID, TunnelSideID, PersistenceTypeID, InterfaceName,
+			LocalEndpoint, RemoteEndpoint, CreatedDate, UpdatedDate)
+		VALUES (?, ?, ?, 'gre-a-0', '203.0.113.10', '198.51.100.20', ?, ?)`,
+		model.TunnelTypeGRE, model.TunnelSideA, model.PersistenceTypeSystemd, now, now); err != nil {
+		t.Fatalf("inserting a pre-migration tunnel failed: %v", err)
+	}
+
+	// Upgrading is exactly Init on the existing file — this is what a
+	// restart after deploying the new binary does.
+	if err := Init(ctx, d); err != nil {
+		t.Fatalf("Init against a pre-migration database returned an unexpected error: %v", err)
+	}
+
+	if has, err := hasColumn(ctx, d.Write, "Tunnel", "DisplayName"); err != nil {
+		t.Fatalf("hasColumn returned an unexpected error: %v", err)
+	} else if !has {
+		t.Error("DisplayName was not added to an existing Tunnel table")
+	}
+
+	var interfaceName string
+	var displayName sql.NullString
+	if err := d.Read.QueryRow(
+		`SELECT InterfaceName, DisplayName FROM Tunnel WHERE InterfaceName = 'gre-a-0'`).
+		Scan(&interfaceName, &displayName); err != nil {
+		t.Fatalf("reading the pre-migration tunnel after upgrade failed: %v", err)
+	}
+	if displayName.Valid {
+		t.Errorf("DisplayName = %q on a row that predates the column, want NULL", displayName.String)
+	}
+
+	// Init must still be idempotent against the now-upgraded table.
+	if err := Init(ctx, d); err != nil {
+		t.Fatalf("re-running Init after the column was added returned an unexpected error: %v", err)
 	}
 }
 
