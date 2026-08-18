@@ -31,6 +31,16 @@ type installerConfig struct {
 	Version      string
 }
 
+// isLocalReleaseBase reports whether a release base points at the local
+// filesystem rather than a network host — mirroring install.sh's own
+// source_is_remote check. An offline bundle records a release base under its
+// own extracted directory (a bare path, or a file:// URL), and that directory
+// only ever holds the one version the bundle shipped with: nothing newer will
+// ever appear there, so it is never the right place to look for an update.
+func isLocalReleaseBase(base string) bool {
+	return strings.HasPrefix(base, "file://") || strings.HasPrefix(base, "/")
+}
+
 func readInstallerConfig() installerConfig {
 	out := installerConfig{ReleaseBase: DefaultReleaseBase, InstallerURL: DefaultInstallerURL}
 	file, err := loadEnvFile(cliEnvFile)
@@ -57,15 +67,21 @@ func readInstallerConfig() installerConfig {
 // uninstalling should not require the network — the most likely reason an
 // operator is uninstalling is that something is wrong.
 func (a *app) installerScript(ctx context.Context, preferFresh bool) (path string, cleanup func(), err error) {
-	cfg := readInstallerConfig()
+	return a.installerScriptFrom(ctx, preferFresh, readInstallerConfig().InstallerURL)
+}
+
+// installerScriptFrom is installerScript with the installer URL supplied by
+// the caller instead of read from cli.env — so update() can reach past a
+// recorded URL that is local to an offline bundle and fetch the real thing.
+func (a *app) installerScriptFrom(ctx context.Context, preferFresh bool, installerURL string) (path string, cleanup func(), err error) {
 	noop := func() {}
 
 	if preferFresh {
-		if downloaded, derr := downloadInstaller(ctx, cfg.InstallerURL); derr == nil {
+		if downloaded, derr := downloadInstaller(ctx, installerURL); derr == nil {
 			return downloaded, func() { os.Remove(downloaded) }, nil //nolint:errcheck // best effort
 		} else if !exists(cachedInstall) {
 			return "", noop, fmt.Errorf("could not download the installer from %s (%w), and there is "+
-				"no cached copy at %s", cfg.InstallerURL, derr, cachedInstall)
+				"no cached copy at %s", installerURL, derr, cachedInstall)
 		} else {
 			a.sayf("warning: could not download a fresh installer (%v); using the cached copy at %s",
 				derr, cachedInstall)
@@ -75,10 +91,10 @@ func (a *app) installerScript(ctx context.Context, preferFresh bool) (path strin
 	if exists(cachedInstall) {
 		return cachedInstall, noop, nil
 	}
-	downloaded, derr := downloadInstaller(ctx, cfg.InstallerURL)
+	downloaded, derr := downloadInstaller(ctx, installerURL)
 	if derr != nil {
 		return "", noop, fmt.Errorf("there is no installer at %s and it could not be downloaded "+
-			"from %s: %w", cachedInstall, cfg.InstallerURL, derr)
+			"from %s: %w", cachedInstall, installerURL, derr)
 	}
 	return downloaded, func() { os.Remove(downloaded) }, nil //nolint:errcheck // best effort
 }
@@ -162,7 +178,20 @@ func (a *app) update(ctx context.Context, wantVersion string) error {
 	if wantVersion == "" {
 		wantVersion = "latest"
 	}
-	script, cleanup, err := a.installerScript(ctx, true)
+
+	releaseBase, installerURL := cfg.ReleaseBase, cfg.InstallerURL
+	if isLocalReleaseBase(releaseBase) {
+		// This installation came from an offline bundle, whose release base is
+		// a directory that only ever holds the version it shipped with.
+		// Reusing it here would mean asking a snapshot from the past for a
+		// version it will never have; the real release host is what can
+		// actually serve something newer.
+		a.sayf("This installation came from an offline bundle at %s, which cannot serve a newer version; checking %s instead.",
+			releaseBase, DefaultReleaseBase)
+		releaseBase, installerURL = DefaultReleaseBase, DefaultInstallerURL
+	}
+
+	script, cleanup, err := a.installerScriptFrom(ctx, true, installerURL)
 	if err != nil {
 		return err
 	}
@@ -170,7 +199,7 @@ func (a *app) update(ctx context.Context, wantVersion string) error {
 
 	before := binaryVersion(ctx, panelBinary)
 	if err := a.runInstaller(ctx, script,
-		"--upgrade", "--yes", "--version", wantVersion, "--release-base", cfg.ReleaseBase); err != nil {
+		"--upgrade", "--yes", "--version", wantVersion, "--release-base", releaseBase); err != nil {
 		return err
 	}
 	after := binaryVersion(ctx, panelBinary)
