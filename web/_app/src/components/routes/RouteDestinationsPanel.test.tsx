@@ -89,6 +89,7 @@ function route(overrides: Partial<RouteRule> = {}): RouteRule {
     is_deleted: false,
     destinations: [destination('172.17.1.2', 1), destination('172.17.2.2', 2)],
     allowed_sources: [],
+    source_lists: [],
     ...overrides,
   }
 }

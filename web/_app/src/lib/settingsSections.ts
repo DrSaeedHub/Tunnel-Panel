@@ -32,7 +32,9 @@ export interface SettingsPageDef {
   /** Backend schema categories rendered on this page, in order. */
   categories: string[]
   /** Non-schema panels rendered on this page, in order. */
-  extras: Array<'density' | 'pools' | 'address' | 'database' | 'account' | 'backup'>
+  extras: Array<
+    'density' | 'pools' | 'sourceLists' | 'address' | 'database' | 'account' | 'backup'
+  >
 }
 
 /**
@@ -44,7 +46,7 @@ export interface SettingsPageDef {
 const PAGES: SettingsPageDef[] = [
   { key: 'appearance', Icon: Palette, labelKey: 'settings.category.display', categories: ['display'], extras: ['density'] },
   { key: 'tunnel', Icon: Network, labelKey: 'settings.category.tunnel', categories: ['tunnel'], extras: [] },
-  { key: 'routes', Icon: Waypoints, labelKey: 'settings.category.routes', categories: ['routes'], extras: [] },
+  { key: 'routes', Icon: Waypoints, labelKey: 'settings.category.routes', categories: ['routes'], extras: ['sourceLists'] },
   { key: 'monitoring', Icon: Activity, labelKey: 'settings.category.monitor', categories: ['monitor', 'keepalive'], extras: [] },
   { key: 'addressing', Icon: Layers, labelKey: 'settings.category.addressing', categories: ['addressing'], extras: ['pools'] },
   { key: 'diagnostics', Icon: Stethoscope, labelKey: 'settings.category.diagnostics', categories: ['diagnostics'], extras: [] },

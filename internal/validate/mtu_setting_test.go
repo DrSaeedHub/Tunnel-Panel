@@ -36,8 +36,8 @@ func TestTheUnderlayIsOnlyMeasuredWhenTheSettingSaysSo(t *testing.T) {
 			wantRecommended: 1472, wantUnderlay: 1500, wantWarning: true,
 		},
 		{
-			name: "off: no recommendation, no warning, nothing measured",
-			auto: false,
+			name:            "off: no recommendation, no warning, nothing measured",
+			auto:            false,
 			wantRecommended: 0, wantUnderlay: 0, wantWarning: false,
 		},
 	} {

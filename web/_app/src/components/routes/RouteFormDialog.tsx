@@ -17,6 +17,7 @@ import {
   type RouteResultResponse,
   type RouteRule,
   type SettingsResponse,
+  type SourceListsResponse,
   type TunnelListResponse,
   type TunnelRoutesResponse,
 } from '@/lib/types'
@@ -33,6 +34,7 @@ import { Badge } from '../ui/feedback'
 import { Technical } from '../ui/technical'
 import { RoutePreviewPanel } from './RoutePreviewPanel'
 import { useDebounced } from '@/hooks/useDebounced'
+import { cn } from '@/lib/utils'
 
 /** The form's own shape: every field the operator can set, none nullable-by-absence. */
 interface FormState {
@@ -61,6 +63,8 @@ interface FormState {
   destination_weight: string
   /** The primary destination's own monitor port, when it needs one. */
   destination_monitor_port: string
+  /** The shared address lists this rule allows, by identifier. */
+  source_list_ids: number[]
   destinations: {
     address: string
     port: string
@@ -720,6 +724,11 @@ export function RouteFormDialog({
                 onCheckedChange={(value) => set('is_enabled', value)}
               />
             </div>
+
+            <SourceListPicker
+              selected={form.source_list_ids}
+              onChange={(ids) => set('source_list_ids', ids)}
+            />
 
             <AllowlistEditor
               entries={form.allowed_sources}
@@ -1441,6 +1450,7 @@ function defaultsFrom(settings: Record<string, unknown>): FormState {
     is_enabled: true,
     destination_weight: '1',
     destination_monitor_port: '',
+    source_list_ids: [],
     destinations: [],
     is_monitor_enabled: settings['routes.monitor_enabled'] === true,
     monitor_mode_id: RouteMonitorMode.Report,
@@ -1499,6 +1509,7 @@ export function formFromRoute(route: RouteRule, monitorsByDefault = false): Form
     // down rather than opening the dialog.
     destination_weight: String((route.destinations ?? [])[0]?.weight ?? 1),
     destination_monitor_port: numberField((route.destinations ?? [])[0]?.monitor_port),
+    source_list_ids: (route.source_lists ?? []).map((list) => list.source_list_id),
     destinations: (route.destinations ?? []).slice(1).map((destination) => ({
       address: destination.address,
       port: String(destination.port),
@@ -1568,6 +1579,7 @@ function toPatch(form: FormState): Record<string, unknown> {
   // Monitoring is always sent: turning it off is an instruction, and an
   // absent field would be read as "leave it as it was". The parameters are
   // nullable, because an empty one means "go back to inheriting this".
+  patch.source_list_ids = form.source_list_ids
   patch.is_monitor_enabled = form.is_monitor_enabled
   patch.monitor_mode_id = form.monitor_mode_id
   patch.monitor_interval_seconds = number(form.monitor_interval_seconds) ?? null
@@ -1598,4 +1610,112 @@ function toPatch(form: FormState): Record<string, unknown> {
   }
 
   return patch
+}
+
+/**
+ * The shared address lists a rule allows, as chips.
+ *
+ * A list is picked rather than typed because the whole point of it is that the
+ * ranges live somewhere else: what belongs on the rule is which lists, and the
+ * several hundred addresses behind them belong in one place an operator edits
+ * once. Several can be chosen, and a rule allows traffic from any of them --
+ * they are alternatives, not conditions that all have to hold.
+ */
+function SourceListPicker({
+  selected,
+  onChange,
+}: {
+  selected: number[]
+  onChange: (ids: number[]) => void
+}) {
+  const { t } = useTranslation()
+  const [open, setOpen] = useState(false)
+
+  const query = useQuery({
+    queryKey: ['source-lists'],
+    queryFn: () => api.get<SourceListsResponse>('/source-lists'),
+    staleTime: 60_000,
+  })
+  const lists = query.data?.source_lists ?? []
+  const byId = new Map(lists.map((list) => [list.source_list_id, list]))
+
+  const toggle = (id: number) =>
+    onChange(selected.includes(id) ? selected.filter((one) => one !== id) : [...selected, id])
+
+  return (
+    <Field label={t('routeForm.fields.sourceLists')} description={t('routeForm.help.sourceLists')}>
+      {() => (
+        <div className="space-y-2">
+          <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border border-border bg-surface-sunken px-2 py-1.5">
+            {selected.length === 0 ? (
+              <span className="px-1 text-xs text-muted-foreground">
+                {t('routeForm.help.sourceListsEmpty')}
+              </span>
+            ) : null}
+            {selected.map((id) => {
+              const list = byId.get(id)
+              return (
+                <span
+                  key={id}
+                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs font-medium"
+                >
+                  {list?.name ?? String(id)}
+                  <button
+                    type="button"
+                    onClick={() => toggle(id)}
+                    aria-label={t('routeForm.destination.remove')}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="size-3" aria-hidden="true" />
+                  </button>
+                </span>
+              )
+            })}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="ms-auto"
+              onClick={() => setOpen((v) => !v)}
+            >
+              <Plus className="size-3.5" aria-hidden="true" />
+              {t('routeForm.fields.addSourceList')}
+            </Button>
+          </div>
+
+          {open ? (
+            <ul className="max-h-56 overflow-auto rounded-md border border-border bg-surface-raised p-1 scrollbar-thin">
+              {lists.length === 0 ? (
+                <li className="px-2 py-2 text-2xs text-muted-foreground">
+                  {t('routeForm.help.noSourceLists')}
+                </li>
+              ) : null}
+              {lists.map((list) => {
+                const picked = selected.includes(list.source_list_id)
+                return (
+                  <li key={list.source_list_id}>
+                    <button
+                      type="button"
+                      aria-pressed={picked}
+                      onClick={() => toggle(list.source_list_id)}
+                      className={cn(
+                        'flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-start text-xs transition-colors hover:bg-muted',
+                        picked && 'bg-muted',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate font-medium">{list.name}</span>
+                      <span className="tabular shrink-0 text-2xs text-muted-foreground">
+                        {t('sourceLists.ranges', { count: list.entries?.length ?? 0 })}
+                      </span>
+                      {picked ? <Check className="size-3.5 shrink-0 text-ok" aria-hidden="true" /> : null}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : null}
+        </div>
+      )}
+    </Field>
+  )
 }

@@ -120,6 +120,9 @@ type RouteInput struct {
 
 	Destinations   []RouteDestinationInput   `json:"destinations,omitempty"`
 	AllowedSources []RouteAllowedSourceInput `json:"allowed_sources,omitempty"`
+	// SourceListIDs are the shared address lists this rule allows, in
+	// addition to any addresses it names itself.
+	SourceListIDs []int64 `json:"source_list_ids,omitempty"`
 
 	// Force overrides the warnings that are overridable. It never overrides a
 	// safety invariant (§6.3).

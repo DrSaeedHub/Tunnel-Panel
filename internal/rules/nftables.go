@@ -156,6 +156,7 @@ func (n *Nftables) Capabilities() Capabilities {
 		Features: map[string]bool{
 			FeatureIPv6:                  true,
 			FeaturePortRanges:            true,
+			FeatureNamedSets:             true,
 			FeatureLoadBalanceRoundRobin: true,
 			FeatureLoadBalanceSourceHash: true,
 			FeatureLoadBalanceWeighted:   true,
@@ -314,6 +315,8 @@ func (n *Nftables) Render(rs Ruleset) (Payload, error) {
 		}
 		b.WriteString("\n")
 	}
+
+	writeSourceSets(&b, rs.SourceSets)
 
 	// The chains this payload declares, which is what the kernel's inventory is
 	// converged to below. writeChain omits a chain with no rules, so this is the
@@ -627,7 +630,14 @@ func nftReverseMatch(d Destination, proto Protocol, fam string) string {
 }
 
 // allowedSourceMatch renders the source allowlist, or "" when the relay is open.
+//
+// A rule that allows one of the operator's shared lists matches a declared set
+// by name; one that only names addresses of its own carries them in an
+// anonymous set, which is what a handful of addresses should be.
 func allowedSourceMatch(s RouteSpec, fam string) string {
+	if set := strings.TrimSpace(s.SourceSet); set != "" {
+		return fmt.Sprintf("%s saddr @%s", fam, set)
+	}
 	if len(s.AllowedSources) == 0 {
 		return ""
 	}
@@ -963,4 +973,42 @@ func (n *Nftables) Flush(ctx context.Context) error {
 		return fmt.Errorf("removing the panel's nftables table: %w", err)
 	}
 	return nil
+}
+
+// writeSourceSets declares the address sets the rules match against.
+//
+// They are declared inside the same transaction that flushes the table, so the
+// sets a rule refers to always exist by the time the rule referring to them is
+// added -- nft parses the file in order and a rule naming a set that is not
+// there yet is an error that takes the whole apply down.
+//
+// `flags interval` is what makes a set hold ranges rather than single
+// addresses, and `auto-merge` is what makes two ranges that overlap collapse
+// instead of being refused: an operator's list, pasted from several sources,
+// routinely contains 5.22.0.0/20 and 5.22.16.0/24 both.
+func writeSourceSets(b *strings.Builder, sets []SourceSet) {
+	if len(sets) == 0 {
+		return
+	}
+	b.WriteString("# The address sets the rules below match their source against. Each one is a\n")
+	b.WriteString("# list an operator maintains in the panel, written out here in full:\n")
+	b.WriteString("# netfilter has no way to say \"in this set or that one\" inside a rule, so the\n")
+	b.WriteString("# lists a rule allows are folded into one set per rule.\n")
+	for _, set := range sets {
+		if len(set.Prefixes) == 0 {
+			continue
+		}
+		kind := "ipv4_addr"
+		if set.Family == FamilyIPv6 {
+			kind = "ipv6_addr"
+		}
+		fmt.Fprintf(b, "add set %s %s %s { type %s; flags interval; auto-merge; comment %s; }\n",
+			TableFamily, TableName, set.Name, kind, strconv.Quote(set.Title))
+		// The elements go in their own statement rather than in the declaration,
+		// because a set with thousands of ranges produces a line no editor and no
+		// error message can work with, and nft accepts the addition either way.
+		fmt.Fprintf(b, "add element %s %s %s { %s }\n",
+			TableFamily, TableName, set.Name, strings.Join(set.Prefixes, ", "))
+	}
+	b.WriteString("\n")
 }

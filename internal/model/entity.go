@@ -285,6 +285,36 @@ type RouteDestination struct {
 	Standard
 }
 
+// SourceList is a named set of addresses an operator maintains once and points
+// several forwarding rules at.
+//
+// The name is what a rule refers to and what the interface shows; the slug is
+// what the generated ruleset calls the kernel object, derived once at creation
+// so that renaming a list never renames a set out from under a rule that is
+// pointing at it.
+type SourceList struct {
+	SourceListID int64  `json:"source_list_id"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Slug         string `json:"slug"`
+	// IsBuiltIn marks a list the panel shipped with. It is an ordinary row that
+	// may be edited or deleted; the flag only records where it came from, so
+	// seeding never puts back one that was deliberately removed.
+	IsBuiltIn bool `json:"is_built_in"`
+	Standard
+}
+
+// SourceListEntry is one address or range in a list. A bare address is stored
+// as a single-host prefix, so everything downstream handles one shape.
+type SourceListEntry struct {
+	SourceListEntryID int64  `json:"source_list_entry_id"`
+	SourceListID      int64  `json:"source_list_id"`
+	Cidr              string `json:"cidr"`
+	AddressFamilyID   int64  `json:"address_family_id"`
+	Description       string `json:"description"`
+	Standard
+}
+
 // RouteAllowedSource restricts which source addresses may use a relay. With no
 // rows the relay is open to every source that can reach the bind address.
 type RouteAllowedSource struct {

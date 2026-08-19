@@ -37,16 +37,16 @@ const (
 	// CodeInvalidMonitorOverride covers a per-tunnel monitoring value outside
 	// the bounds the global setting it overrides declares.
 	CodeInvalidMonitorOverride = "INVALID_MONITOR_OVERRIDE"
-	CodeInvalidAddress     = "INVALID_ADDRESS"
-	CodeInvalidPrefixLen   = "INVALID_PREFIX_LENGTH"
-	CodeAddressConflict    = "ADDRESS_CONFLICT"
-	CodeRouteOverlap       = "ROUTE_OVERLAP"
-	CodePublicRange        = "PUBLIC_RANGE_NOT_ALLOWED"
-	CodeInvalidType        = "INVALID_TUNNEL_TYPE"
-	CodeInvalidSide        = "INVALID_TUNNEL_SIDE"
-	CodeInvalidPersistence = "INVALID_PERSISTENCE_TYPE"
-	CodeMissingAddress     = "NO_ADDRESS"
-	CodeUnknownPool        = "UNKNOWN_ADDRESS_POOL"
+	CodeInvalidAddress         = "INVALID_ADDRESS"
+	CodeInvalidPrefixLen       = "INVALID_PREFIX_LENGTH"
+	CodeAddressConflict        = "ADDRESS_CONFLICT"
+	CodeRouteOverlap           = "ROUTE_OVERLAP"
+	CodePublicRange            = "PUBLIC_RANGE_NOT_ALLOWED"
+	CodeInvalidType            = "INVALID_TUNNEL_TYPE"
+	CodeInvalidSide            = "INVALID_TUNNEL_SIDE"
+	CodeInvalidPersistence     = "INVALID_PERSISTENCE_TYPE"
+	CodeMissingAddress         = "NO_ADDRESS"
+	CodeUnknownPool            = "UNKNOWN_ADDRESS_POOL"
 	// CodeAdoptable is the structured answer of §7.5: an interface matching the
 	// request already exists on the system but is not in the database, so the
 	// right move is adoption rather than a blind failure.

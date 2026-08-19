@@ -326,6 +326,18 @@ type RouteSpec struct {
 	// AllowedSources restricts which sources may use the relay. Empty means any
 	// source that can reach the bind address.
 	AllowedSources []string `json:"allowed_sources,omitempty"`
+	// SourceSet names the declared address set this rule matches against,
+	// when it allows one of the operator's shared lists.
+	//
+	// It is one set and not several because netfilter has no way to say "in
+	// this set or that one" within a rule: two matches on the same field are
+	// an and, and the operator meant an or. So the lists a rule allows -- and
+	// the addresses it names itself -- are folded into one set per rule at
+	// build time, and AllowedSources is then empty. The cost is that two
+	// rules allowing the same list hold the ranges twice in the kernel; the
+	// thing that matters, which is that an operator edits those ranges in one
+	// place, is a property of the panel and not of the ruleset.
+	SourceSet string `json:"source_set,omitempty"`
 
 	// ClampMssToPmtu rewrites the MSS of forwarded SYN packets to fit the path.
 	// Its absence is the single most common cause of "the tunnel is up but my
@@ -396,8 +408,29 @@ func (s RouteSpec) Check() error {
 //
 // Rendering takes the whole set rather than a delta, because an apply is a
 // transactional replacement of the panel's namespace rather than a patch.
+// SourceSet is a named collection of address ranges, declared once and matched
+// by name from every rule that allows it.
+type SourceSet struct {
+	// Name is the identifier in the generated ruleset. It is stable across a
+	// rename of the list it came from, because installed rules refer to it.
+	Name string `json:"name"`
+	// Title is what an operator calls the list, carried only so the rendered
+	// ruleset can say which set is which in a comment.
+	Title string `json:"title"`
+	// Family is FamilyIPv4 or FamilyIPv6. A set holds one family: nftables
+	// types them, and a rule works in one family anyway.
+	Family string `json:"family"`
+	// Prefixes are the ranges, already masked and deduplicated.
+	Prefixes []string `json:"prefixes"`
+}
+
 type Ruleset struct {
 	Routes []RouteSpec `json:"routes"`
+	// SourceSets are the shared address sets the rules refer to, declared
+	// once in the payload and matched by name. A set nothing refers to is
+	// not declared: the ruleset is the desired state, and an unused set in
+	// the kernel is state nothing asked for.
+	SourceSets []SourceSet `json:"source_sets,omitempty"`
 	// Retired names rules that no longer exist and whose named counter objects
 	// are therefore to be removed.
 	//
@@ -671,6 +704,10 @@ const (
 	FeatureFwMark                = "fwmark"
 	FeatureMssClamp              = "mss_clamp"
 	FeatureNamedCounters         = "named_counters"
+	// FeatureNamedSets is the backend's ability to declare a shared address
+	// set once and match rules against it by name. Without it every rule that
+	// allows a list carries the list's ranges itself.
+	FeatureNamedSets = "named_sets"
 )
 
 // Backend is the whole contract between the panel and the host's netfilter

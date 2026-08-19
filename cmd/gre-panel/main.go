@@ -41,6 +41,7 @@ import (
 	"github.com/drs/gre-panel/internal/rules"
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/settings"
+	"github.com/drs/gre-panel/internal/sourcelist"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/update"
 	"github.com/drs/gre-panel/internal/validate"
@@ -272,6 +273,10 @@ func run() error {
 	// lock, its persistence store and its renderer, because it is an extension
 	// of the same architecture rather than a parallel one.
 	routeRepo := route.NewRepo(database)
+	sourceLists := sourcelist.NewRepo(database)
+	if err := sourcelist.Seed(ctx, sourceLists, log); err != nil {
+		return fmt.Errorf("seeding the source lists: %w", err)
+	}
 	sockets := rules.NewSocketReader()
 	routeGuard := safety.NewRouteGuard(cfg.BindPort, sockets, filepath.Join(cfg.DataDir, "rules"))
 	routeForwarding := route.NewForwarding(persistStore, renderer, routeGuard)
@@ -407,6 +412,7 @@ func run() error {
 		RouteAccounting: routeAccounting,
 		RouteDiag:       routeDiag,
 		RouteMonitor:    routeMonitor,
+		SourceLists:     sourceLists,
 		Monitor:         monitorSupervisor,
 		Metrics:         metricsSampler,
 		Diag:            diagService,

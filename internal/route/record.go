@@ -28,6 +28,18 @@ type Record struct {
 	model.RouteRule
 	Destinations   []model.RouteDestination   `json:"destinations"`
 	AllowedSources []model.RouteAllowedSource `json:"allowed_sources"`
+	// SourceLists are the shared address lists this rule allows, as the
+	// interface names them.
+	SourceLists []model.SourceList `json:"source_lists"`
+	// SourceListIDs are the lists a request asked for, which is what the
+	// links are rewritten from when the rule is stored.
+	SourceListIDs []int64 `json:"-"`
+	// SourceRanges is every range those lists hold, already merged and
+	// deduplicated. It is read with the rule rather than fetched when the
+	// ruleset is built, because a rule whose ranges were not loaded would
+	// render a set with nothing in it -- and a rule that allows an empty set
+	// admits nobody, which is a silent outage rather than an error.
+	SourceRanges []string `json:"-"`
 }
 
 // normalise makes the two child lists empty rather than nil.
@@ -98,6 +110,14 @@ func (r Record) Spec() rules.RouteSpec {
 		if cidr := strings.TrimSpace(s.Cidr); cidr != "" {
 			spec.AllowedSources = append(spec.AllowedSources, cidr)
 		}
+	}
+	// A rule that allows a shared list matches one declared set instead: the
+	// addresses it names itself are folded into that set, because netfilter
+	// cannot say "in this set or that one" within a rule and two matches on
+	// the source would be an and where the operator meant an or.
+	if len(r.SourceLists) > 0 {
+		spec.SourceSet = SourceSetName(r.RouteRuleID)
+		spec.AllowedSources = nil
 	}
 	if r.FwMark != nil {
 		mark := uint32(*r.FwMark)
@@ -234,6 +254,7 @@ func RecordFrom(in validate.RouteInput) Record {
 			MonitorRecoveryThreshold: d.MonitorRecoveryThreshold,
 		})
 	}
+	rec.SourceListIDs = append(rec.SourceListIDs, in.SourceListIDs...)
 	for _, s := range in.AllowedSources {
 		if strings.TrimSpace(s.Cidr) == "" {
 			continue

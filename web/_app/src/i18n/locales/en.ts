@@ -1150,6 +1150,37 @@ export default {
       'The copy was created disabled and with a free name, because an exact copy would claim the same listener. Edit it, then enable it.',
   },
 
+  sourceLists: {
+    title: 'Address lists',
+    intro:
+      'Named sets of addresses a forwarding rule can allow traffic from. Keep the ranges here once and point as many rules at them as you like; editing a list reinstalls every rule that allows it.',
+    create: 'New list',
+    createTitle: 'New address list',
+    editTitle: 'Edit {{name}}',
+    empty: 'No address lists',
+    emptyBody: 'Create one to reuse the same set of addresses across several forwarding rules.',
+    name: 'Name',
+    nameHelp: 'What you will pick it by on a forwarding rule.',
+    note: 'Note',
+    notePlaceholder: 'What this list is for',
+    entries: 'Addresses and ranges',
+    entriesHelp:
+      'One per line, or separated by commas or spaces — however they arrive. Both a bare address and a CIDR range are accepted, `#` and `//` start a comment, and duplicates are collapsed.',
+    counted: '{{count}} entry',
+    counted_other: '{{count}} entries',
+    fromFile: 'Load from a file',
+    ranges: '{{count}} range',
+    ranges_other: '{{count}} ranges',
+    usedBy: 'Used by {{formatted}} rule',
+    usedBy_other: 'Used by {{formatted}} rules',
+    builtIn: 'Shipped with the panel',
+    created: '{{name}} was created',
+    saved: '{{name}} was saved',
+    deleted: '{{name}} was deleted',
+    reapplied: '{{count}} forwarding rule was reinstalled',
+    reapplied_other: '{{count}} forwarding rules were reinstalled',
+  },
+
   routeForm: {
     sectionMonitoring: 'Monitoring — is anything listening',
     inherited: 'Inherited',
@@ -1179,6 +1210,8 @@ export default {
       destinationAddress: 'Destination address',
       destinationPort: 'Destination port',
       port: 'Port',
+      sourceLists: 'Allowed sources',
+      addSourceList: 'Add a list',
       monitorEnabled: 'Monitor the destinations',
       monitorMode: 'When a destination stops answering',
       monitorInterval: 'Probe every (seconds)',
@@ -1195,7 +1228,7 @@ export default {
       fwmark: 'Firewall mark',
       maxConnectionsPerSource: 'Max connections per client',
       connectionRateLimit: 'New connections per minute, per client',
-      allowedSources: 'Allowed sources',
+      allowedSources: 'Individual addresses',
       destinations: 'Destinations',
       enabled: 'Enabled',
       weight: 'Weight',
@@ -1222,9 +1255,13 @@ export default {
       maxConnectionsPerSource: 'Caps how many connections one client address may hold open. Empty means no cap.',
       connectionRateLimit: 'Caps how fast one client address may open new connections. Empty means no cap.',
       allowedSources:
-        'Restricts who may use the relay, as addresses or CIDRs. Empty means any source that can reach the bind address.',
+        'Addresses this rule allows on top of the lists above, for the one-off that does not deserve a list of its own. With both empty, every source that can reach the bind address is allowed.',
       destinations:
         'How new connections are spread across the destinations above. Source hash keeps a given client on a given destination, which is what a service holding per-client state needs; round robin does not.',
+      sourceLists:
+        'The address lists this rule accepts traffic from. Traffic matching any of them is relayed; anything else is not. Leave it empty, and add no addresses below either, to accept every source that can reach the bind address.',
+      sourceListsEmpty: 'Any source that can reach the bind address',
+      noSourceLists: 'No address lists yet. Create one under Settings, Port forwarding.',
       monitorEnabled:
         'Knock on each destination on a schedule, so a backend that stopped listening is named rather than worked out from a share that went to zero. The probe is one TCP connect per interval and carries no data.',
       monitorMode: {

@@ -30,6 +30,7 @@ import (
 	"github.com/drs/gre-panel/internal/rules"
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/settings"
+	"github.com/drs/gre-panel/internal/sourcelist"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/update"
 )
@@ -72,6 +73,8 @@ type Deps struct {
 	Routes          *route.Service
 	RouteAccounting *route.Accounting
 	RouteDiag       *route.Diagnostics
+	// SourceLists are the named address lists a rule allows traffic from.
+	SourceLists *sourcelist.Repo
 	// RouteMonitor probes the destinations of the rules that ask for it.
 	// Without it a rule reports its destinations as unmonitored rather than
 	// as healthy, which is the difference between no answer and a good one.
@@ -133,6 +136,7 @@ type Server struct {
 	accounting   *route.Accounting
 	routeDiag    *route.Diagnostics
 	routeMonitor *route.Monitor
+	sourceLists  *sourcelist.Repo
 	monitor      *monitor.Supervisor
 	metrics      *metrics.Sampler
 	diag         *diag.Service
@@ -207,6 +211,7 @@ func New(d Deps) (*Server, error) {
 		accounting:   d.RouteAccounting,
 		routeDiag:    d.RouteDiag,
 		routeMonitor: d.RouteMonitor,
+		sourceLists:  d.SourceLists,
 		monitor:      d.Monitor,
 		metrics:      d.Metrics,
 		diag:         d.Diag,
@@ -483,6 +488,18 @@ func (s *Server) buildRouter() http.Handler {
 						// the monitor answers with an empty list, which is the
 						// truth about what it knows.
 						r.Get("/destinations/health", s.handleRouteDestinationHealth)
+					})
+
+					// The named address lists rules allow traffic from. They sit
+					// beside the rules rather than under one, because the whole
+					// point of them is that several rules share one list.
+					r.Group(func(r chi.Router) {
+						r.Use(s.requireSourceLists)
+						r.Get("/source-lists", s.handleSourceLists)
+						r.Post("/source-lists", s.handleCreateSourceList)
+						r.Get("/source-lists/{id}", s.handleSourceList)
+						r.Put("/source-lists/{id}", s.handleUpdateSourceList)
+						r.Delete("/source-lists/{id}", s.handleDeleteSourceList)
 					})
 
 					// The kernel parameters and the netfilter picture (§2.3).

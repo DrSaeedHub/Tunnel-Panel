@@ -329,6 +329,71 @@ var entityDDL = []string{
 	`CREATE INDEX IF NOT EXISTS IX_RouteDestination_Rule
 		ON RouteDestination (RouteRuleID, SortOrder) WHERE IsDeleted = 0`,
 
+	// A named set of addresses an operator maintains once and points several
+	// rules at. The alternative is retyping the same two hundred ranges into
+	// every rule that needs them, and then editing every one of them when the
+	// set changes.
+	`CREATE TABLE IF NOT EXISTS SourceList (
+		SourceListID INTEGER PRIMARY KEY AUTOINCREMENT,
+		Name         TEXT    NOT NULL,
+		Description  TEXT    NOT NULL DEFAULT '',
+		-- Slug is the identifier the generated ruleset uses for this list's
+		-- named set. It is derived from the name once, at creation, so
+		-- renaming a list never renames a kernel object out from under a rule.
+		Slug        TEXT    NOT NULL,
+		-- IsBuiltIn marks the lists the panel ships with. They are ordinary
+		-- rows an operator may edit or delete; the flag only says where they
+		-- came from, so seeding never recreates one that was deleted.
+		IsBuiltIn   INTEGER NOT NULL DEFAULT 0,
+		CreatedDate TEXT    NOT NULL,
+		UpdatedDate TEXT    NOT NULL,
+		IsDeleted   INTEGER NOT NULL DEFAULT 0
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_SourceList_Name
+		ON SourceList (Name) WHERE IsDeleted = 0`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_SourceList_Slug
+		ON SourceList (Slug) WHERE IsDeleted = 0`,
+
+	`CREATE TABLE IF NOT EXISTS SourceListEntry (
+		SourceListEntryID INTEGER PRIMARY KEY AUTOINCREMENT,
+		SourceListID      INTEGER NOT NULL,
+		-- Cidr is always stored masked and normalised, so two spellings of one
+		-- range are one row and the unique index below can say so.
+		Cidr            TEXT    NOT NULL,
+		AddressFamilyID INTEGER NOT NULL,
+		Description     TEXT    NOT NULL DEFAULT '',
+		CreatedDate     TEXT    NOT NULL,
+		UpdatedDate     TEXT    NOT NULL,
+		IsDeleted       INTEGER NOT NULL DEFAULT 0,
+
+		FOREIGN KEY (SourceListID)    REFERENCES SourceList (SourceListID),
+		FOREIGN KEY (AddressFamilyID) REFERENCES AddressFamily (AddressFamilyID)
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_SourceListEntry_Range
+		ON SourceListEntry (SourceListID, Cidr) WHERE IsDeleted = 0`,
+	`CREATE INDEX IF NOT EXISTS IX_SourceListEntry_List
+		ON SourceListEntry (SourceListID) WHERE IsDeleted = 0`,
+
+	// Which lists a forwarding rule allows. It is a table rather than a
+	// column because a rule may allow several, and a list may be used by
+	// several rules.
+	`CREATE TABLE IF NOT EXISTS RouteSourceList (
+		RouteSourceListID INTEGER PRIMARY KEY AUTOINCREMENT,
+		RouteRuleID       INTEGER NOT NULL,
+		SourceListID      INTEGER NOT NULL,
+		SortOrder         INTEGER NOT NULL DEFAULT 0,
+		CreatedDate       TEXT    NOT NULL,
+		UpdatedDate       TEXT    NOT NULL,
+		IsDeleted         INTEGER NOT NULL DEFAULT 0,
+
+		FOREIGN KEY (RouteRuleID)  REFERENCES RouteRule (RouteRuleID),
+		FOREIGN KEY (SourceListID) REFERENCES SourceList (SourceListID)
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_RouteSourceList_Pair
+		ON RouteSourceList (RouteRuleID, SourceListID) WHERE IsDeleted = 0`,
+	`CREATE INDEX IF NOT EXISTS IX_RouteSourceList_List
+		ON RouteSourceList (SourceListID) WHERE IsDeleted = 0`,
+
 	`CREATE TABLE IF NOT EXISTS RouteAllowedSource (
 		RouteAllowedSourceID INTEGER PRIMARY KEY AUTOINCREMENT,
 		RouteRuleID          INTEGER NOT NULL,

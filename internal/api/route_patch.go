@@ -63,6 +63,11 @@ type routePatch struct {
 	MonitorFailureThreshold  nullableInt   `json:"monitor_failure_threshold,omitempty"`
 	MonitorRecoveryThreshold nullableInt   `json:"monitor_recovery_threshold,omitempty"`
 
+	// SourceListIDs replaces the set of lists the rule allows. Sending an
+	// empty array clears them, which is why it is a pointer: absent means
+	// leave them alone.
+	SourceListIDs *[]int64 `json:"source_list_ids,omitempty"`
+
 	Destinations   *[]validate.RouteDestinationInput   `json:"destinations,omitempty"`
 	AllowedSources *[]validate.RouteAllowedSourceInput `json:"allowed_sources,omitempty"`
 
@@ -146,6 +151,9 @@ func (p routePatch) applyTo(in *validate.RouteInput) {
 		in.MonitorTimeoutSeconds = p.MonitorTimeoutSeconds.Value
 	}
 
+	if p.SourceListIDs != nil {
+		in.SourceListIDs = *p.SourceListIDs
+	}
 	if p.Destinations != nil {
 		in.Destinations = *p.Destinations
 	}

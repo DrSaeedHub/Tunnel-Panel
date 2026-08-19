@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/form'
 import { EmptyState, ErrorState, Skeleton, describeError } from '@/components/ui/feedback'
 import { SettingField } from '@/components/settings/SettingField'
 import { PoolsSection } from '@/components/settings/PoolsSection'
+import { SourceListsSection } from '@/components/settings/SourceListsSection'
 import { AccountSection, BackupSection } from '@/components/settings/AccountAndBackup'
 import { PanelAddressSection } from '@/components/settings/PanelAddressSection'
 import { DatabaseSection } from '@/components/settings/DatabaseSection'
@@ -196,6 +197,12 @@ export default function SettingsPage() {
         return (
           <div key="pools" id="settings-pools">
             <PoolsSection />
+          </div>
+        )
+      case 'sourceLists':
+        return (
+          <div key="sourceLists" id="settings-source-lists">
+            <SourceListsSection />
           </div>
         )
       case 'address':

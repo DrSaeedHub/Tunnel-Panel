@@ -1072,6 +1072,42 @@ export interface RouteDestination {
   is_deleted: boolean
 }
 
+/**
+ * A named set of addresses several forwarding rules can allow at once.
+ *
+ * The reason it exists is repetition: a relay serving one mobile operator
+ * needs several hundred ranges, and the next relay serving the same operator
+ * needs the same several hundred. Kept in a list they have one home, and
+ * editing them reaches every rule that allows them.
+ */
+export interface SourceList {
+  source_list_id: number
+  name: string
+  description: string
+  /** What the generated ruleset calls this list's set. Stable across a rename. */
+  slug: string
+  /** Shipped with the panel rather than created here. Editable all the same. */
+  is_built_in: boolean
+  entries: SourceListEntry[]
+  /** How many live forwarding rules allow it, which is what blocks a delete. */
+  used_by: number
+  created_date: string
+  updated_date: string
+}
+
+export interface SourceListEntry {
+  source_list_entry_id: number
+  source_list_id: number
+  cidr: string
+  address_family_id: number
+  description: string
+}
+
+export interface SourceListsResponse {
+  source_lists: SourceList[]
+  total: number
+}
+
 export interface RouteAllowedSource {
   route_allowed_source_id: number
   route_rule_id: number
@@ -1135,6 +1171,8 @@ export interface RouteRule {
 
   destinations: RouteDestination[]
   allowed_sources: RouteAllowedSource[]
+  /** The shared lists this rule allows, in addition to the addresses above. */
+  source_lists: SourceList[]
 }
 
 /** The health of the tunnel a rule relays over, when it has one. */

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/netip"
+	"strings"
 
 	"github.com/drs/gre-panel/internal/db"
 	"github.com/drs/gre-panel/internal/model"
@@ -162,9 +164,15 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	lists, ranges, err := r.sourceLists(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
 	for i := range out {
 		out[i].Destinations = destinations[out[i].RouteRuleID]
 		out[i].AllowedSources = sources[out[i].RouteRuleID]
+		out[i].SourceLists = lists[out[i].RouteRuleID]
+		out[i].SourceRanges = ranges[out[i].RouteRuleID]
 		out[i] = out[i].normalise()
 	}
 	return out, nil
@@ -190,7 +198,14 @@ func (r *Repo) ByID(ctx context.Context, id int64) (Record, error) {
 	if err != nil {
 		return Record{}, err
 	}
-	return Record{RouteRule: rule, Destinations: destinations, AllowedSources: sources}.normalise(), nil
+	lists, ranges, err := r.sourceListsFor(ctx, id)
+	if err != nil {
+		return Record{}, err
+	}
+	return Record{
+		RouteRule: rule, Destinations: destinations, AllowedSources: sources,
+		SourceLists: lists, SourceRanges: ranges,
+	}.normalise(), nil
 }
 
 // ByTunnel returns every live rule whose destination is reached through a
@@ -256,6 +271,114 @@ func (r *Repo) destinationsFor(ctx context.Context, id int64) ([]model.RouteDest
 	}
 	defer rows.Close()
 	return scanDestinations(rows)
+}
+
+// sourceListsFor returns the shared lists one rule allows, with every range
+// they hold folded together.
+//
+// The ranges are read with the rule and not later: a ruleset built from a rule
+// whose ranges were not loaded declares an empty set, and a rule matching an
+// empty set admits nobody. That is a silent outage rather than an error, so
+// there is deliberately no way to read a rule without them.
+func (r *Repo) sourceListsFor(ctx context.Context, id int64) ([]model.SourceList, []string, error) {
+	lists, ranges, err := r.sourceLists(ctx, &id)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lists[id], ranges[id], nil
+}
+
+// sourceLists reads the list links for one rule, or for all of them when the
+// identifier is nil.
+func (r *Repo) sourceLists(ctx context.Context, only *int64) (
+	map[int64][]model.SourceList, map[int64][]string, error) {
+
+	where := "l.IsDeleted = 0 AND s.IsDeleted = 0"
+	var args []any
+	if only != nil {
+		where += " AND l.RouteRuleID = ?"
+		args = append(args, *only)
+	}
+	rows, err := r.db.Read.QueryContext(ctx, `
+		SELECT l.RouteRuleID, s.SourceListID, s.Name, s.Description, s.Slug, s.IsBuiltIn,
+		       s.CreatedDate, s.UpdatedDate
+		FROM RouteSourceList l
+		JOIN SourceList s ON s.SourceListID = l.SourceListID
+		WHERE `+where+`
+		ORDER BY l.RouteRuleID, l.SortOrder, l.RouteSourceListID`, args...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading the source lists of the forwarding rules: %w", err)
+	}
+	defer rows.Close()
+
+	lists := map[int64][]model.SourceList{}
+	wanted := map[int64]bool{}
+	for rows.Next() {
+		var ruleID int64
+		var list model.SourceList
+		var isBuiltIn int64
+		if err := rows.Scan(&ruleID, &list.SourceListID, &list.Name, &list.Description,
+			&list.Slug, &isBuiltIn, &list.CreatedDate, &list.UpdatedDate); err != nil {
+			return nil, nil, fmt.Errorf("reading a source list link: %w", err)
+		}
+		list.IsBuiltIn = isBuiltIn != 0
+		lists[ruleID] = append(lists[ruleID], list)
+		wanted[list.SourceListID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(wanted) == 0 {
+		return lists, map[int64][]string{}, nil
+	}
+
+	entries, err := r.sourceRanges(ctx, wanted)
+	if err != nil {
+		return nil, nil, err
+	}
+	ranges := map[int64][]string{}
+	for ruleID, used := range lists {
+		seen := map[string]bool{}
+		for _, list := range used {
+			for _, cidr := range entries[list.SourceListID] {
+				if seen[cidr] {
+					continue
+				}
+				seen[cidr] = true
+				ranges[ruleID] = append(ranges[ruleID], cidr)
+			}
+		}
+	}
+	return lists, ranges, nil
+}
+
+// sourceRanges reads the ranges of the given lists, keyed by list.
+func (r *Repo) sourceRanges(ctx context.Context, ids map[int64]bool) (map[int64][]string, error) {
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	rows, err := r.db.Read.QueryContext(ctx, `
+		SELECT SourceListID, Cidr FROM SourceListEntry
+		WHERE IsDeleted = 0 AND SourceListID IN (`+strings.Join(placeholders, ", ")+`)
+		ORDER BY SourceListID, SourceListEntryID`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("reading the ranges of the source lists: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[int64][]string{}
+	for rows.Next() {
+		var id int64
+		var cidr string
+		if err := rows.Scan(&id, &cidr); err != nil {
+			return nil, err
+		}
+		out[id] = append(out[id], cidr)
+	}
+	return out, rows.Err()
 }
 
 func (r *Repo) allDestinations(ctx context.Context) (map[int64][]model.RouteDestination, error) {
@@ -343,9 +466,91 @@ func DesiredOf(records []Record) rules.Ruleset {
 		if !rec.IsEnabled {
 			continue
 		}
-		rs.Routes = append(rs.Routes, rec.Spec())
+		spec := rec.Spec()
+		rs.Routes = append(rs.Routes, spec)
+		if set, ok := sourceSetOf(rec, spec); ok {
+			rs.SourceSets = append(rs.SourceSets, set)
+		}
 	}
 	return rs
+}
+
+// normalisePrefix accepts the two forms an address is written in and returns
+// the masked range both of them mean.
+func normalisePrefix(text string) (netip.Prefix, error) {
+	if strings.Contains(text, "/") {
+		prefix, err := netip.ParsePrefix(text)
+		if err != nil {
+			return netip.Prefix{}, err
+		}
+		return prefix.Masked(), nil
+	}
+	address, err := netip.ParseAddr(text)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(address, address.BitLen()), nil
+}
+
+// SourceSetName is what the generated ruleset calls the address set belonging
+// to one forwarding rule. It is derived from the identifier so that renaming
+// anything -- the rule, or a list it allows -- never renames a kernel object
+// that installed rules are pointing at.
+func SourceSetName(routeRuleID int64) string {
+	return fmt.Sprintf("srcallow%d", routeRuleID)
+}
+
+// sourceSetOf builds the one set a rule matches its source against: every range
+// of every list it allows, plus the addresses it names itself.
+//
+// Ranges of the wrong family are dropped rather than refused. A list may hold
+// both, an operator may point an IPv4 rule at it, and refusing the whole rule
+// over ranges it was never going to match would be a poor trade -- the ones
+// that belong to its family are exactly the ones it needs.
+func sourceSetOf(rec Record, spec rules.RouteSpec) (rules.SourceSet, bool) {
+	if spec.SourceSet == "" {
+		return rules.SourceSet{}, false
+	}
+	family := spec.Family
+	if family == "" {
+		family = rules.FamilyIPv4
+	}
+
+	seen := map[string]bool{}
+	prefixes := make([]string, 0, len(rec.SourceRanges))
+	// Everything in the set is normalised to one shape on the way in, so the
+	// rendered ruleset reads the same whether a range came from a list -- where
+	// it was normalised when it was stored -- or from an address an operator
+	// typed straight onto the rule.
+	add := func(cidr string) {
+		prefix, err := normalisePrefix(strings.TrimSpace(cidr))
+		if err != nil || rules.FamilyOf(prefix.Addr()) != family {
+			return
+		}
+		text := prefix.String()
+		if seen[text] {
+			return
+		}
+		seen[text] = true
+		prefixes = append(prefixes, text)
+	}
+	for _, cidr := range rec.SourceRanges {
+		add(cidr)
+	}
+	for _, source := range rec.AllowedSources {
+		add(source.Cidr)
+	}
+
+	names := make([]string, 0, len(rec.SourceLists))
+	for _, list := range rec.SourceLists {
+		names = append(names, list.Name)
+	}
+	return rules.SourceSet{
+		Name:     spec.SourceSet,
+		Title:    strings.Join(names, ", "),
+		Family:   family,
+		Prefixes: prefixes,
+	}, len(prefixes) > 0
 }
 
 // ---------------------------------------------------------------- writing
@@ -490,6 +695,19 @@ func replaceChildren(ctx context.Context, tx *sql.Tx, id int64, rec Record, now 
 			d.MonitorFailureThreshold, d.MonitorRecoveryThreshold,
 			now, now); err != nil {
 			return fmt.Errorf("storing a destination of rule %d: %w", id, err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE RouteSourceList SET IsDeleted = 1, UpdatedDate = ? WHERE RouteRuleID = ? AND IsDeleted = 0`,
+		now, id); err != nil {
+		return fmt.Errorf("replacing the source lists of rule %d: %w", id, err)
+	}
+	for i, listID := range rec.SourceListIDs {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO RouteSourceList (RouteRuleID, SourceListID, SortOrder, CreatedDate, UpdatedDate, IsDeleted)
+			VALUES (?, ?, ?, ?, ?, 0)`, id, listID, i, now, now); err != nil {
+			return fmt.Errorf("allowing source list %d on rule %d: %w", listID, id, err)
 		}
 	}
 
