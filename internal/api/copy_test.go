@@ -295,7 +295,8 @@ func TestEveryBackendValueTheInterfaceRendersHasATranslation(t *testing.T) {
 			why:    "the analyze confidence badge"},
 		expectation{path: []string{"routeDiag", "verdict"}, values: []string{
 			route.VerdictRuleMissing, route.VerdictForwardingDisabled, route.VerdictNoInboundTraffic,
-			route.VerdictForwardBlocked, route.VerdictDestinationUnreachable, route.VerdictMtuProblem,
+			route.VerdictForwardBlocked, route.VerdictDestinationUnreachable,
+			route.VerdictDestinationPartial, route.VerdictMtuProblem,
 			route.VerdictRuleShadowed, route.VerdictTunnelDown, route.VerdictDisabled,
 			route.VerdictHealthy,
 		}, why: "the forwarding rule analyze verdict"},

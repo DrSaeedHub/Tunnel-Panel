@@ -4,7 +4,12 @@ import { useMutation } from '@tanstack/react-query'
 import { AlertTriangle, CheckCircle2, HelpCircle, Stethoscope, Wifi, XCircle } from 'lucide-react'
 
 import { api } from '@/lib/api'
-import type { RouteAnalyzeResult, RouteReachabilityResult, RouteRule } from '@/lib/types'
+import type {
+  RouteAnalyzeResult,
+  RouteDestinationProbe,
+  RouteDestinationProbeResponse,
+  RouteRule,
+} from '@/lib/types'
 import { formatDateTime, formatMs } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { describeError } from '../ui/feedback'
@@ -27,6 +32,10 @@ const VERDICT_TONE: Record<string, 'ok' | 'warn' | 'danger' | 'neutral'> = {
   FORWARDING_DISABLED: 'danger',
   FORWARD_BLOCKED: 'danger',
   DESTINATION_UNREACHABLE: 'danger',
+  // A rule that works for some of its connections and not others is not the
+  // same finding as one that works or one that does not, and it does not
+  // read with the same weight either.
+  DESTINATION_PARTIAL: 'warn',
 }
 
 /**
@@ -42,7 +51,7 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
   const { t } = useTranslation()
   const { calendar, digits, language } = usePreferences()
   const [analysis, setAnalysis] = useState<RouteAnalyzeResult | null>(null)
-  const [probe, setProbe] = useState<RouteReachabilityResult | null>(null)
+  const [probes, setProbes] = useState<RouteDestinationProbe[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const analyzeMutation = useMutation({
@@ -55,10 +64,17 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
     onError: (cause) => setError(describeError(cause, t).message),
   })
 
+  // Every destination, not the first one: a rule that relays across two
+  // backends is answered by two probes, and which of them failed is the
+  // whole of what an operator came here to find out.
   const testMutation = useMutation({
-    mutationFn: () => api.post<RouteReachabilityResult>(`/routes/${route.route_rule_id}/diagnostics/test`, {}),
+    mutationFn: () =>
+      api.post<RouteDestinationProbeResponse>(
+        `/routes/${route.route_rule_id}/diagnostics/test-all`,
+        {},
+      ),
     onSuccess: (result) => {
-      setProbe(result)
+      setProbes(result.destinations ?? [])
       setError(null)
     },
     onError: (cause) => setError(describeError(cause, t).message),
@@ -101,32 +117,8 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
           </p>
         ) : null}
 
-        {probe ? (
-          <div
-            className={cn(
-              'rounded-md border p-3',
-              probe.reachable
-                ? 'border-ok/30 bg-ok-muted'
-                : probe.conclusive
-                  ? 'border-danger/30 bg-danger-muted'
-                  : 'border-border bg-surface-sunken',
-            )}
-          >
-            <p className="flex flex-wrap items-center gap-2 text-xs font-medium">
-              {probe.reachable ? (
-                <CheckCircle2 className="size-3.5 text-ok" aria-hidden="true" />
-              ) : probe.conclusive ? (
-                <XCircle className="size-3.5 text-danger" aria-hidden="true" />
-              ) : (
-                <HelpCircle className="size-3.5 text-muted-foreground" aria-hidden="true" />
-              )}
-              <Technical className="text-xs">{`${probe.address}:${probe.port}/${probe.protocol}`}</Technical>
-              {probe.latency_ms ? (
-                <Badge tone="ok">{formatMs(probe.latency_ms, digits) ?? ''}</Badge>
-              ) : null}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">{probe.detail}</p>
-          </div>
+        {probes?.length ? (
+          <ProbeList probes={probes} digits={digits} />
         ) : null}
 
         {analysis ? (
@@ -178,6 +170,16 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
               </section>
             ) : null}
 
+            {/* The analysis probes every destination too, and the list is
+                the part of it an operator acts on. It sits above the raw
+                evidence rather than inside it. */}
+            {analysis.destinations?.length ? (
+              <section>
+                <h4 className="mb-1.5 text-xs font-medium">{t('routeDiag.destinations')}</h4>
+                <ProbeList probes={analysis.destinations} digits={digits} />
+              </section>
+            ) : null}
+
             <DisclosurePanel title={t('routeDiag.evidence')} contentClassName="space-y-2">
               {(analysis.evidence ?? []).map((evidence) => (
                 <div key={evidence.name}>
@@ -199,5 +201,76 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
         ) : null}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * One line per destination: what answered, how quickly, and whether the rule is
+ * still sending it anything.
+ *
+ * A destination out of the rotation is shown rather than hidden. An operator
+ * looking at a rule that failed over needs to know whether the backend it
+ * dropped has come back, and a screen that simply stops mentioning it is the
+ * screen that leaves them guessing.
+ */
+function ProbeList({
+  probes,
+  digits,
+}: {
+  probes: RouteDestinationProbe[]
+  digits: 'latin' | 'persian'
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <ul className="space-y-2">
+      {probes.map((probe, index) => {
+        const out = !probe.in_rotation
+        return (
+          <li
+            key={`${probe.address}:${probe.port}:${index}`}
+            className={cn(
+              'rounded-md border p-3',
+              out
+                ? 'border-border bg-surface-sunken'
+                : probe.reachable
+                  ? 'border-ok/30 bg-ok-muted'
+                  : probe.conclusive
+                    ? 'border-danger/30 bg-danger-muted'
+                    : 'border-border bg-surface-sunken',
+            )}
+          >
+            <p className="flex flex-wrap items-center gap-2 text-xs font-medium">
+              {probe.reachable ? (
+                <CheckCircle2 className="size-3.5 shrink-0 text-ok" aria-hidden="true" />
+              ) : probe.conclusive ? (
+                <XCircle className="size-3.5 shrink-0 text-danger" aria-hidden="true" />
+              ) : (
+                <HelpCircle className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              )}
+              <Technical className="text-xs">
+                {`${probe.address}:${probe.port}/${probe.protocol}`}
+              </Technical>
+              {probe.latency_ms ? (
+                <Badge tone="ok">{formatMs(probe.latency_ms, digits) ?? ''}</Badge>
+              ) : null}
+              {probe.is_suppressed ? (
+                <Badge tone="warn">{t('routeDiag.outOfRotation')}</Badge>
+              ) : !probe.is_enabled ? (
+                <Badge tone="neutral">{t('states.disabled')}</Badge>
+              ) : null}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{probe.detail}</p>
+            {out ? (
+              <p className="mt-1 text-2xs text-muted-foreground">
+                {probe.is_suppressed
+                  ? t('routeDiag.outOfRotationHint')
+                  : t('routeDiag.disabledHint')}
+              </p>
+            ) : null}
+          </li>
+        )
+      })}
+    </ul>
   )
 }

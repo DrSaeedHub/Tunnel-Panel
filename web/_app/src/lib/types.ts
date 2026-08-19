@@ -1466,6 +1466,24 @@ export interface RouteReachabilityResult {
   checked_at: string
 }
 
+/**
+ * One destination of a rule and what answered there.
+ *
+ * The rotation state rides with the probe because the same silence means
+ * different things: a destination carrying traffic that does not answer is a
+ * fault, and one an operator switched off, or the monitor took out, is not.
+ */
+export interface RouteDestinationProbe extends RouteReachabilityResult {
+  in_rotation: boolean
+  is_enabled: boolean
+  is_suppressed: boolean
+}
+
+export interface RouteDestinationProbeResponse {
+  route_rule_id: number
+  destinations: RouteDestinationProbe[]
+}
+
 export interface RouteAnalyzeResult {
   route_rule_id: number
   title: string
@@ -1474,6 +1492,8 @@ export interface RouteAnalyzeResult {
   summary: string
   suggested_fix?: string[]
   evidence: Evidence[]
+  /** One entry per destination, so a verdict about "the destination" is not the whole answer. */
+  destinations?: RouteDestinationProbe[]
   checked_at: string
 }
 

@@ -4,7 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import {
   ChevronDown,
+  ExternalLink,
   Gauge,
+  Github,
   KeyRound,
   LogOut,
   Moon,
@@ -33,7 +35,7 @@ import { UpdateProvider } from '@/providers/UpdateProvider'
 import { useMonitorSummary } from '@/hooks/useMonitorSummary'
 import { Button } from '../ui/button'
 import { StatusDot } from '../ui/status'
-import { TunnelName } from '../ui/technical'
+import { Technical, TunnelName } from '../ui/technical'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -309,7 +311,45 @@ function Sidebar({
           )
         })}
       </nav>
+
+      <ProjectLink collapsed={collapsed} />
     </aside>
+  )
+}
+
+/**
+ * Where the panel comes from, at the foot of the sidebar.
+ *
+ * It is a link and not a badge because the useful thing about knowing what you
+ * are running is being able to go and read it, file something, or check what
+ * changed in the release you were just offered. It stays out of the way: the
+ * smallest type in the shell, muted until pointed at, and an icon alone once
+ * the sidebar is collapsed.
+ */
+function ProjectLink({ collapsed }: { collapsed: boolean }) {
+  const { t } = useTranslation()
+
+  return (
+    <a
+      href={PROJECT_URL}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={t('app.repository')}
+      className={cn(
+        'mt-auto flex items-center gap-2 rounded-md px-2 py-2 text-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        collapsed && 'justify-center px-0',
+      )}
+    >
+      <Github className="size-4 shrink-0" aria-hidden="true" />
+      {!collapsed ? (
+        <>
+          <Technical className="truncate text-2xs">{PROJECT_NAME}</Technical>
+          <ExternalLink className="ms-auto size-3 shrink-0 opacity-60" aria-hidden="true" />
+        </>
+      ) : (
+        <span className="sr-only">{t('app.repository')}</span>
+      )}
+    </a>
   )
 }
 
@@ -338,6 +378,14 @@ function TunnelTree({ monitor }: { monitor: ReturnType<typeof useMonitorSummary>
     </TreeRail>
   )
 }
+
+/**
+ * Where this panel comes from. One constant, because the installer, the update
+ * check and this link all name the same repository and a second spelling of it
+ * is a second thing to keep right.
+ */
+const PROJECT_NAME = 'DrSaeedHub/Tunnel-Panel'
+const PROJECT_URL = `https://github.com/${PROJECT_NAME}`
 
 const ROUTE_DOT_TONE: Record<RouteHealthState, string> = {
   healthy: 'bg-ok',

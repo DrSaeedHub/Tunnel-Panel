@@ -680,6 +680,35 @@ func (s *Server) handleRouteTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// handleRouteTestAll probes every destination of one rule.
+//
+// It is a separate endpoint from the single-destination test rather than a
+// second shape of the same one: a client asking about one address gets one
+// answer, and a client asking about a rule gets one answer per destination. A
+// response that changed shape depending on the body would be the kind of
+// endpoint you have to read the source to use.
+func (s *Server) handleRouteTestAll(w http.ResponseWriter, r *http.Request) {
+	rec, ok := s.routeFromPath(w, r)
+	if !ok {
+		return
+	}
+	var params route.ReachabilityParams
+	if r.ContentLength > 0 {
+		if !decodeJSON(w, r, &params) {
+			return
+		}
+	}
+	probes, err := s.routeDiag.TestAll(r.Context(), rec.RouteRuleID, params.TimeoutSeconds)
+	if err != nil {
+		s.writeRouteError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"route_rule_id": rec.RouteRuleID,
+		"destinations":  probes,
+	})
+}
+
 func (s *Server) handleRouteAnalyze(w http.ResponseWriter, r *http.Request) {
 	rec, ok := s.routeFromPath(w, r)
 	if !ok {

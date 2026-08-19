@@ -472,6 +472,7 @@ func (s *Server) buildRouter() http.Handler {
 						r.Group(func(r chi.Router) {
 							r.Use(s.requireRouteDiag)
 							r.Post("/diagnostics/test", s.handleRouteTest)
+							r.Post("/diagnostics/test-all", s.handleRouteTestAll)
 							r.Post("/diagnostics/analyze", s.handleRouteAnalyze)
 							r.Get("/connections", s.handleRouteConnections)
 							r.Get("/counters", s.handleRouteCounters)

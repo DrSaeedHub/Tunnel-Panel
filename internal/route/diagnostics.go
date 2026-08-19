@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,11 +25,16 @@ const (
 	VerdictNoInboundTraffic       = "NO_INBOUND_TRAFFIC"
 	VerdictForwardBlocked         = "FORWARD_BLOCKED"
 	VerdictDestinationUnreachable = "DESTINATION_UNREACHABLE"
-	VerdictMtuProblem             = "MTU_PROBLEM"
-	VerdictRuleShadowed           = "RULE_SHADOWED"
-	VerdictTunnelDown             = "TUNNEL_DOWN"
-	VerdictDisabled               = "RULE_DISABLED"
-	VerdictHealthy                = "HEALTHY"
+	// VerdictDestinationPartial is a load-balanced rule with some of its
+	// destinations answering and some not. It is its own verdict because
+	// neither of the other two is true of it: the rule is carrying traffic,
+	// and a share of that traffic is being sent somewhere that is not there.
+	VerdictDestinationPartial = "DESTINATION_PARTIAL"
+	VerdictMtuProblem         = "MTU_PROBLEM"
+	VerdictRuleShadowed       = "RULE_SHADOWED"
+	VerdictTunnelDown         = "TUNNEL_DOWN"
+	VerdictDisabled           = "RULE_DISABLED"
+	VerdictHealthy            = "HEALTHY"
 )
 
 // Confidence qualifies a verdict, the same way the tunnel diagnostics do.
@@ -305,6 +311,29 @@ func (d *Diagnostics) Test(ctx context.Context, routeRuleID int64, params Reacha
 	return d.prober.Probe(ctx, params), nil
 }
 
+// TestAll probes every destination a rule has, in one go.
+//
+// Test answers "is this address listening" and is the pre-flight a rule does
+// not exist for yet. This answers the question an existing rule actually
+// raises, which is a different one: a relay across two backends is not up or
+// down, it is up for some share of its connections, and the answer has to name
+// which.
+func (d *Diagnostics) TestAll(ctx context.Context, routeRuleID int64,
+	timeoutSeconds float64) ([]DestinationProbe, error) {
+
+	rec, err := d.repo.ByID(ctx, routeRuleID)
+	if err != nil {
+		return nil, err
+	}
+	spec := rec.Spec()
+	probes := d.probeDestinations(ctx, rec, spec, timeoutSeconds)
+	if len(probes) == 0 {
+		return nil, fmt.Errorf("%w: rule %d has no destination to test",
+			rules.ErrNoDestination, routeRuleID)
+	}
+	return probes, nil
+}
+
 // ConnectionList is the live conntrack view of one rule.
 type ConnectionList struct {
 	RouteRuleID int64  `json:"route_rule_id"`
@@ -568,7 +597,26 @@ type AnalyzeResult struct {
 	Summary      string     `json:"summary"`
 	SuggestedFix []string   `json:"suggested_fix,omitempty"`
 	Evidence     []Evidence `json:"evidence"`
-	CheckedAt    string     `json:"checked_at"`
+	// Destinations is every destination the rule has and what answered at
+	// each. A verdict about "the destination" is not an answer for a rule
+	// with two of them, and the one that is failing is the thing to name.
+	Destinations []DestinationProbe `json:"destinations,omitempty"`
+	CheckedAt    string             `json:"checked_at"`
+}
+
+// DestinationProbe is one of a rule's destinations and what answered there.
+//
+// It carries the rotation state as well as the probe, because a destination
+// that is not answering matters differently depending on whether traffic is
+// still being sent to it: one an operator switched off, or one the monitor
+// has taken out, is not a fault in the rule.
+type DestinationProbe struct {
+	ReachabilityResult
+	// InRotation reports whether the installed ruleset names this
+	// destination, which is what decides whether it can affect the verdict.
+	InRotation   bool `json:"in_rotation"`
+	IsEnabled    bool `json:"is_enabled"`
+	IsSuppressed bool `json:"is_suppressed"`
 }
 
 func (r *AnalyzeResult) add(name, detail string, data any) {
@@ -682,7 +730,7 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// 5. The destination has to be reachable, and a rule bound to a tunnel is
 	// reported against that tunnel's state rather than as a generic failure.
 	tunnel := d.tunnelEvidence(ctx, rec, &result)
-	reach := d.probeEvidence(ctx, spec, params, &result)
+	reach := d.probeEvidence(ctx, rec, spec, params, &result)
 
 	forwarded := countersRead && (counter.RxPackets > 0 || counter.TxPackets > 0)
 	translated := tracked && len(flows) > 0
@@ -713,18 +761,48 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 		}
 		return result, nil
 
-	case reach != nil && reach.Conclusive && !reach.Reachable:
+	case reach.none():
 		result.Verdict = VerdictDestinationUnreachable
-		result.Summary = fmt.Sprintf("%s cannot reach its destination: %s",
-			rec.RouteRuleTitle, reach.Detail)
+		if reach.probed == 1 {
+			result.Summary = fmt.Sprintf("%s cannot reach its destination: %s",
+				rec.RouteRuleTitle, reach.detail)
+		} else {
+			result.Summary = fmt.Sprintf("%s cannot reach any of its %d destinations. %s did not "+
+				"answer: %s", rec.RouteRuleTitle, reach.probed,
+				strings.Join(reach.failed, ", "), reach.detail)
+		}
 		result.SuggestedFix = []string{
 			"Check that the service on the destination is running and listening on that port.",
 			"Check the route to the destination from this server.",
+		}
+		if reach.probed > 1 {
+			result.SuggestedFix = append(result.SuggestedFix,
+				"Every destination failing at once is more often one thing they share -- the path out "+
+					"of this server, or a firewall in front of all of them -- than the same fault on "+
+					"each of them.")
 		}
 		if tunnel != nil {
 			result.SuggestedFix = append(result.SuggestedFix,
 				fmt.Sprintf("The destination is reached through %s; run that tunnel's diagnostics too.",
 					tunnel.InterfaceName))
+		}
+		return result, nil
+
+	// A load-balanced rule with one backend down is working and broken at the
+	// same time, and neither of the verdicts either side of this says so. The
+	// share of connections going to the destination that is not answering is
+	// the part that fails, and which destination it is, is the whole answer.
+	case reach.some():
+		result.Verdict = VerdictDestinationPartial
+		result.Summary = fmt.Sprintf("%s is working, and %d of its %d destinations are not "+
+			"answering: %s. The connections that go there fail; the rest are relayed normally.",
+			rec.RouteRuleTitle, reach.refused, reach.probed, strings.Join(reach.failed, ", "))
+		result.SuggestedFix = []string{
+			fmt.Sprintf("Check the service on %s: the others on this rule are answering, so what they "+
+				"share is working.", strings.Join(reach.failed, " and ")),
+			"Disable that destination to stop sending it connections while it is being fixed.",
+			"Turn on monitoring with failover, and the panel takes a destination out of the rotation " +
+				"by itself when it stops answering.",
 		}
 		return result, nil
 
@@ -891,19 +969,152 @@ func (d *Diagnostics) tunnelEvidence(ctx context.Context, rec Record, result *An
 }
 
 // probeEvidence tests the destination.
-func (d *Diagnostics) probeEvidence(ctx context.Context, spec rules.RouteSpec,
-	params AnalyzeParams, result *AnalyzeResult) *ReachabilityResult {
+func (d *Diagnostics) probeEvidence(ctx context.Context, rec Record, spec rules.RouteSpec,
+	params AnalyzeParams, result *AnalyzeResult) reachSummary {
 
-	if !params.probeWanted() || len(spec.Destinations) == 0 {
+	if !params.probeWanted() {
+		return reachSummary{}
+	}
+	probes := d.probeDestinations(ctx, rec, spec, params.TimeoutSeconds)
+	if len(probes) == 0 {
+		return reachSummary{}
+	}
+	result.Destinations = probes
+
+	summary := summarise(probes)
+	result.add("destination_probe", summary.describe(), probes)
+	return summary
+}
+
+// probeDestinations knocks on every destination the rule has, including the
+// ones that are not in the rotation.
+//
+// The ones that are out are probed too and reported as out: an operator looking
+// at a rule that failed over needs to know whether the backend it dropped has
+// come back, and a diagnostics screen that simply does not mention it is the
+// screen that leaves them guessing. They never decide the verdict, because a
+// destination carrying no traffic is not a fault in the rule.
+func (d *Diagnostics) probeDestinations(ctx context.Context, rec Record,
+	spec rules.RouteSpec, timeout float64) []DestinationProbe {
+
+	inRotation := map[string]bool{}
+	for _, destination := range spec.Destinations {
+		inRotation[endpointKey(destination.Address, destination.Ports.Port)] = true
+	}
+
+	type target struct {
+		address                 string
+		port                    int
+		enabled, suppressed, in bool
+	}
+	var targets []target
+	for _, destination := range rec.Destinations {
+		targets = append(targets, target{
+			address: destination.Address, port: int(destination.Port),
+			enabled: destination.IsEnabled, suppressed: destination.IsSuppressed,
+			in: inRotation[endpointKey(destination.Address, int(destination.Port))],
+		})
+	}
+	// A rule stored before its destination rows still carries the pair on the
+	// rule itself, and the spec is then the only place it appears.
+	if len(targets) == 0 {
+		for _, destination := range spec.Destinations {
+			targets = append(targets, target{
+				address: destination.Address, port: destination.Ports.Port,
+				enabled: true, in: true,
+			})
+		}
+	}
+	if len(targets) == 0 {
 		return nil
 	}
-	destination := spec.Destinations[0]
-	probe := d.prober.Probe(ctx, ReachabilityParams{
-		Address: destination.Address, Port: destination.Ports.Port,
-		Protocol: string(spec.Protocol), TimeoutSeconds: params.TimeoutSeconds,
-	})
-	result.add("destination_probe", probe.Detail, probe)
-	return &probe
+
+	// The probes wait on the network and not on each other, so a rule with
+	// four destinations takes as long as its slowest one rather than four
+	// timeouts in a row.
+	out := make([]DestinationProbe, len(targets))
+	var wg sync.WaitGroup
+	for i, item := range targets {
+		wg.Add(1)
+		go func(i int, item target) {
+			defer wg.Done()
+			out[i] = DestinationProbe{
+				ReachabilityResult: d.prober.Probe(ctx, ReachabilityParams{
+					Address: item.address, Port: item.port,
+					Protocol: string(spec.Protocol), TimeoutSeconds: timeout,
+				}),
+				InRotation:   item.in,
+				IsEnabled:    item.enabled,
+				IsSuppressed: item.suppressed,
+			}
+		}(i, item)
+	}
+	wg.Wait()
+	return out
+}
+
+// reachSummary folds the probes into the shape the decision tree asks about:
+// how many of the destinations actually carrying traffic answered.
+type reachSummary struct {
+	// probed is how many destinations in the rotation were knocked on at all.
+	probed int
+	// reachable and refused only count conclusive answers. A UDP probe that got
+	// no reply is neither, which is what keeps silence from being read as a
+	// failure.
+	reachable int
+	refused   int
+	// failed names the destinations that conclusively did not answer, in the
+	// order the rule lists them, so the summary can quote them.
+	failed []string
+	// detail is the first failure's own words, for a message about one.
+	detail string
+}
+
+func summarise(probes []DestinationProbe) reachSummary {
+	out := reachSummary{}
+	for _, probe := range probes {
+		if !probe.InRotation {
+			continue
+		}
+		out.probed++
+		switch {
+		case probe.Reachable:
+			out.reachable++
+		case probe.Conclusive:
+			out.refused++
+			out.failed = append(out.failed, endpointKey(probe.Address, probe.Port))
+			if out.detail == "" {
+				out.detail = probe.Detail
+			}
+		}
+	}
+	return out
+}
+
+// none reports that every destination in the rotation conclusively failed.
+func (r reachSummary) none() bool { return r.probed > 0 && r.refused == r.probed }
+
+// some reports that the rule is sending a share of its traffic somewhere that
+// is not answering, while the rest of it still works.
+func (r reachSummary) some() bool { return r.refused > 0 && r.reachable > 0 }
+
+func (r reachSummary) describe() string {
+	switch {
+	case r.probed == 0:
+		return "no destination of this rule is in the rotation to probe"
+	case r.refused == 0:
+		return fmt.Sprintf("all %d destination(s) in the rotation answered", r.probed)
+	case r.none():
+		return fmt.Sprintf("none of the %d destination(s) in the rotation answered: %s",
+			r.probed, r.detail)
+	}
+	return fmt.Sprintf("%d of %d destination(s) in the rotation did not answer: %s",
+		r.refused, r.probed, strings.Join(r.failed, ", "))
+}
+
+// endpointKey names one destination the way a message quotes it.
+func endpointKey(address string, port int) string {
+	return net.JoinHostPort(address, strconv.Itoa(port))
 }
 
 // stalledFlows returns the connections that established and then stopped

@@ -8,6 +8,7 @@ export default {
   app: {
     name: 'Tunnel Panel',
     tagline: 'GRE tunnel management',
+    repository: 'Source and releases on GitHub',
   },
 
   nav: {
@@ -1422,8 +1423,14 @@ export default {
     title: 'Diagnostics',
     analyze: 'Diagnose',
     analyzing: 'Diagnosing…',
-    test: 'Test destination',
+    test: 'Test every destination',
     testing: 'Testing…',
+    destinations: 'Every destination, and what answered',
+    outOfRotation: 'Out of the rotation',
+    outOfRotationHint:
+      'The monitor took this destination out, so no connection is being sent to it. It goes back in when it answers again.',
+    disabledHint:
+      'This destination is switched off, so the rules do not name it and no connection is being sent to it.',
     evidence: 'What was observed',
     suggestedFix: 'Worth trying, in order',
     confidence: {
@@ -1435,7 +1442,8 @@ export default {
       FORWARDING_DISABLED: 'This kernel is not forwarding packets',
       NO_INBOUND_TRAFFIC: 'Nothing has reached this server on that port',
       FORWARD_BLOCKED: 'Connections arrive and nothing is forwarded',
-      DESTINATION_UNREACHABLE: 'The destination cannot be reached',
+      DESTINATION_UNREACHABLE: 'No destination can be reached',
+      DESTINATION_PARTIAL: 'Some destinations are not answering',
       MTU_PROBLEM: 'Connections establish and then stall',
       RULE_SHADOWED: 'Another rule claims this traffic first',
       TUNNEL_DOWN: 'The tunnel this rule relays over is down',

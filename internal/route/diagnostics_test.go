@@ -264,6 +264,142 @@ func TestAnalyzeDecisionTree(t *testing.T) {
 
 // TestAnalyzeCarriesItsEvidence: a verdict with no evidence is the opaque
 // status word this whole subsystem exists to replace.
+// A relay across two backends is not reachable or unreachable. It is reachable
+// for some share of its connections, and the verdict has to say which share and
+// which destination -- probing the first one and calling that the answer got it
+// wrong in both directions: a dead second backend read as healthy, and a dead
+// first one read as a rule that carries nothing.
+func TestAnalyzeProbesEveryDestinationAndNamesTheOnesThatFail(t *testing.T) {
+	h := newDiagHarness(t, func(in *validate.RouteInput) {
+		in.LoadBalanceModeID = model.LoadBalanceModeRoundRobin
+		in.Destinations = []validate.RouteDestinationInput{
+			{Address: "198.51.100.20", Port: 2044, IsEnabled: true},
+			{Address: "198.51.100.21", Port: 2044, IsEnabled: true},
+		}
+	})
+	// Traffic is flowing, so nothing above the destination verdicts fires.
+	h.conntrack.List = []Flow{established("192.0.2.5", 10, 10)}
+	h.backend.SetCounters(hits(1))
+
+	// The first answers, the second does not.
+	h.diag.prober = &perAddressProber{down: map[string]bool{"198.51.100.21": true}}
+
+	result, err := h.diag.Analyze(h.ctx, 1, AnalyzeParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict != VerdictDestinationPartial {
+		t.Fatalf("verdict = %q, want %q\nsummary: %s",
+			result.Verdict, VerdictDestinationPartial, result.Summary)
+	}
+	if !strings.Contains(result.Summary, "198.51.100.21") {
+		t.Errorf("the summary does not name the destination that failed: %s", result.Summary)
+	}
+	if strings.Contains(result.Summary, "198.51.100.20:") {
+		t.Errorf("the summary names a destination that answered: %s", result.Summary)
+	}
+	if len(result.Destinations) != 2 {
+		t.Fatalf("destinations = %+v, want one entry per destination", result.Destinations)
+	}
+	for _, probe := range result.Destinations {
+		if !probe.InRotation {
+			t.Errorf("%s is reported out of the rotation: %+v", probe.Address, probe)
+		}
+	}
+}
+
+// Every destination failing at once is a different finding from one of them
+// failing, and it keeps the verdict it always had.
+func TestAnalyzeStillReportsEveryDestinationFailingAsUnreachable(t *testing.T) {
+	h := newDiagHarness(t, func(in *validate.RouteInput) {
+		in.Destinations = []validate.RouteDestinationInput{
+			{Address: "198.51.100.20", Port: 2044, IsEnabled: true},
+			{Address: "198.51.100.21", Port: 2044, IsEnabled: true},
+		}
+	})
+	h.conntrack.List = []Flow{established("192.0.2.5", 10, 10)}
+	h.backend.SetCounters(hits(1))
+	h.diag.prober = &perAddressProber{down: map[string]bool{
+		"198.51.100.20": true, "198.51.100.21": true,
+	}}
+
+	result, err := h.diag.Analyze(h.ctx, 1, AnalyzeParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict != VerdictDestinationUnreachable {
+		t.Fatalf("verdict = %q, want %q", result.Verdict, VerdictDestinationUnreachable)
+	}
+	if !strings.Contains(result.Summary, "any of its 2 destinations") {
+		t.Errorf("the summary reads as though there were one destination: %s", result.Summary)
+	}
+}
+
+// A destination the monitor has taken out is still probed and still reported --
+// an operator needs to know whether it has come back -- but it carries no
+// traffic, so it cannot make a working rule read as a broken one.
+func TestADestinationOutOfTheRotationIsReportedAndDoesNotDecideTheVerdict(t *testing.T) {
+	h := newDiagHarness(t, func(in *validate.RouteInput) {
+		in.Destinations = []validate.RouteDestinationInput{
+			{Address: "198.51.100.20", Port: 2044, IsEnabled: true},
+			{Address: "198.51.100.21", Port: 2044, IsEnabled: true},
+		}
+	})
+	h.conntrack.List = []Flow{established("192.0.2.5", 10, 10)}
+	h.backend.SetCounters(hits(1))
+	h.diag.prober = &perAddressProber{down: map[string]bool{"198.51.100.21": true}}
+
+	rec, err := h.repo.ByID(h.ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range rec.Destinations {
+		if d.Address == "198.51.100.21" {
+			if err := h.repo.SetDestinationSuppressed(h.ctx, d.RouteDestinationID, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	result, err := h.diag.Analyze(h.ctx, 1, AnalyzeParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Verdict == VerdictDestinationPartial || result.Verdict == VerdictDestinationUnreachable {
+		t.Errorf("a destination out of the rotation decided the verdict: %q", result.Verdict)
+	}
+
+	var out *DestinationProbe
+	for i := range result.Destinations {
+		if result.Destinations[i].Address == "198.51.100.21" {
+			out = &result.Destinations[i]
+		}
+	}
+	if out == nil {
+		t.Fatal("the destination that was taken out is not reported at all")
+	}
+	if out.InRotation || !out.IsSuppressed {
+		t.Errorf("it is not reported as out of the rotation: %+v", out)
+	}
+}
+
+// perAddressProber answers per destination, which is the whole point of probing
+// more than one of them.
+type perAddressProber struct{ down map[string]bool }
+
+func (p *perAddressProber) Probe(ctx context.Context, params ReachabilityParams) ReachabilityResult {
+	if p.down[params.Address] {
+		return ReachabilityResult{
+			Address: params.Address, Port: params.Port, Protocol: params.Protocol,
+			Conclusive: true, Detail: "connection refused",
+		}
+	}
+	return ReachabilityResult{
+		Address: params.Address, Port: params.Port, Protocol: params.Protocol,
+		Reachable: true, Conclusive: true, LatencyMs: 1.2, Detail: "connected",
+	}
+}
+
 func TestAnalyzeCarriesItsEvidence(t *testing.T) {
 	h := newDiagHarness(t, nil)
 	h.conntrack.List = []Flow{established("192.0.2.5", 40, 38)}

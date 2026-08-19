@@ -9,6 +9,7 @@ export default {
   app: {
     name: 'پنل تونل',
     tagline: 'مدیریت تونل GRE',
+    repository: 'کد و نسخه‌ها روی گیت‌هاب',
   },
 
   nav: {
@@ -1411,8 +1412,14 @@ export default {
     title: 'عیب‌یابی',
     analyze: 'تشخیص',
     analyzing: 'در حال تشخیص…',
-    test: 'آزمودن مقصد',
+    test: 'آزمودن همهٔ مقصدها',
     testing: 'در حال آزمودن…',
+    destinations: 'همهٔ مقصدها و پاسخی که دادند',
+    outOfRotation: 'خارج از چرخه',
+    outOfRotationHint:
+      'پایشگر این مقصد را بیرون گذاشته، پس هیچ اتصالی به آن فرستاده نمی‌شود. هر وقت دوباره پاسخ دهد برمی‌گردد.',
+    disabledHint:
+      'این مقصد خاموش است، پس قانون‌ها نامش را نمی‌برند و اتصالی به آن فرستاده نمی‌شود.',
     evidence: 'آنچه مشاهده شد',
     suggestedFix: 'به این ترتیب ارزش امتحان دارد',
     confidence: {
@@ -1424,7 +1431,8 @@ export default {
       FORWARDING_DISABLED: 'این کرنل بسته‌ها را فوروارد نمی‌کند',
       NO_INBOUND_TRAFFIC: 'چیزی روی آن پورت به این سرور نرسیده است',
       FORWARD_BLOCKED: 'اتصال‌ها می‌رسند و چیزی منتقل نمی‌شود',
-      DESTINATION_UNREACHABLE: 'مقصد در دسترس نیست',
+      DESTINATION_UNREACHABLE: 'هیچ مقصدی در دسترس نیست',
+      DESTINATION_PARTIAL: 'برخی مقصدها پاسخ نمی‌دهند',
       MTU_PROBLEM: 'اتصال‌ها برقرار می‌شوند و سپس گیر می‌کنند',
       RULE_SHADOWED: 'قانون دیگری زودتر این ترافیک را برمی‌دارد',
       TUNNEL_DOWN: 'تونلی که این قانون از روی آن منتقل می‌کند پایین است',
