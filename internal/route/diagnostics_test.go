@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
@@ -414,6 +415,79 @@ func TestConnectionsAreBrokenDownByWhereTheyActuallyWent(t *testing.T) {
 	if first.RxBytes != 3000 || first.TxBytes != 3000 {
 		t.Errorf("the bytes on the busiest destination are %d/%d, want 3000/3000",
 			first.RxBytes, first.TxBytes)
+	}
+}
+
+// The bytes on the open connections are a standing figure; what an operator
+// watching a relay wants is the moving one. It is subtracted per flow, because
+// a destination's total falls whenever a connection closes and a difference
+// taken on the totals would report that fall as negative throughput.
+func TestPerDestinationRatesComeFromWhatMovedBetweenTwoReadings(t *testing.T) {
+	h := newDiagHarness(t, nil)
+
+	at := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	flow := func(source string, rx, tx uint64) Flow {
+		f := established(source, 1, 1)
+		f.RxBytes, f.TxBytes = rx, tx
+		return f
+	}
+
+	// The first reading has nothing to subtract from, so it is not a rate.
+	first := []Flow{flow("192.0.2.5", 1000, 500), flow("192.0.2.6", 2000, 1000)}
+	if moved, gap := h.diag.rates.observe(1, first, at); gap != 0 || moved != nil {
+		t.Fatalf("the first reading produced a rate: %v over %v", moved, gap)
+	}
+
+	// Ten seconds later one flow has moved, one has gone, and one is new.
+	second := []Flow{flow("192.0.2.5", 11_000, 5_500), flow("192.0.2.9", 4_000, 4_000)}
+	moved, gap := h.diag.rates.observe(1, second, at.Add(10*time.Second))
+	if gap != 10 {
+		t.Fatalf("gap = %v, want the ten seconds between the readings", gap)
+	}
+
+	// Only the flow in both readings counts: 10_000 bytes over ten seconds.
+	// The flow that vanished contributes nothing rather than a negative, and
+	// the one that appeared has no previous reading to be measured against.
+	entry := moved[destinationKey{address: "198.51.100.20", port: 2044}]
+	if entry.rx != 1000 || entry.tx != 500 {
+		t.Errorf("movement = %+v, want 1000/500 bytes per second", entry)
+	}
+
+	// A reading taken hours later is not a measurement of anything.
+	if _, gap := h.diag.rates.observe(1, second, at.Add(6*time.Hour)); gap != 0 {
+		t.Errorf("a reading %v after the last one was reported as a rate", 6*time.Hour)
+	}
+}
+
+// Byte accounting is off by default on most kernels, and the symptom is
+// specific: every connection is tracked and every one reads zero bytes. The
+// list says which of the two it is.
+func TestTheListSaysWhetherTheKernelIsCountingBytesAtAll(t *testing.T) {
+	h := newDiagHarness(t, nil)
+	h.conntrack.List = []Flow{established("192.0.2.5", 10, 10)}
+
+	list, err := h.diag.Connections(h.ctx, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.ByteAccounting {
+		t.Error("byte accounting is claimed on a host where the sysctl is absent")
+	}
+
+	acct := filepath.Join(h.dir, "proc", "sys", "net", "netfilter")
+	if err := os.MkdirAll(acct, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(acct, "nf_conntrack_acct"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err = h.diag.Connections(h.ctx, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !list.ByteAccounting {
+		t.Error("byte accounting is reported off with the sysctl set to 1")
 	}
 }
 

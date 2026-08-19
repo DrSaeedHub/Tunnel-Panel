@@ -13,7 +13,13 @@ import {
   type RouteReachabilityResult,
   type RouteRule,
 } from '@/lib/types'
-import { formatMs, formatPercent, formatVolume, type UnitPreferences } from '@/lib/format'
+import {
+  formatMs,
+  formatPercent,
+  formatThroughput,
+  formatVolume,
+  type UnitPreferences,
+} from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
@@ -53,6 +59,12 @@ export function RouteDestinationsPanel({ route }: { route: RouteRule }) {
   )
 
   const live = query.data?.available ?? false
+  // Two separate things can be missing. The table may be unreadable, in which
+  // case there are no connections either; or it may be readable while the
+  // kernel counts no bytes on them, which is the default on most kernels and
+  // is why a busy relay can show thousands of connections and no volume.
+  const counting = query.data?.byte_accounting ?? false
+  const rateSeconds = query.data?.rate_interval_seconds ?? 0
   const totalConnections = rows.reduce((sum, row) => sum + row.connections, 0)
   const mode = route.load_balance_mode_id
   // Two destinations in the rotation are distributed across whatever the mode
@@ -99,6 +111,8 @@ export function RouteDestinationsPanel({ route }: { route: RouteRule }) {
                   index={index}
                   route={route}
                   live={live}
+                  counting={counting}
+                  rated={rateSeconds > 0}
                   balanced={balanced}
                   totalConnections={totalConnections}
                   digits={digits}
@@ -107,7 +121,19 @@ export function RouteDestinationsPanel({ route }: { route: RouteRule }) {
               ))}
             </ul>
 
-            {live ? (
+            {live && !counting ? (
+              <p className="mt-3 flex items-start gap-2 rounded-md border border-warn/40 bg-warn-muted p-3 text-2xs">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
+                <span>
+                  {t('routeDetail.destinations.noByteAccounting')}
+                  <Technical className="mt-1 block">
+                    sysctl -w net.netfilter.nf_conntrack_acct=1
+                  </Technical>
+                </span>
+              </p>
+            ) : null}
+
+            {live && counting ? (
               <p className="mt-3 text-2xs text-muted-foreground">
                 {t('routeDetail.destinations.snapshotNote')}
               </p>
@@ -125,6 +151,8 @@ function DestinationRow({
   index,
   route,
   live,
+  counting,
+  rated,
   balanced,
   totalConnections,
   digits,
@@ -134,6 +162,10 @@ function DestinationRow({
   index: number
   route: RouteRule
   live: boolean
+  /** Whether the kernel is counting bytes, without which volume is not zero — it is unknown. */
+  counting: boolean
+  /** Whether there have been two readings to measure a rate between. */
+  rated: boolean
   balanced: boolean
   totalConnections: number
   digits: 'latin' | 'persian'
@@ -187,14 +219,19 @@ function DestinationRow({
           </span>
         ) : null}
         {live ? (
-          <>
-            <span className="tabular text-foreground">
-              {t('routeDetail.destinations.connections', { count: row.connections })}
-            </span>
-            <span className="tabular">
-              {`↓ ${formatVolume(row.rxBytes, units).text} · ↑ ${formatVolume(row.txBytes, units).text}`}
-            </span>
-          </>
+          <span className="tabular text-foreground">
+            {t('routeDetail.destinations.connections', { count: row.connections })}
+          </span>
+        ) : null}
+        {live && counting && rated ? (
+          <span className="tabular text-foreground">
+            {`↓ ${formatThroughput(row.rxRate, units).text} · ↑ ${formatThroughput(row.txRate, units).text}`}
+          </span>
+        ) : null}
+        {live && counting ? (
+          <span className="tabular">
+            {`↓ ${formatVolume(row.rxBytes, units).text} · ↑ ${formatVolume(row.txBytes, units).text}`}
+          </span>
         ) : null}
       </div>
 
@@ -298,6 +335,8 @@ interface DestinationRowModel {
   connections: number
   rxBytes: number
   txBytes: number
+  rxRate: number
+  txRate: number
 }
 
 /**
@@ -339,6 +378,8 @@ export function joinDestinations(
         connections: entry?.connections ?? 0,
         rxBytes: entry?.rx_bytes ?? 0,
         txBytes: entry?.tx_bytes ?? 0,
+        rxRate: entry?.rx_bytes_per_second ?? 0,
+        txRate: entry?.tx_bytes_per_second ?? 0,
       })
     }
   } else {
@@ -355,6 +396,8 @@ export function joinDestinations(
       connections: entry?.connections ?? 0,
       rxBytes: entry?.rx_bytes ?? 0,
       txBytes: entry?.tx_bytes ?? 0,
+      rxRate: entry?.rx_bytes_per_second ?? 0,
+      txRate: entry?.tx_bytes_per_second ?? 0,
     })
   }
 
@@ -369,6 +412,8 @@ export function joinDestinations(
       connections: entry.connections,
       rxBytes: entry.rx_bytes,
       txBytes: entry.tx_bytes,
+      rxRate: entry.rx_bytes_per_second,
+      txRate: entry.tx_bytes_per_second,
     })
   }
 

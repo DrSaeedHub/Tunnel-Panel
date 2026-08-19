@@ -97,10 +97,28 @@ describe('the destinations of a relay', () => {
       connections: [],
       total: 100,
       by_destination: [
-        { address: '172.17.1.2', port: 8080, connections: 75, rx_bytes: 3000, tx_bytes: 1000 },
-        { address: '172.17.2.2', port: 8080, connections: 25, rx_bytes: 1000, tx_bytes: 500 },
+        {
+          address: '172.17.1.2',
+          port: 8080,
+          connections: 75,
+          rx_bytes: 3000,
+          tx_bytes: 1000,
+          rx_bytes_per_second: 1_048_576,
+          tx_bytes_per_second: 524_288,
+        },
+        {
+          address: '172.17.2.2',
+          port: 8080,
+          connections: 25,
+          rx_bytes: 1000,
+          tx_bytes: 500,
+          rx_bytes_per_second: 0,
+          tx_bytes_per_second: 0,
+        },
       ],
       new_per_second: 0,
+      byte_accounting: true,
+      rate_interval_seconds: 10,
       checked_at: '',
     })
 
@@ -116,6 +134,9 @@ describe('the destinations of a relay', () => {
     expect(screen.getAllByText('Expected 50%')).toHaveLength(2)
     const meters = screen.getAllByRole('meter')
     expect(meters.map((meter) => meter.getAttribute('aria-valuenow'))).toEqual(['75', '25'])
+
+    // The live figure, which is what an operator watching a relay is after.
+    expect(screen.getByText('↓ 1 MiB/s · ↑ 512 KiB/s')).toBeInTheDocument()
   })
 
   it('calls out a destination that is taking nothing while the others are busy', async () => {
@@ -126,9 +147,19 @@ describe('the destinations of a relay', () => {
       connections: [],
       total: 40,
       by_destination: [
-        { address: '172.17.1.2', port: 8080, connections: 40, rx_bytes: 0, tx_bytes: 0 },
+        {
+          address: '172.17.1.2',
+          port: 8080,
+          connections: 40,
+          rx_bytes: 0,
+          tx_bytes: 0,
+          rx_bytes_per_second: 0,
+          tx_bytes_per_second: 0,
+        },
       ],
       new_per_second: 0,
+      byte_accounting: true,
+      rate_interval_seconds: 10,
       checked_at: '',
     })
 
@@ -147,6 +178,8 @@ describe('the destinations of a relay', () => {
       connections: [],
       total: 0,
       new_per_second: 0,
+      byte_accounting: true,
+      rate_interval_seconds: 10,
       checked_at: '',
     })
 
@@ -167,9 +200,19 @@ describe('the destinations of a relay', () => {
       connections: [],
       total: 12,
       by_destination: [
-        { address: '172.17.9.9', port: 8080, connections: 12, rx_bytes: 0, tx_bytes: 0 },
+        {
+          address: '172.17.9.9',
+          port: 8080,
+          connections: 12,
+          rx_bytes: 0,
+          tx_bytes: 0,
+          rx_bytes_per_second: 0,
+          tx_bytes_per_second: 0,
+        },
       ],
       new_per_second: 0,
+      byte_accounting: true,
+      rate_interval_seconds: 10,
       checked_at: '',
     })
 
@@ -177,5 +220,48 @@ describe('the destinations of a relay', () => {
 
     expect(await screen.findByText('172.17.9.9:8080')).toBeInTheDocument()
     expect(screen.getByText('Not a destination of this rule')).toBeInTheDocument()
+  })
+
+  it('says the kernel is not counting bytes rather than reporting none moved', async () => {
+    // The default on most kernels: every connection is tracked and every one
+    // of them reads zero, which shown as a volume is a wrong answer.
+    vi.mocked(api.get).mockResolvedValue({
+      route_rule_id: 1,
+      reader: 'conntrack',
+      available: true,
+      connections: [],
+      total: 100,
+      by_destination: [
+        {
+          address: '172.17.1.2',
+          port: 8080,
+          connections: 60,
+          rx_bytes: 0,
+          tx_bytes: 0,
+          rx_bytes_per_second: 0,
+          tx_bytes_per_second: 0,
+        },
+        {
+          address: '172.17.2.2',
+          port: 8080,
+          connections: 40,
+          rx_bytes: 0,
+          tx_bytes: 0,
+          rx_bytes_per_second: 0,
+          tx_bytes_per_second: 0,
+        },
+      ],
+      new_per_second: 0,
+      byte_accounting: false,
+      checked_at: '',
+    })
+
+    render(wrap(<RouteDestinationsPanel route={route()} />))
+
+    expect(await screen.findByText(/does not count the bytes on them/)).toBeInTheDocument()
+    expect(screen.getByText('sysctl -w net.netfilter.nf_conntrack_acct=1')).toBeInTheDocument()
+    // The counts are exact whatever the byte counting does, so they stay.
+    expect(screen.getByText('60 connections open')).toBeInTheDocument()
+    expect(screen.queryByText(/0 B/)).toBeNull()
   })
 })

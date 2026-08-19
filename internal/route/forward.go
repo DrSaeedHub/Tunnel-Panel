@@ -22,6 +22,7 @@ const (
 	procIPv4Forward   = "proc/sys/net/ipv4/ip_forward"
 	procIPv6Forward   = "proc/sys/net/ipv6/conf/all/forwarding"
 	procConntrackMax  = "proc/sys/net/netfilter/nf_conntrack_max"
+	procConntrackAcct = "proc/sys/net/netfilter/nf_conntrack_acct"
 	procConntrackUsed = "proc/sys/net/netfilter/nf_conntrack_count"
 )
 
@@ -160,6 +161,15 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 	}
 	return status
 }
+
+// ByteAccounting reports whether the kernel counts bytes and packets per
+// tracked connection.
+//
+// It is off by default on most kernels, and the symptom is specific: every
+// connection is tracked and every one of them reads zero bytes. Attributing
+// volume to a destination is impossible without it, so the panel says the
+// counting is off rather than reporting that nothing moved.
+func (f *Forwarding) ByteAccounting() bool { return f.readFlag(procConntrackAcct) }
 
 // Enable turns forwarding on and persists it to the panel's own file.
 //

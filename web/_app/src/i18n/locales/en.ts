@@ -1171,6 +1171,7 @@ export default {
       bindInterface: 'Only on interface',
       destinationAddress: 'Destination address',
       destinationPort: 'Destination port',
+      port: 'Port',
       destinationPortRangeEnd: 'Range end',
       snatAddress: 'Source address to use',
       loadBalance: 'Distribution',
@@ -1209,7 +1210,9 @@ export default {
       allowedSources:
         'Restricts who may use the relay, as addresses or CIDRs. Empty means any source that can reach the bind address.',
       destinations:
-        'More than one destination distributes new connections between them. Source hash keeps a given client on a given destination; round robin does not.',
+        'How new connections are spread across the destinations above. Source hash keeps a given client on a given destination, which is what a service holding per-client state needs; round robin does not.',
+      rangeNotBalanced:
+        'A port range cannot be spread across destinations, because each one takes a single port. Remove the extra destinations to forward a range.',
       snatAddress: 'Must be an address that exists on this server.',
     },
 
@@ -1356,7 +1359,8 @@ export default {
       unconfiguredHint: 'Connections are still tracked to it, which is what the table holds for a while after a destination is removed.',
       unknownShare: 'Connection tracking could not be read, so where the traffic is actually going cannot be shown. The destinations themselves are still listed.',
       shareLabel: 'Share of the open connections going to {{address}}',
-      snapshotNote: 'The connections and bytes here are what is open right now, so a connection that has closed is not counted in them. The rule’s own totals are above.',
+      snapshotNote: 'The connections and volume here are what is open right now, so a connection that has closed is not counted in them; the rates are what moved between the last two readings of the table. The rule’s own totals are above.',
+      noByteAccounting: 'This kernel tracks the connections but does not count the bytes on them, so no volume or rate can be attributed to a destination. The connection counts above are still exact. Turning the counting on applies to connections opened after it, not to the ones already tracked:',
       test: 'Test',
       testing: 'Testing…',
       reachable: 'Answered in {{latency}}',

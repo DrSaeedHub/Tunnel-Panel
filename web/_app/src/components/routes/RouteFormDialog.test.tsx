@@ -76,5 +76,9 @@ describe('formFromRoute', () => {
     // shown as extra rows.
     expect(seeded.destinations).toEqual([{ address: '198.51.100.21', port: '9302', weight: '3' }])
     expect(seeded.allowed_sources).toEqual(['203.0.113.0/24'])
+    // The primary's own weight rides along with it. It used to be sent as 1
+    // whatever it was stored as, so a weighted rule could not weight the
+    // destination it leads with and saving one silently reset it.
+    expect(seeded.destination_weight).toBe('1')
   })
 })

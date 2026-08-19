@@ -1351,6 +1351,13 @@ export interface RouteDestinationLoad {
    */
   rx_bytes: number
   tx_bytes: number
+  /**
+   * What moved between the last two readings, counted only over the flows
+   * present in both. A floor on the throughput rather than an estimate above
+   * it. Meaningless unless the list carries a rate interval.
+   */
+  rx_bytes_per_second: number
+  tx_bytes_per_second: number
 }
 
 export interface RouteConnectionList {
@@ -1365,6 +1372,13 @@ export interface RouteConnectionList {
   /** Counted over every flow the rule has, not over the page returned above. */
   by_destination?: RouteDestinationLoad[]
   new_per_second: number
+  /**
+   * Whether the kernel counts bytes per connection at all. It is off by
+   * default on most kernels, and with it off every flow reads zero.
+   */
+  byte_accounting: boolean
+  /** The gap the per-destination rates were measured over. Absent means none. */
+  rate_interval_seconds?: number
   checked_at: string
 }
 

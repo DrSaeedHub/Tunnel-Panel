@@ -56,6 +56,8 @@ interface FormState {
   max_connections_per_source: string
   connection_rate_limit: string
   is_enabled: boolean
+  /** The weight of the primary destination, which leads the list. */
+  destination_weight: string
   destinations: { address: string; port: string; weight: string }[]
   allowed_sources: string[]
 }
@@ -412,47 +414,16 @@ export function RouteFormDialog({
               />
             ) : null}
 
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field
-                label={t('routeForm.fields.destinationAddress')}
-                description={t('routeForm.help.destinationAddress')}
-                error={fieldErrors['destination_address']}
-                required
-                className="lg:col-span-2"
-              >
-                {(props) => (
-                  <TechnicalInput
-                    {...props}
-                    value={form.destination_address}
-                    onChange={(event) => set('destination_address', event.target.value)}
-                    placeholder="198.51.100.20"
-                  />
-                )}
-              </Field>
-              <Field
-                label={t('routeForm.fields.destinationPort')}
-                error={fieldErrors['destination_port']}
-                required
-              >
-                {(props) => (
-                  <TechnicalInput
-                    {...props}
-                    inputMode="numeric"
-                    value={form.destination_port}
-                    onChange={(event) => set('destination_port', event.target.value)}
-                    placeholder="2044"
-                  />
-                )}
-              </Field>
-              <div className="flex items-end">
-                <PreflightButton
-                  address={form.destination_address}
-                  port={Number(form.destination_port)}
-                  protocol={form.route_protocol_id}
-                  digits={digits}
-                />
-              </div>
-            </div>
+            {/* One destination by default, and the same row repeated for the
+                rest. Adding one used to mean setting the first here and the
+                second in a different section, which read as two unrelated
+                things rather than as a list. */}
+            <DestinationList
+              form={form}
+              set={set}
+              fieldErrors={fieldErrors}
+              digits={digits}
+            />
           </section>
 
           {/* 4 — NAT mode, in plain language rather than raw terminology */}
@@ -528,6 +499,9 @@ export function RouteFormDialog({
               </Field>
               <Field
                 label={t('routeForm.fields.destinationPortRangeEnd')}
+                description={
+                  form.destinations.length ? t('routeForm.help.rangeNotBalanced') : undefined
+                }
                 error={fieldErrors['destination_port_range_end']}
                 className="sm:col-span-2"
               >
@@ -535,7 +509,8 @@ export function RouteFormDialog({
                   <TechnicalInput
                     {...props}
                     inputMode="numeric"
-                    value={form.destination_port_range_end}
+                    disabled={form.destinations.length > 0}
+                    value={form.destinations.length ? '' : form.destination_port_range_end}
                     onChange={(event) => set('destination_port_range_end', event.target.value)}
                     placeholder="30100"
                   />
@@ -654,13 +629,6 @@ export function RouteFormDialog({
               error={fieldErrors['allowed_sources']}
             />
 
-            <DestinationsEditor
-              destinations={form.destinations}
-              mode={form.load_balance_mode_id}
-              onModeChange={(value) => set('load_balance_mode_id', value)}
-              onChange={(destinations) => set('destinations', destinations)}
-              error={fieldErrors['destinations']}
-            />
           </DisclosurePanel>
 
           {/* 6 — Preview: the exact ruleset, before anything is applied */}
@@ -788,79 +756,6 @@ function TunnelDestination({
   )
 }
 
-/** The destination reachability pre-flight, run before anything is created. */
-function PreflightButton({
-  address,
-  port,
-  protocol,
-  digits,
-}: {
-  address: string
-  port: number
-  protocol: number
-  digits: 'latin' | 'persian'
-}) {
-  const { t } = useTranslation()
-  const [result, setResult] = useState<RouteReachabilityResult | null>(null)
-  const [busy, setBusy] = useState(false)
-
-  const run = async () => {
-    setBusy(true)
-    setResult(null)
-    try {
-      const answer = await api.post<RouteReachabilityResult>('/routes/diagnostics/test', {
-        address,
-        port,
-        protocol: protocol === RouteProtocol.UDP ? 'udp' : 'tcp',
-      })
-      setResult(answer)
-    } catch {
-      setResult(null)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const usable = Boolean(address) && Number.isFinite(port) && port > 0
-
-  return (
-    <div className="w-full space-y-1">
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        className="w-full"
-        disabled={!usable || busy}
-        onClick={() => void run()}
-      >
-        {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
-        {busy ? t('routeForm.preflight.running') : t('routeForm.preflight.run')}
-      </Button>
-      {result ? (
-        <p
-          className={
-            result.reachable
-              ? 'flex items-start gap-1 text-2xs text-ok'
-              : result.conclusive
-                ? 'flex items-start gap-1 text-2xs text-danger'
-                : 'flex items-start gap-1 text-2xs text-muted-foreground'
-          }
-          role="status"
-        >
-          {result.reachable ? <Check className="mt-0.5 size-3 shrink-0" aria-hidden="true" /> : null}
-          {result.reachable
-            ? t('routeForm.preflight.reachable', {
-                latency: formatMs(result.latency_ms ?? 0, digits) ?? '',
-              })
-            : result.detail}
-        </p>
-      ) : (
-        <p className="text-2xs text-muted-foreground">{t('routeForm.preflight.hint')}</p>
-      )}
-    </div>
-  )
-}
-
 function AllowlistEditor({
   entries,
   draft,
@@ -941,95 +836,336 @@ function AllowlistEditor({
   )
 }
 
-function DestinationsEditor({
-  destinations,
-  mode,
-  onModeChange,
-  onChange,
-  error,
+/**
+ * Every destination of a rule, as one list.
+ *
+ * A rule has one destination by default and the row for it is the section: the
+ * second is added to the same list rather than configured somewhere else, which
+ * is what made "add a destination" read as two unrelated settings. The
+ * distribution mode appears with the second destination, because with one there
+ * is nothing to distribute and the control was a choice about nothing.
+ */
+function DestinationList({
+  form,
+  set,
+  fieldErrors,
+  digits,
 }: {
-  destinations: FormState['destinations']
-  mode: number
-  onModeChange: (value: number) => void
-  onChange: (destinations: FormState['destinations']) => void
-  error?: string
+  form: FormState
+  set: <K extends keyof FormState>(key: K, value: FormState[K]) => void
+  fieldErrors: Record<string, string>
+  digits: 'latin' | 'persian'
 }) {
   const { t } = useTranslation()
 
+  const extras = form.destinations
+  const multiple = extras.length > 0
+  const weighted = multiple && form.load_balance_mode_id === LoadBalanceMode.Weighted
+
+  const update = (index: number, patch: Partial<FormState['destinations'][number]>) =>
+    set(
+      'destinations',
+      extras.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)),
+    )
+
   return (
-    <Field
-      label={t('routeForm.fields.destinations')}
-      description={t('routeForm.help.destinations')}
-      error={error}
-    >
+    <div className="space-y-3">
       <div className="space-y-2">
-        <Select
-          value={String(mode)}
-          onValueChange={(value) => onModeChange(Number(value))}
-          aria-label={t('routeForm.fields.loadBalance')}
-          options={Object.values(LoadBalanceMode).map((id) => ({
-            value: String(id),
-            label: t(`routes.loadBalance.${id}`),
-          }))}
+        <DestinationRow
+          position={1}
+          numbered={multiple}
+          address={form.destination_address}
+          port={form.destination_port}
+          weight={form.destination_weight}
+          weighted={weighted}
+          protocol={form.route_protocol_id}
+          digits={digits}
+          labelled
+          addressError={fieldErrors['destination_address']}
+          portError={fieldErrors['destination_port']}
+          onAddressChange={(value) => set('destination_address', value)}
+          onPortChange={(value) => set('destination_port', value)}
+          onWeightChange={(value) => set('destination_weight', value)}
         />
 
-        {destinations.map((destination, index) => (
-          <div key={index} className="flex flex-wrap items-end gap-2">
-            <TechnicalInput
-              className="min-w-32 flex-1"
-              value={destination.address}
-              onChange={(event) =>
-                onChange(destinations.map((d, i) => (i === index ? { ...d, address: event.target.value } : d)))
-              }
-              placeholder="198.51.100.21"
-              aria-label={t('routeForm.fields.destinationAddress')}
-            />
-            <TechnicalInput
-              className="w-24"
-              inputMode="numeric"
-              value={destination.port}
-              onChange={(event) =>
-                onChange(destinations.map((d, i) => (i === index ? { ...d, port: event.target.value } : d)))
-              }
-              placeholder="2044"
-              aria-label={t('routeForm.fields.destinationPort')}
-            />
-            {mode === LoadBalanceMode.Weighted ? (
-              <TechnicalInput
-                className="w-20"
-                inputMode="numeric"
-                value={destination.weight}
-                onChange={(event) =>
-                  onChange(destinations.map((d, i) => (i === index ? { ...d, weight: event.target.value } : d)))
-                }
-                placeholder="1"
-                aria-label={t('routeForm.fields.weight')}
-              />
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="iconSm"
-              onClick={() => onChange(destinations.filter((_, i) => i !== index))}
-              aria-label={t('routeForm.destination.remove')}
-            >
-              <X className="size-4" aria-hidden="true" />
-            </Button>
-          </div>
+        {extras.map((destination, index) => (
+          <DestinationRow
+            key={index}
+            position={index + 2}
+            numbered
+            address={destination.address}
+            port={destination.port}
+            weight={destination.weight}
+            weighted={weighted}
+            protocol={form.route_protocol_id}
+            digits={digits}
+            onAddressChange={(value) => update(index, { address: value })}
+            onPortChange={(value) => update(index, { port: value })}
+            onWeightChange={(value) => update(index, { weight: value })}
+            onRemove={() =>
+              set(
+                'destinations',
+                extras.filter((_, i) => i !== index),
+              )
+            }
+          />
         ))}
+
+        <p className="text-2xs text-muted-foreground">
+          {t('routeForm.help.destinationAddress')}
+        </p>
+
+        {fieldErrors['destinations'] ? (
+          <p className="text-2xs text-danger">{fieldErrors['destinations']}</p>
+        ) : null}
 
         <Button
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => onChange([...destinations, { address: '', port: '', weight: '1' }])}
+          onClick={() => set('destinations', [...extras, { address: '', port: '', weight: '1' }])}
         >
           <Plus className="size-4" aria-hidden="true" />
           {t('routeForm.destination.add')}
         </Button>
       </div>
-    </Field>
+
+      {multiple ? (
+        <Field
+          label={t('routeForm.fields.loadBalance')}
+          description={t('routeForm.help.destinations')}
+        >
+          {(props) => (
+            <Select
+              id={props.id}
+              value={String(form.load_balance_mode_id)}
+              onValueChange={(value) => set('load_balance_mode_id', Number(value))}
+              options={Object.values(LoadBalanceMode).map((id) => ({
+                value: String(id),
+                label: t(`routes.loadBalance.${id}`),
+              }))}
+            />
+          )}
+        </Field>
+      ) : null}
+    </div>
   )
+}
+
+/**
+ * One destination: an address, a port, a weight where the rule distributes by
+ * weight, and the probe that says whether anything is listening there.
+ *
+ * The first row carries the labels and the rest are labelled for assistive
+ * technology only: repeating "Destination address" down a list is noise to a
+ * reader who can see the column it is already under.
+ */
+function DestinationRow({
+  position,
+  numbered,
+  address,
+  port,
+  weight,
+  weighted,
+  protocol,
+  digits,
+  labelled,
+  addressError,
+  portError,
+  onAddressChange,
+  onPortChange,
+  onWeightChange,
+  onRemove,
+}: {
+  position: number
+  /** Positions appear only once there is more than one to tell apart. */
+  numbered: boolean
+  address: string
+  port: string
+  weight: string
+  weighted: boolean
+  protocol: number
+  digits: 'latin' | 'persian'
+  labelled?: boolean
+  addressError?: string
+  portError?: string
+  onAddressChange: (value: string) => void
+  onPortChange: (value: string) => void
+  onWeightChange: (value: string) => void
+  onRemove?: () => void
+}) {
+  const { t } = useTranslation()
+  const probe = useDestinationProbe(address, Number(port), protocol)
+  const usable = Boolean(address) && Number.isFinite(Number(port)) && Number(port) > 0
+
+  const addressLabel = t('routeForm.fields.destinationAddress')
+  const portLabel = t('routeForm.fields.destinationPort')
+  const weightLabel = t('routeForm.fields.weight')
+  // The column is under a heading that already says Destination, and the
+  // full label does not fit the width the port needs.
+  const portColumn = t('routeForm.fields.port')
+
+  return (
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-end gap-2">
+        {numbered ? (
+          <span className="w-16 shrink-0 pb-2.5 text-2xs text-muted-foreground">
+            {t('routeDetail.destinations.order', { index: position })}
+          </span>
+        ) : null}
+
+        <div className="min-w-40 flex-1">
+          {labelled ? (
+            <Field label={addressLabel} error={addressError} required>
+              {(props) => (
+                <TechnicalInput
+                  {...props}
+                  value={address}
+                  onChange={(event) => onAddressChange(event.target.value)}
+                  placeholder="198.51.100.20"
+                />
+              )}
+            </Field>
+          ) : (
+            <TechnicalInput
+              value={address}
+              onChange={(event) => onAddressChange(event.target.value)}
+              placeholder="198.51.100.21"
+              aria-label={addressLabel}
+            />
+          )}
+        </div>
+
+        <div className="w-24 shrink-0">
+          {labelled ? (
+            <Field label={portColumn} error={portError} required>
+              {(props) => (
+                <TechnicalInput
+                  {...props}
+                  inputMode="numeric"
+                  value={port}
+                  onChange={(event) => onPortChange(event.target.value)}
+                  placeholder="2044"
+                />
+              )}
+            </Field>
+          ) : (
+            <TechnicalInput
+              inputMode="numeric"
+              value={port}
+              onChange={(event) => onPortChange(event.target.value)}
+              placeholder="2044"
+              aria-label={portLabel}
+            />
+          )}
+        </div>
+
+        {weighted ? (
+          <div className="w-20 shrink-0">
+            {labelled ? (
+              <Field label={weightLabel}>
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    inputMode="numeric"
+                    value={weight}
+                    onChange={(event) => onWeightChange(event.target.value)}
+                    placeholder="1"
+                  />
+                )}
+              </Field>
+            ) : (
+              <TechnicalInput
+                inputMode="numeric"
+                value={weight}
+                onChange={(event) => onWeightChange(event.target.value)}
+                placeholder="1"
+                aria-label={weightLabel}
+              />
+            )}
+          </div>
+        ) : null}
+
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={!usable || probe.busy}
+          onClick={() => void probe.run()}
+        >
+          {probe.busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+          {probe.busy ? t('routeForm.preflight.running') : t('routeForm.preflight.run')}
+        </Button>
+
+        {onRemove ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="iconSm"
+            className="mb-1.5"
+            onClick={onRemove}
+            aria-label={t('routeForm.destination.remove')}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        ) : numbered ? (
+          // Only to hold the column open under the rows that can be
+          // removed. With one destination there is nothing to line up with.
+          <span className="size-7 shrink-0" aria-hidden="true" />
+        ) : null}
+      </div>
+
+      {/* The probe's answer under the row it belongs to: a refusal explains
+          itself in a sentence, and a sentence does not fit inside the row. */}
+      {probe.result ? (
+        <p
+          role="status"
+          className={
+            probe.result.reachable
+              ? 'flex items-start gap-1 text-2xs text-ok'
+              : probe.result.conclusive
+                ? 'flex items-start gap-1 text-2xs text-danger'
+                : 'flex items-start gap-1 text-2xs text-muted-foreground'
+          }
+        >
+          {probe.result.reachable ? (
+            <Check className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+          ) : null}
+          {probe.result.reachable
+            ? t('routeForm.preflight.reachable', {
+                latency: formatMs(probe.result.latency_ms ?? 0, digits) ?? '',
+              })
+            : probe.result.detail}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** The reachability probe, run from this server before the rule exists. */
+function useDestinationProbe(address: string, port: number, protocol: number) {
+  const [result, setResult] = useState<RouteReachabilityResult | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const run = async () => {
+    setBusy(true)
+    setResult(null)
+    try {
+      setResult(
+        await api.post<RouteReachabilityResult>('/routes/diagnostics/test', {
+          address,
+          port,
+          protocol: protocol === RouteProtocol.UDP ? 'udp' : 'tcp',
+        }),
+      )
+    } catch {
+      setResult(null)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return { result, busy, run }
 }
 
 /** The port-conflict answer, as you type. */
@@ -1140,6 +1276,7 @@ function defaultsFrom(settings: Record<string, unknown>): FormState {
     max_connections_per_source: '',
     connection_rate_limit: '',
     is_enabled: true,
+    destination_weight: '1',
     destinations: [],
     allowed_sources: [],
   }
@@ -1177,6 +1314,7 @@ export function formFromRoute(route: RouteRule): FormState {
     // Both lists are defended: the API sends arrays, but a rule that arrives
     // with null here used to throw inside the seed and take the whole page
     // down rather than opening the dialog.
+    destination_weight: String((route.destinations ?? [])[0]?.weight ?? 1),
     destinations: (route.destinations ?? []).slice(1).map((destination) => ({
       address: destination.address,
       port: String(destination.port),
@@ -1244,7 +1382,7 @@ function toPatch(form: FormState): Record<string, unknown> {
         address: form.destination_address,
         port: number(form.destination_port) ?? 0,
         port_range_end: destinationEnd,
-        weight: 1,
+        weight: number(form.destination_weight) ?? 1,
         is_enabled: true,
       },
       ...extras.map((destination) => ({
