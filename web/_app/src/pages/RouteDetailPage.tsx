@@ -35,6 +35,7 @@ import { RouteFormDialog } from '@/components/routes/RouteFormDialog'
 import { DeleteRouteDialog } from '@/components/routes/DeleteRouteDialog'
 import { RouteTrafficChart } from '@/components/routes/RouteTrafficChart'
 import { RouteConnectionsPanel } from '@/components/routes/RouteConnectionsPanel'
+import { RouteDestinationsPanel } from '@/components/routes/RouteDestinationsPanel'
 import { RouteDiagnosticsPanel } from '@/components/routes/RouteDiagnosticsPanel'
 import { RouteRulesPanel } from '@/components/routes/RouteRulesPanel'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
@@ -138,6 +139,9 @@ export default function RouteDetailPage() {
   const destination = primary
     ? endpointLabel(primary.address, primary.port, primary.port_range_end)
     : endpointLabel(route.destination_address, route.destination_port, route.destination_port_range_end)
+  // The heading names the first destination and counts the rest; the panel
+  // below is where each of them is actually accounted for.
+  const extraDestinations = Math.max(0, (route.destinations?.length ?? 0) - 1)
 
   const rate = (value: number) => formatThroughput(value, units).text
   const volume = (value: number) => formatVolume(value, units).text
@@ -158,7 +162,15 @@ export default function RouteDetailPage() {
             <ApplyStatusBadge statusId={route.apply_status_id} />
           </div>
           <div className="mt-1">
-            <RouteFlow bind={bind} destination={destination} />
+            <RouteFlow
+              bind={bind}
+              destination={destination}
+              destinationNote={
+                extraDestinations
+                  ? t('routes.moreDestinations', { count: extraDestinations })
+                  : undefined
+              }
+            />
           </div>
           {route.description ? (
             <p className="mt-1 text-xs text-muted-foreground">{route.description}</p>
@@ -285,6 +297,10 @@ export default function RouteDetailPage() {
               <p className="mt-3 text-2xs text-muted-foreground">{t('routeDetail.traffic.basisNote')}</p>
             </CardContent>
           </Card>
+
+          <div className="mt-4">
+            <RouteDestinationsPanel route={route} />
+          </div>
 
           <Card className="mt-4">
             <CardHeader>

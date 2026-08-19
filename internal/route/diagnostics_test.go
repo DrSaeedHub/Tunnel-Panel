@@ -371,6 +371,52 @@ func TestConnectionListReportsOnlyThisRulesFlows(t *testing.T) {
 	}
 }
 
+// A load-balanced rule raises a question a total cannot answer: is the traffic
+// actually being spread, and is one of the destinations taking none of it. The
+// answer comes from the reply tuple, which is where packets went rather than
+// where the rule says they should go.
+func TestConnectionsAreBrokenDownByWhereTheyActuallyWent(t *testing.T) {
+	h := newDiagHarness(t, nil)
+
+	toSecond := func(source string) Flow {
+		flow := established(source, 5, 5)
+		flow.DestinationAddress = "198.51.100.21"
+		return flow
+	}
+	h.conntrack.List = []Flow{
+		established("192.0.2.5", 10, 10),
+		established("192.0.2.6", 10, 10),
+		established("192.0.2.7", 10, 10),
+		toSecond("192.0.2.8"),
+	}
+
+	// Truncated to one row on purpose: the breakdown is about every flow the
+	// rule has, not about the page of them the list carries.
+	list, err := h.diag.Connections(h.ctx, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Connections) != 1 {
+		t.Fatalf("the list returned %d rows, want the one it was limited to", len(list.Connections))
+	}
+	if len(list.ByDestination) != 2 {
+		t.Fatalf("by destination = %+v, want both destinations", list.ByDestination)
+	}
+
+	// Busiest first, so the reading leads with where the traffic is.
+	first, second := list.ByDestination[0], list.ByDestination[1]
+	if first.Address != "198.51.100.20" || first.Connections != 3 {
+		t.Errorf("the busiest destination is %+v, want 198.51.100.20 with 3", first)
+	}
+	if second.Address != "198.51.100.21" || second.Connections != 1 {
+		t.Errorf("the quieter destination is %+v, want 198.51.100.21 with 1", second)
+	}
+	if first.RxBytes != 3000 || first.TxBytes != 3000 {
+		t.Errorf("the bytes on the busiest destination are %d/%d, want 3000/3000",
+			first.RxBytes, first.TxBytes)
+	}
+}
+
 func TestCountersComeFromTheFilterHooksAndSaySoAccurately(t *testing.T) {
 	h := newDiagHarness(t, nil)
 	h.backend.SetCounters(hits(1))

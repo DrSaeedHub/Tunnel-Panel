@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
@@ -10,6 +11,8 @@ import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, EmptyState, ErrorState, Skeleton } from '../ui/feedback'
 import { Technical } from '../ui/technical'
+import { endpointLabel } from './RouteFlow'
+import { cn } from '@/lib/utils'
 
 /**
  * The live connections crossing one rule.
@@ -33,6 +36,18 @@ export function RouteConnectionsPanel({ routeRuleId }: { routeRuleId: number }) 
   })
 
   const list = query.data
+
+  // Which destination the table is showing. A relay with two destinations is
+  // the case where an undifferentiated list of flows stops answering anything:
+  // the question becomes "who is on that one", and this is how it is asked.
+  const [only, setOnly] = useState('')
+  const byDestination = list?.by_destination ?? []
+  const shown = useMemo(() => {
+    const flows = list?.connections ?? []
+    if (!only) return flows
+    return flows.filter((flow) => `${flow.destination_address}:${flow.destination_port}` === only)
+  }, [list, only])
+
   const durationLabels = {
     day: t('units.day'),
     hour: t('units.hour'),
@@ -82,6 +97,31 @@ export function RouteConnectionsPanel({ routeRuleId }: { routeRuleId: number }) 
           <EmptyState title={t('routeDetail.connections.empty')} body={list.detail} />
         ) : (
           <div className="space-y-3">
+            {/* Counted over every flow the rule has, so the numbers on these
+                chips do not change when the table below is truncated. */}
+            {byDestination.length > 1 ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <FilterChip active={!only} onClick={() => setOnly('')}>
+                  {t('routeDetail.connections.allDestinations', { count: list.total })}
+                </FilterChip>
+                {byDestination.map((entry) => {
+                  const key = `${entry.address}:${entry.port}`
+                  return (
+                    <FilterChip
+                      key={key}
+                      active={only === key}
+                      onClick={() => setOnly(only === key ? '' : key)}
+                    >
+                      <Technical className="text-2xs">
+                        {endpointLabel(entry.address, entry.port)}
+                      </Technical>
+                      {` · ${formatCount(entry.connections, digits, language)}`}
+                    </FilterChip>
+                  )
+                })}
+              </div>
+            ) : null}
+
             <div className="max-h-80 overflow-auto rounded-md border border-border scrollbar-thin">
               <table className="w-full text-2xs">
                 <caption className="sr-only">{t('routeDetail.connections.title')}</caption>
@@ -105,7 +145,7 @@ export function RouteConnectionsPanel({ routeRuleId }: { routeRuleId: number }) 
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {(list.connections ?? []).map((flow, index) => (
+                  {shown.map((flow, index) => (
                     <tr key={`${flow.source_address}:${flow.source_port}-${index}`}>
                       <td className="p-2">
                         <Technical className="text-2xs">
@@ -140,6 +180,12 @@ export function RouteConnectionsPanel({ routeRuleId }: { routeRuleId: number }) 
               </table>
             </div>
 
+            {only && !shown.length ? (
+              <p className="text-2xs text-muted-foreground">
+                {t('routeDetail.connections.noneShown')}
+              </p>
+            ) : null}
+
             {list.by_source && Object.keys(list.by_source).length > 1 ? (
               <div className="flex flex-wrap gap-2">
                 {Object.entries(list.by_source)
@@ -157,5 +203,32 @@ export function RouteConnectionsPanel({ routeRuleId }: { routeRuleId: number }) 
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/** One destination filter above the table. A pressed chip is the current one. */
+function FilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        active
+          ? 'bg-ink text-ink-foreground'
+          : 'bg-muted text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {children}
+    </button>
   )
 }

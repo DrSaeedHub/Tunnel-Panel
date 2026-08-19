@@ -1334,6 +1334,25 @@ export interface RouteFlow {
   mark?: number
 }
 
+/**
+ * What connection tracking shows at one destination of a load-balanced set.
+ *
+ * Read from the reply tuple, so it is where packets actually went rather than
+ * where the rule says they should go — which is the only way to tell a
+ * balancer that is spreading traffic from one that is not.
+ */
+export interface RouteDestinationLoad {
+  address: string
+  port: number
+  connections: number
+  /**
+   * The bytes on the connections open now. A snapshot, not a total: a
+   * connection that has closed took its counters out of the table with it.
+   */
+  rx_bytes: number
+  tx_bytes: number
+}
+
 export interface RouteConnectionList {
   route_rule_id: number
   reader: string
@@ -1343,6 +1362,8 @@ export interface RouteConnectionList {
   connections: RouteFlow[]
   total: number
   by_source?: Record<string, number>
+  /** Counted over every flow the rule has, not over the page returned above. */
+  by_destination?: RouteDestinationLoad[]
   new_per_second: number
   checked_at: string
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -318,9 +319,32 @@ type ConnectionList struct {
 	// BySource counts connections per client, which is what a per-source limit
 	// is actually enforcing.
 	BySource map[string]int `json:"by_source,omitempty"`
+	// ByDestination is the same reading taken the other way round, and is what
+	// answers the question a load-balanced rule raises: where is the traffic
+	// actually going. It is read from the reply tuple, so it is where packets
+	// went and not where the rule says they should go.
+	ByDestination []DestinationLoad `json:"by_destination,omitempty"`
 	// NewPerSecond is the rate from the last two conntrack readings.
 	NewPerSecond float64 `json:"new_per_second"`
 	CheckedAt    string  `json:"checked_at"`
+}
+
+// DestinationLoad is what connection tracking shows at one destination.
+//
+// It is counted over every flow the rule has and not over the page of them the
+// list returns, because the questions it answers are questions about all of
+// them: is the traffic being spread at all, and is one destination of the set
+// taking none of it.
+type DestinationLoad struct {
+	Address     string `json:"address"`
+	Port        int    `json:"port"`
+	Connections int    `json:"connections"`
+	// RxBytes and TxBytes are the bytes on the flows that are live now, which
+	// is a snapshot and not a total: a connection that has closed took its
+	// counters out of the table with it. The rule's own counters are the
+	// cumulative figure, and they are not attributable per destination.
+	RxBytes uint64 `json:"rx_bytes"`
+	TxBytes uint64 `json:"tx_bytes"`
 }
 
 // Connections lists the tracked connections belonging to one rule (§8).
@@ -351,6 +375,7 @@ func (d *Diagnostics) Connections(ctx context.Context, routeRuleID int64, limit 
 	for _, flow := range mine {
 		out.BySource[flow.SourceAddress]++
 	}
+	out.ByDestination = loadByDestination(mine)
 	if limit > 0 && limit < len(mine) {
 		mine = mine[:limit]
 	}
@@ -365,6 +390,40 @@ func (d *Diagnostics) Connections(ctx context.Context, routeRuleID int64, limit 
 		out.Detail = "connection tracking holds nothing for this rule, so nothing is using it right now"
 	}
 	return out, nil
+}
+
+// loadByDestination folds a rule's flows into one entry per destination, worst
+// first: the destination taking the most connections leads, and a tie is broken
+// on the address so the order does not shuffle between readings.
+func loadByDestination(flows []Flow) []DestinationLoad {
+	type key struct {
+		address string
+		port    int
+	}
+	index := map[key]int{}
+	out := make([]DestinationLoad, 0, 4)
+	for _, flow := range flows {
+		k := key{address: flow.DestinationAddress, port: flow.DestinationPort}
+		at, ok := index[k]
+		if !ok {
+			at = len(out)
+			index[k] = at
+			out = append(out, DestinationLoad{Address: k.address, Port: k.port})
+		}
+		out[at].Connections++
+		out[at].RxBytes += flow.RxBytes
+		out[at].TxBytes += flow.TxBytes
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Connections != out[j].Connections {
+			return out[i].Connections > out[j].Connections
+		}
+		if out[i].Address != out[j].Address {
+			return out[i].Address < out[j].Address
+		}
+		return out[i].Port < out[j].Port
+	})
+	return out
 }
 
 // CounterReport is what §8 calls the rule hit counters: the packets and bytes
@@ -403,7 +462,7 @@ func (d *Diagnostics) Counters(ctx context.Context, routeRuleID int64) (CounterR
 		RouteRuleID: routeRuleID, CheckedAt: model.NowUTC(),
 		Source: "the accounting rules in the filter hooks — forward, and for a rule " +
 			"that also relays this server's own traffic, output and input as well",
-		Note:   SinceBootMeaning,
+		Note: SinceBootMeaning,
 	}
 
 	raw, err := d.backend.Counters(ctx)
