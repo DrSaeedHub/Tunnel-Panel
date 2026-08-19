@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { toPatch } from './TunnelFormDialog'
+import { randomGreKey, toPatch } from './TunnelFormDialog'
 import { TunnelSide } from '@/lib/types'
 
 // The regression these cover is the one a pairing code exists to prevent.
@@ -78,5 +78,47 @@ describe('toPatch', () => {
       false,
     )
     expect(patch.addresses).toBeUndefined()
+  })
+})
+
+/**
+ * The GRE key a new tunnel starts with.
+ *
+ * It used to come from a setting, which meant every tunnel on a server started
+ * with the same one. The kernel tells two tunnels between the same pair of
+ * endpoints apart by their keys, so a shared default is a collision waiting for
+ * the second tunnel -- and one an operator has no reason to suspect, because
+ * they never touched the number.
+ */
+describe('the GRE key a new tunnel starts with', () => {
+  it('is drawn fresh rather than being the same one every time', () => {
+    const drawn = new Set<number>()
+    for (let i = 0; i < 50; i++) drawn.add(randomGreKey())
+    // Fifty draws from a 32-bit space collide with vanishing probability, so
+    // anything but a large set here means it is not really being drawn.
+    expect(drawn.size).toBeGreaterThan(45)
+  })
+
+  it('never returns zero, which the kernel reads as no key at all', () => {
+    for (let i = 0; i < 200; i++) expect(randomGreKey()).not.toBe(0)
+  })
+
+  it('avoids the keys the server is already using', () => {
+    // Every value but one is taken, so the only legal answer is that one.
+    const used = new Set<number>()
+    const free = 4242
+    const original = crypto.getRandomValues.bind(crypto)
+    let call = 0
+    // The first few draws land on taken keys; the generator has to keep going
+    // rather than return one of them or give up.
+    vi.spyOn(crypto, 'getRandomValues').mockImplementation(((array: Uint32Array) => {
+      array[0] = call++ < 3 ? 7 : free
+      return array
+    }) as never)
+    used.add(7)
+
+    expect(randomGreKey(used)).toBe(free)
+    vi.mocked(crypto.getRandomValues).mockRestore()
+    void original
   })
 })

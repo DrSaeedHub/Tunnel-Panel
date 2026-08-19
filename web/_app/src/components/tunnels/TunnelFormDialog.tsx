@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { AlertTriangle, Check, Info } from 'lucide-react'
+import { AlertTriangle, Check, Dices, Info } from 'lucide-react'
 
 import { ApiError, api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import {
   PersistenceType,
   TunnelSide,
@@ -12,7 +13,10 @@ import {
   type CreateResponse,
   type PoolResponse,
   type PreviewResponse,
+  type HostInterface,
+  type InterfacesResponse,
   type SettingsResponse,
+  type TunnelListResponse,
   type Tunnel,
   type TunnelInput,
 } from '@/lib/types'
@@ -104,6 +108,23 @@ export function TunnelFormDialog({
     queryFn: () => api.get<{ pools: PoolResponse[] }>('/pools'),
     staleTime: 60_000,
   })
+  // The tunnels that already exist, for the two things the form can tell an
+  // operator before the backend has to refuse anything: which GRE keys are
+  // taken, and which tunnel took them.
+  const tunnelsQuery = useQuery({
+    queryKey: ['tunnels', 'list'],
+    queryFn: () => api.get<TunnelListResponse>('/tunnels'),
+    staleTime: 30_000,
+  })
+  // The addresses this server has. A GRE tunnel's local endpoint must be one of
+  // them, so these are not a suggestion -- they are the whole of the valid
+  // answer, and typing one out of a terminal in another window is work the
+  // panel already knows how to save.
+  const interfacesQuery = useQuery({
+    queryKey: ['system', 'interfaces'],
+    queryFn: () => api.get<InterfacesResponse>('/system/interfaces'),
+    staleTime: 60_000,
+  })
 
   const settings = settingsQuery.data?.settings ?? {}
   const [form, setForm] = useState<FormState | null>(null)
@@ -132,7 +153,7 @@ export function TunnelFormDialog({
       setForm({ ...blankOverrides(), ...initial })
       setManualAddressing(initial.address_pool_id === null && (initial.addresses ?? []).length > 0)
     } else if (settingsQuery.isSuccess) {
-      setForm(defaultsFrom(settings))
+      setForm(defaultsFrom(settings, usedKeys))
       setManualAddressing(false)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,6 +163,22 @@ export function TunnelFormDialog({
 
   // The preview is refreshed as the form changes, so what it shows is always
   // the plan for the values currently on screen.
+  // Every key a live tunnel already answers to, and which tunnel that is.
+  const keyOwners = useMemo(() => {
+    const map = new Map<number, Tunnel>()
+    for (const entry of tunnelsQuery.data?.tunnels ?? []) {
+      if (entry.tunnel.tunnel_id === tunnel?.tunnel_id) continue
+      for (const key of [entry.tunnel.ikey, entry.tunnel.okey]) {
+        if (key !== null && key !== undefined) map.set(key, entry.tunnel)
+      }
+    }
+    return map
+  }, [tunnelsQuery.data, tunnel?.tunnel_id])
+  const usedKeys = useMemo(() => new Set(keyOwners.keys()), [keyOwners])
+  const keyOwner = form?.ikey !== null && form?.ikey !== undefined
+    ? keyOwners.get(form.ikey)
+    : undefined
+
   const previewQuery = useQuery({
     queryKey: ['tunnels', 'preview', patch],
     queryFn: () =>
@@ -297,12 +334,19 @@ export function TunnelFormDialog({
                 required
               >
                 {(props) => (
-                  <TechnicalInput
-                    {...props}
-                    value={form.local_endpoint}
-                    onChange={(event) => set('local_endpoint', event.target.value)}
-                    placeholder="203.0.113.10"
-                  />
+                  <div className="space-y-1.5">
+                    <TechnicalInput
+                      {...props}
+                      value={form.local_endpoint}
+                      onChange={(event) => set('local_endpoint', event.target.value)}
+                      placeholder="203.0.113.10"
+                    />
+                    <LocalAddressPicker
+                      interfaces={interfacesQuery.data?.interfaces ?? []}
+                      selected={form.local_endpoint}
+                      onPick={(address) => set('local_endpoint', address)}
+                    />
+                  </div>
                 )}
               </Field>
               <Field
@@ -341,20 +385,51 @@ export function TunnelFormDialog({
                 error={fieldErrors['ikey'] ?? fieldErrors['okey']}
               >
                 {(props) => (
-                  <TechnicalInput
-                    {...props}
-                    inputMode="numeric"
-                    value={form.ikey ?? ''}
-                    onChange={(event) => {
-                      const value = event.target.value === '' ? null : Number(event.target.value)
-                      // The two keys move together unless they are already
-                      // different, which is the case the advanced pair covers.
-                      setForm((current) =>
-                        current ? { ...current, ikey: value, okey: value } : current,
-                      )
-                    }}
-                    placeholder="2749365187"
-                  />
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <TechnicalInput
+                        {...props}
+                        className="flex-1"
+                        inputMode="numeric"
+                        value={form.ikey ?? ''}
+                        onChange={(event) => {
+                          const value = event.target.value === '' ? null : Number(event.target.value)
+                          // The two keys move together unless they are already
+                          // different, which is the case the advanced pair covers.
+                          setForm((current) =>
+                            current ? { ...current, ikey: value, okey: value } : current,
+                          )
+                        }}
+                        placeholder="2749365187"
+                      />
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="icon"
+                        aria-label={t('tunnelForm.randomKey')}
+                        title={t('tunnelForm.randomKey')}
+                        onClick={() => {
+                          const value = randomGreKey(usedKeys)
+                          setForm((current) =>
+                            current ? { ...current, ikey: value, okey: value } : current,
+                          )
+                        }}
+                      >
+                        <Dices className="size-4" aria-hidden="true" />
+                      </Button>
+                    </div>
+                    {/* Not an error: the kernel identifies a tunnel by its
+                        endpoints and its keys together, so the same key on a
+                        different pair of endpoints is legal. It is still almost
+                        always a mistake, and the tunnel that has it is the thing
+                        worth naming. */}
+                    {keyOwner ? (
+                      <p className="flex items-start gap-1.5 text-2xs text-warn">
+                        <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
+                        {t('tunnelForm.keyInUse', { name: tunnelLabel(keyOwner) })}
+                      </p>
+                    ) : null}
+                  </div>
                 )}
               </Field>
 
@@ -978,18 +1053,24 @@ function blankOverrides(): MonitorOverrides {
 /**
  * A new tunnel's starting values, from the panel's own settings.
  *
- * The defaults the backend ships with are the reference script's — key
- * 2749365187, MTU 1472, TTL 255 — and every one of them is editable both here
- * and globally in settings.
+ * The defaults the backend ships with are the reference script's — MTU 1472,
+ * TTL 255 — and every one of them is editable both here and globally in
+ * settings.
+ *
+ * The GRE key is the exception and is drawn fresh every time. The kernel tells
+ * two tunnels between the same pair of endpoints apart by their keys, so a
+ * default one is a default collision: it works for the first tunnel and then
+ * has to be changed by hand for every one after it, at the moment the operator
+ * has least reason to expect a number they never touched to be the problem.
  */
-function defaultsFrom(settings: Record<string, unknown>): FormState {
+function defaultsFrom(settings: Record<string, unknown>, used?: Set<number>): FormState {
   const number = (key: string, fallback: number) => numberOf(settings[key]) ?? fallback
   const boolean = (key: string, fallback: boolean) =>
     typeof settings[key] === 'boolean' ? (settings[key] as boolean) : fallback
   const text = (key: string, fallback: string) =>
     typeof settings[key] === 'string' ? (settings[key] as string) : fallback
 
-  const key = number('tunnel.default_key', 2749365187)
+  const key = randomGreKey(used)
 
   return {
     ...blankOverrides(),
@@ -1138,4 +1219,119 @@ export function toPatch(form: FormState, manual: boolean): Record<string, unknow
   patch.monitor_state_change_samples = form.monitor_state_change_samples
 
   return patch
+}
+
+/**
+ * A GRE key nothing on this server is already using.
+ *
+ * The key is what the kernel tells two tunnels between the same pair of
+ * endpoints apart, so a fresh one has to be picked for every tunnel and picking
+ * it by hand is a coin flip an operator should not be asked to make. It comes
+ * from the platform's own generator rather than Math.random because there is no
+ * reason for it not to, and it is drawn again on a collision rather than
+ * incremented, which would walk straight into the next taken one.
+ */
+export function randomGreKey(used: Set<number> = new Set()): number {
+  const buffer = new Uint32Array(1)
+  for (let attempt = 0; attempt < 32; attempt++) {
+    crypto.getRandomValues(buffer)
+    // Zero means "no key" to the kernel, so it is never what is meant here.
+    const value = buffer[0] === 0 ? 1 : buffer[0]
+    if (!used.has(value)) return value
+  }
+  return buffer[0] || 1
+}
+
+/**
+ * The addresses this server has, offered under the local endpoint.
+ *
+ * A GRE tunnel's local endpoint has to be an address the host actually holds,
+ * so this is not a list of suggestions -- it is the whole of the valid answer.
+ * The globally routable ones come first because they are what a tunnel to
+ * another site is almost always built on; the private ones are still shown,
+ * because a tunnel across a datacentre's own network is a real thing and
+ * hiding its endpoints would be deciding for the operator.
+ */
+function LocalAddressPicker({
+  interfaces,
+  selected,
+  onPick,
+}: {
+  interfaces: HostInterface[]
+  selected: string
+  onPick: (address: string) => void
+}) {
+  const { t } = useTranslation()
+
+  const addresses = useMemo(() => {
+    const seen = new Set<string>()
+    const out: { address: string; iface: string; routable: boolean }[] = []
+    for (const iface of interfaces) {
+      for (const entry of iface.addresses ?? []) {
+        const address = entry.address.split('/')[0]
+        if (!address || seen.has(address) || !isOfferableAddress(address)) continue
+        seen.add(address)
+        out.push({ address, iface: iface.name, routable: isRoutableAddress(address) })
+      }
+    }
+    // Routable first, and stable within each group so the list does not
+    // reshuffle between renders.
+    return out.sort((a, b) => Number(b.routable) - Number(a.routable))
+  }, [interfaces])
+
+  if (!addresses.length) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {addresses.map((entry) => (
+        <button
+          key={entry.address}
+          type="button"
+          onClick={() => onPick(entry.address)}
+          aria-pressed={selected === entry.address}
+          title={entry.iface}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-2xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            selected === entry.address
+              ? 'bg-ink text-ink-foreground'
+              : 'bg-muted text-muted-foreground hover:text-foreground',
+          )}
+        >
+          <Technical className="text-2xs">{entry.address}</Technical>
+          {!entry.routable ? (
+            <span className="opacity-70">{t('tunnelForm.privateAddress')}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Whether an address is worth offering as a local endpoint at all.
+ *
+ * Loopback and link-local are addresses the host holds and can never build a
+ * tunnel on, so offering them would be offering a mistake.
+ */
+function isOfferableAddress(address: string): boolean {
+  if (address.startsWith('127.') || address === '::1') return false
+  if (address.startsWith('169.254.')) return false
+  if (address.toLowerCase().startsWith('fe80')) return false
+  return true
+}
+
+/** Whether an address is globally routable, which decides the order above. */
+function isRoutableAddress(address: string): boolean {
+  const parts = address.split('.')
+  if (parts.length === 4) {
+    const [a, b] = parts.map(Number)
+    if (a === 10) return false
+    if (a === 172 && b >= 16 && b <= 31) return false
+    if (a === 192 && b === 168) return false
+    if (a === 100 && b >= 64 && b <= 127) return false
+    return true
+  }
+  const lower = address.toLowerCase()
+  // fc00::/7 is the IPv6 equivalent of the ranges above.
+  return !(lower.startsWith('fc') || lower.startsWith('fd'))
 }
