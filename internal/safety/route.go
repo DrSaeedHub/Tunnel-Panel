@@ -31,8 +31,15 @@ const (
 // or to another package (§6.3.3).
 const PanelSysctlFile = "/etc/sysctl.d/99-gre-panel.conf"
 
-// AllowedSysctls are the only kernel parameters the panel ever sets, and it
-// sets them because a relay cannot work without them.
+// AllowedSysctls are the only kernel parameters the panel ever sets.
+//
+// The first two are there because a relay cannot work without them. The
+// third only makes the relay legible: nf_conntrack_acct has the kernel count
+// the bytes on each tracked connection, and without it a load-balanced rule
+// can report how many connections every destination is taking and nothing at
+// all about what is crossing them. It changes no packet's path, which is what
+// keeps it on this list; it is behind a setting, which is what keeps it a
+// choice.
 //
 // route_localnet is deliberately absent. Forwarding to 127.0.0.0/8 needs it,
 // and turning it on makes the kernel treat loopback as routable on an
@@ -41,6 +48,7 @@ const PanelSysctlFile = "/etc/sysctl.d/99-gre-panel.conf"
 var AllowedSysctls = []string{
 	"net.ipv4.ip_forward",
 	"net.ipv6.conf.all.forwarding",
+	"net.netfilter.nf_conntrack_acct",
 }
 
 // SocketTable is the kernel socket table as the guard reads it. It is an
@@ -241,7 +249,8 @@ func (g *RouteGuard) CheckNetfilterObject(kind, name string) error {
 }
 
 // CheckSysctl is invariants 3 and 4 as a check on the parameter itself: the
-// panel sets forwarding and nothing else, and it never enables route_localnet.
+// panel sets what is on the list above and nothing else, and it never enables
+// route_localnet.
 func (g *RouteGuard) CheckSysctl(key string) error {
 	trimmed := strings.TrimSpace(key)
 	for _, allowed := range AllowedSysctls {
@@ -257,8 +266,8 @@ func (g *RouteGuard) CheckSysctl(key string) error {
 			map[string]any{"sysctl": trimmed})
 	}
 	return violation(CodeProtectedSysctl, "sysctl",
-		fmt.Sprintf("The panel does not set %s. It sets only what a relay cannot work without: %s.",
-			trimmed, strings.Join(AllowedSysctls, " and ")),
+		fmt.Sprintf("The panel does not set %s. The only kernel parameters it ever sets are: %s.",
+			trimmed, strings.Join(AllowedSysctls, ", ")),
 		map[string]any{"sysctl": trimmed, "allowed": AllowedSysctls})
 }
 

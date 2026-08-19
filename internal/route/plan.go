@@ -159,6 +159,12 @@ type planInput struct {
 	// plan only carries the step when it would change something.
 	forwardingOn     bool
 	ipv6ForwardingOn bool
+	// byteAccountingOn reports whether the kernel already counts bytes per
+	// tracked connection. It rides in the same step for the same reason: it
+	// is a kernel parameter the panel sets and records, and a host where
+	// forwarding was already on would otherwise never be given it.
+	byteAccountingOn bool
+	countBytes       bool
 	warnings         []validate.Warning
 }
 
@@ -208,12 +214,19 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 
 	// 2. Forwarding, only when it would change something.
 	needIPv6 := desired.HasIPv6()
-	if len(desired.Routes) > 0 && (!in.forwardingOn || (needIPv6 && !in.ipv6ForwardingOn)) {
+	needsForwarding := !in.forwardingOn || (needIPv6 && !in.ipv6ForwardingOn)
+	needsCounting := in.countBytes && !in.byteAccountingOn
+	if len(desired.Routes) > 0 && (needsForwarding || needsCounting) {
+		description := "turn on kernel packet forwarding and record it in the panel's own sysctl " +
+			"file at " + p.sysctlFilePath()
+		if !needsForwarding {
+			description = "have the kernel count the bytes on tracked connections and record it in " +
+				"the panel's own sysctl file at " + p.sysctlFilePath()
+		}
 		plan.Add(Step{
-			Kind: StepEnableForwarding,
-			Description: "turn on kernel packet forwarding and record it in the panel's own sysctl file " +
-				"at " + p.sysctlFilePath(),
-			Path: p.sysctlFilePath(),
+			Kind:        StepEnableForwarding,
+			Description: description,
+			Path:        p.sysctlFilePath(),
 		})
 	}
 

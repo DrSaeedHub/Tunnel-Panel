@@ -3,6 +3,7 @@ package route
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,6 +19,10 @@ import (
 const (
 	SysctlIPv4Forward = "net.ipv4.ip_forward"
 	SysctlIPv6Forward = "net.ipv6.conf.all.forwarding"
+	// SysctlConntrackAcct makes the kernel count bytes and packets on every
+	// tracked connection. It is off by default, and without it a relay can
+	// report thousands of connections and not one byte on any of them.
+	SysctlConntrackAcct = "net.netfilter.nf_conntrack_acct"
 
 	procIPv4Forward   = "proc/sys/net/ipv4/ip_forward"
 	procIPv6Forward   = "proc/sys/net/ipv6/conf/all/forwarding"
@@ -49,11 +54,12 @@ type Forwarding struct {
 	Store      *persist.Store
 	Renderer   *persist.Renderer
 	Guard      *safety.RouteGuard
+	Log        *slog.Logger
 }
 
 // NewForwarding returns a forwarding manager rooted at the real filesystem.
 func NewForwarding(store *persist.Store, renderer *persist.Renderer, guard *safety.RouteGuard) *Forwarding {
-	return &Forwarding{Root: "/", SysctlPath: persist.SysctlPath, Store: store, Renderer: renderer, Guard: guard}
+	return &Forwarding{Root: "/", SysctlPath: persist.SysctlPath, Store: store, Renderer: renderer, Guard: guard, Log: slog.Default()}
 }
 
 func (f *Forwarding) path(parts ...string) string {
@@ -77,8 +83,12 @@ type ForwardingStatus struct {
 	IPv6Forwarding bool `json:"ipv6_forwarding"`
 	// PanelManaged reports that the panel's own sysctl file is in place, which
 	// is how it knows it was the one that turned forwarding on.
-	PanelManaged bool   `json:"panel_managed"`
-	SysctlPath   string `json:"sysctl_path"`
+	PanelManaged bool `json:"panel_managed"`
+	// ByteAccounting reports whether the kernel counts bytes on every tracked
+	// connection. Off by default, and the reason a busy relay can report
+	// thousands of connections and no traffic on any one of them.
+	ByteAccounting bool   `json:"byte_accounting"`
+	SysctlPath     string `json:"sysctl_path"`
 	// PreviousValues are what the parameters held before the panel changed
 	// them, which is what makes the revert offer concrete.
 	PreviousValues map[string]string `json:"previous_values,omitempty"`
@@ -122,6 +132,7 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 		}
 	}
 
+	status.ByteAccounting = f.ByteAccounting()
 	status.ConntrackMax = f.readNumber(procConntrackMax)
 	status.ConntrackCount = f.readNumber(procConntrackUsed)
 	if status.ConntrackMax > 0 {
@@ -177,13 +188,20 @@ func (f *Forwarding) ByteAccounting() bool { return f.readFlag(procConntrackAcct
 // the same content, and nothing else changes. What it records is what the
 // parameter held the first time the panel changed it, so the revert offer keeps
 // pointing at the operator's original value rather than at the panel's own.
-func (f *Forwarding) Enable(ctx context.Context, needIPv6 bool) error {
+func (f *Forwarding) Enable(ctx context.Context, needIPv6, countBytes bool) error {
 	values := []persist.SysctlValue{
 		{Key: SysctlIPv4Forward, Value: "1", Previous: f.previousFor(SysctlIPv4Forward, procIPv4Forward)},
 	}
 	if needIPv6 {
 		values = append(values, persist.SysctlValue{
 			Key: SysctlIPv6Forward, Value: "1", Previous: f.previousFor(SysctlIPv6Forward, procIPv6Forward),
+		})
+	}
+	if countBytes {
+		values = append(values, persist.SysctlValue{
+			Key:      SysctlConntrackAcct,
+			Value:    "1",
+			Previous: f.previousFor(SysctlConntrackAcct, procConntrackAcct),
 		})
 	}
 
@@ -217,7 +235,23 @@ func (f *Forwarding) Enable(ctx context.Context, needIPv6 bool) error {
 			return err
 		}
 	}
+	// The counting applies to connections opened after it, so an operator who
+	// turns it on watches the figures fill in as the table turns over. A
+	// kernel too old to have the parameter is not a failure to apply rules.
+	if countBytes {
+		if err := f.writeFlag(procConntrackAcct, "1"); err != nil {
+			f.logSkipped(err)
+		}
+	}
 	return nil
+}
+
+// logSkipped notes a kernel parameter that could not be written but is not
+// worth failing an apply over.
+func (f *Forwarding) logSkipped(err error) {
+	if f.Log != nil {
+		f.Log.Warn("a kernel parameter could not be set", "error", err)
+	}
 }
 
 // Revert puts the parameters back to what they were before the panel changed
@@ -279,6 +313,8 @@ func procPathFor(key string) string {
 		return procIPv4Forward
 	case SysctlIPv6Forward:
 		return procIPv6Forward
+	case SysctlConntrackAcct:
+		return procConntrackAcct
 	}
 	return ""
 }

@@ -1425,6 +1425,8 @@ export interface RouteAnalyzeResult {
 export interface ForwardingStatus {
   ipv4_forwarding: boolean
   ipv6_forwarding: boolean
+  /** Whether the kernel counts the bytes on every tracked connection. */
+  byte_accounting: boolean
   panel_managed: boolean
   sysctl_path: string
   previous_values?: Record<string, string>

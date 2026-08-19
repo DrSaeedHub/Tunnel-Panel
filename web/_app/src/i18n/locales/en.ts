@@ -1360,7 +1360,12 @@ export default {
       unknownShare: 'Connection tracking could not be read, so where the traffic is actually going cannot be shown. The destinations themselves are still listed.',
       shareLabel: 'Share of the open connections going to {{address}}',
       snapshotNote: 'The connections and volume here are what is open right now, so a connection that has closed is not counted in them; the rates are what moved between the last two readings of the table. The rule’s own totals are above.',
-      noByteAccounting: 'This kernel tracks the connections but does not count the bytes on them, so no volume or rate can be attributed to a destination. The connection counts above are still exact. Turning the counting on applies to connections opened after it, not to the ones already tracked:',
+      noByteAccounting:
+        'This kernel tracks the connections but does not count the bytes on them, so no volume or rate can be attributed to a destination. The connection counts above are still exact. The panel can turn the counting on and record it in its own sysctl file, so it survives a reboot; it applies to connections opened after that, not to the ones already tracked.',
+      countingOn: 'Count bytes per connection',
+      countingOnDone: 'The kernel is now counting bytes on tracked connections.',
+      unattributed:
+        'Attributed {{measured}} of the {{total}} the rule itself counted. The difference moved on connections that opened and closed between two readings of the tracking table, and no destination can be credited with it.',
       test: 'Test',
       testing: 'Testing…',
       reachable: 'Answered in {{latency}}',

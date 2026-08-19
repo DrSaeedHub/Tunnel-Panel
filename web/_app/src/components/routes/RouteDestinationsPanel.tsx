@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Check, Loader2, Radio } from 'lucide-react'
 
 import { api } from '@/lib/api'
@@ -10,6 +10,7 @@ import {
   type RouteConnectionList,
   type RouteDestination,
   type RouteDestinationLoad,
+  type RelayTraffic,
   type RouteReachabilityResult,
   type RouteRule,
 } from '@/lib/types'
@@ -21,7 +22,9 @@ import {
   type UnitPreferences,
 } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
+import { useToast } from '@/providers/ToastProvider'
 import { Button } from '../ui/button'
+import { describeError } from '../ui/feedback'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, Meter, Skeleton } from '../ui/feedback'
 import { Technical } from '../ui/technical'
@@ -41,7 +44,14 @@ import { endpointLabel } from './RouteFlow'
  * which is why a quiet relay shows no share rather than an even one: nothing
  * has been distributed yet.
  */
-export function RouteDestinationsPanel({ route }: { route: RouteRule }) {
+export function RouteDestinationsPanel({
+  route,
+  live: ruleTraffic,
+}: {
+  route: RouteRule
+  /** The rule's own live figures, which the destinations are checked against. */
+  live?: RelayTraffic
+}) {
   const { t } = useTranslation()
   const { digits, units } = usePreferences()
 
@@ -66,6 +76,17 @@ export function RouteDestinationsPanel({ route }: { route: RouteRule }) {
   const counting = query.data?.byte_accounting ?? false
   const rateSeconds = query.data?.rate_interval_seconds ?? 0
   const totalConnections = rows.reduce((sum, row) => sum + row.connections, 0)
+
+  // What the destinations account for, against what the rule's own counters
+  // say crossed it. The two do not have to agree: a connection that opened
+  // and closed between two readings of the table moved bytes that no
+  // destination can be credited with. Printing the shortfall is the only
+  // honest way to show a figure that is a floor.
+  const measured =
+    rows.reduce((sum, row) => sum + row.rxRate + row.txRate, 0) || 0
+  const ruleRate =
+    (ruleTraffic?.rx_bytes_per_second ?? 0) + (ruleTraffic?.tx_bytes_per_second ?? 0)
+  const unattributed = ruleRate > 0 && measured < ruleRate * 0.9
   const mode = route.load_balance_mode_id
   // Two destinations in the rotation are distributed across whatever the mode
   // says, including when it says nothing: the ruleset falls back to round robin
@@ -121,27 +142,71 @@ export function RouteDestinationsPanel({ route }: { route: RouteRule }) {
               ))}
             </ul>
 
-            {live && !counting ? (
-              <p className="mt-3 flex items-start gap-2 rounded-md border border-warn/40 bg-warn-muted p-3 text-2xs">
-                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
-                <span>
-                  {t('routeDetail.destinations.noByteAccounting')}
-                  <Technical className="mt-1 block">
-                    sysctl -w net.netfilter.nf_conntrack_acct=1
-                  </Technical>
-                </span>
-              </p>
-            ) : null}
+            {live && !counting ? <CountingOffNotice /> : null}
 
             {live && counting ? (
-              <p className="mt-3 text-2xs text-muted-foreground">
-                {t('routeDetail.destinations.snapshotNote')}
-              </p>
+              <div className="mt-3 space-y-1">
+                {unattributed ? (
+                  <p className="text-2xs text-muted-foreground">
+                    {t('routeDetail.destinations.unattributed', {
+                      measured: formatThroughput(measured, units).text,
+                      total: formatThroughput(ruleRate, units).text,
+                    })}
+                  </p>
+                ) : null}
+                <p className="text-2xs text-muted-foreground">
+                  {t('routeDetail.destinations.snapshotNote')}
+                </p>
+              </div>
             ) : null}
           </>
         )}
       </CardContent>
     </Card>
+  )
+}
+
+/**
+ * The kernel is tracking the connections without counting the bytes on them.
+ *
+ * That is the default on most kernels, and it is one parameter away from not
+ * being. The panel sets it the same way it sets forwarding -- recorded in its
+ * own sysctl file, so it survives a reboot and can be put back -- which is why
+ * this offers a button rather than a command to paste into a shell.
+ */
+function CountingOffNotice() {
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+  const [busy, setBusy] = useState(false)
+
+  const enable = async () => {
+    setBusy(true)
+    try {
+      await api.post('/system/forwarding/enable', {})
+      toast({ tone: 'success', title: t('routeDetail.destinations.countingOnDone') })
+      await queryClient.invalidateQueries({ queryKey: ['routes'] })
+    } catch (error) {
+      toast({
+        tone: 'error',
+        title: t('routeDetail.destinations.countingOn'),
+        description: describeError(error, t).message,
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-warn/40 bg-warn-muted p-3">
+      <p className="flex items-start gap-2 text-2xs">
+        <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
+        {t('routeDetail.destinations.noByteAccounting')}
+      </p>
+      <Button variant="secondary" size="sm" className="mt-2" loading={busy} onClick={() => void enable()}>
+        {t('routeDetail.destinations.countingOn')}
+      </Button>
+    </div>
   )
 }
 

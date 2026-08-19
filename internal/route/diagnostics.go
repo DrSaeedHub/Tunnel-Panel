@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -252,9 +251,6 @@ type Diagnostics struct {
 	tunnels    TunnelSource
 	prober     Prober
 	log        *slog.Logger
-	// rates turns two readings of the connection table into what moved between
-	// them, which is the only per-destination rate there is to have.
-	rates *destinationRates
 }
 
 // NewDiagnostics builds the diagnostics.
@@ -277,7 +273,6 @@ func NewDiagnostics(d DiagnosticsDeps) *Diagnostics {
 	return &Diagnostics{
 		repo: d.Repo, backend: d.Backend, forwarding: d.Forwarding, accounting: d.Accounting,
 		conntrack: conntrack, tunnels: d.Tunnels, prober: prober, log: log,
-		rates: newDestinationRates(),
 	}
 }
 
@@ -398,18 +393,29 @@ func (d *Diagnostics) Connections(ctx context.Context, routeRuleID int64, limit 
 	if d.forwarding != nil {
 		out.ByteAccounting = d.forwarding.ByteAccounting()
 	}
-	moved, gap := d.rates.observe(routeRuleID, mine, time.Now())
-	out.RateIntervalSeconds = gap
-	for i := range out.ByDestination {
-		rate, ok := moved[destinationKey{
-			address: out.ByDestination[i].Address,
-			port:    out.ByDestination[i].Port,
-		}]
-		if !ok {
-			continue
+	// The counts and the volume are from the reading just taken, because that is
+	// the question the page asked. The rates are the sampler's: it reads the
+	// same table on its own schedule whether or not anybody is watching, so its
+	// two readings are close together and exist before the page is opened.
+	if d.accounting != nil {
+		if counted, ok := d.accounting.Connections(routeRuleID); ok {
+			out.RateIntervalSeconds = counted.RateIntervalSeconds
+			sampled := map[destinationKey]DestinationLoad{}
+			for _, entry := range counted.ByDestination {
+				sampled[destinationKey{address: entry.Address, port: entry.Port}] = entry
+			}
+			for i := range out.ByDestination {
+				rate, seen := sampled[destinationKey{
+					address: out.ByDestination[i].Address,
+					port:    out.ByDestination[i].Port,
+				}]
+				if !seen {
+					continue
+				}
+				out.ByDestination[i].RxBytesPerSecond = rate.RxBytesPerSecond
+				out.ByDestination[i].TxBytesPerSecond = rate.TxBytesPerSecond
+			}
 		}
-		out.ByDestination[i].RxBytesPerSecond = rate.rx
-		out.ByDestination[i].TxBytesPerSecond = rate.tx
 	}
 	if limit > 0 && limit < len(mine) {
 		mine = mine[:limit]
@@ -427,11 +433,10 @@ func (d *Diagnostics) Connections(ctx context.Context, routeRuleID int64, limit 
 	return out, nil
 }
 
-// Rates are measured between two readings of the connection table, which the
-// panel takes while a rule's page is open. A gap outside this window is not a
-// measurement: below the floor the counters have barely moved and the division
-// amplifies the noise, and above the ceiling the page was closed and the two
-// readings have nothing to do with each other.
+// Rates are measured between two readings of the connection table. A gap
+// outside this window is not a measurement: below the floor the counters have
+// barely moved and the division amplifies the noise, and above the ceiling the
+// sampler was stopped and the two readings have nothing to do with each other.
 const (
 	minRateGap = 2 * time.Second
 	maxRateGap = 120 * time.Second
@@ -447,91 +452,6 @@ type destinationKey struct {
 type flowBytes struct{ rx, tx uint64 }
 
 type movement struct{ rx, tx float64 }
-
-// rateReading is one reading of a rule's flows, kept to be subtracted from the
-// next one.
-type rateReading struct {
-	at    time.Time
-	flows map[string]flowBytes
-}
-
-// destinationRates turns consecutive readings of the connection table into what
-// actually moved per destination.
-//
-// The subtraction is per flow and not per destination, because the two are not
-// the same: a destination's total falls when a connection closes, and a
-// difference taken on the totals would report that as negative throughput. Only
-// flows present in both readings contribute, so what comes out is a floor on
-// the throughput rather than a guess above it.
-type destinationRates struct {
-	mu       sync.Mutex
-	readings map[int64]*rateReading
-}
-
-func newDestinationRates() *destinationRates {
-	return &destinationRates{readings: map[int64]*rateReading{}}
-}
-
-// observe folds one reading in and reports the movement since the last one,
-// along with the gap it was measured over. A zero gap means there is nothing to
-// compare against and the movement is not a rate.
-func (r *destinationRates) observe(
-	routeRuleID int64, flows []Flow, now time.Time,
-) (map[destinationKey]movement, float64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	previous := r.readings[routeRuleID]
-	next := &rateReading{at: now, flows: make(map[string]flowBytes, len(flows))}
-	moved := map[destinationKey]movement{}
-
-	for _, flow := range flows {
-		key := flow.Key()
-		if len(next.flows) < maxTrackedFlows {
-			next.flows[key] = flowBytes{rx: flow.RxBytes, tx: flow.TxBytes}
-		}
-		if previous == nil {
-			continue
-		}
-		was, seen := previous.flows[key]
-		if !seen {
-			continue
-		}
-		// A counter that went backwards is a new connection reusing the tuple
-		// of one that closed. It contributes nothing rather than a negative.
-		at := destinationKey{address: flow.DestinationAddress, port: flow.DestinationPort}
-		entry := moved[at]
-		if flow.RxBytes > was.rx {
-			entry.rx += float64(flow.RxBytes - was.rx)
-		}
-		if flow.TxBytes > was.tx {
-			entry.tx += float64(flow.TxBytes - was.tx)
-		}
-		moved[at] = entry
-	}
-
-	r.readings[routeRuleID] = next
-	// A rule whose page nobody has open stops being worth remembering, and its
-	// reading is stale enough to be useless by then anyway.
-	for id, reading := range r.readings {
-		if now.Sub(reading.at) > maxRateGap {
-			delete(r.readings, id)
-		}
-	}
-
-	if previous == nil {
-		return nil, 0
-	}
-	gap := now.Sub(previous.at)
-	if gap < minRateGap || gap > maxRateGap {
-		return nil, 0
-	}
-	seconds := gap.Seconds()
-	for at, entry := range moved {
-		moved[at] = movement{rx: entry.rx / seconds, tx: entry.tx / seconds}
-	}
-	return moved, seconds
-}
 
 // loadByDestination folds a rule's flows into one entry per destination, worst
 // first: the destination taking the most connections leads, and a tie is broken

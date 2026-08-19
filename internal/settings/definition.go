@@ -471,6 +471,15 @@ var definitions = []Definition{
 		Default: true,
 	},
 	{
+		Key: "routes.count_connection_bytes", Type: KindBool, Category: CategoryRoutes,
+		Description: "Have the kernel count the bytes on every tracked connection, and record " +
+			"that the panel asked for it. Without it a relay reports how many connections each " +
+			"destination is taking and nothing about what is crossing them, which is what makes a " +
+			"load-balanced rule readable. The counting costs a little on every packet; turn it off " +
+			"on a machine where that matters more than the figures.",
+		Default: true,
+	},
+	{
 		Key: "routes.warn_conntrack_usage_percent", Type: KindFloat, Category: CategoryRoutes, Unit: "percent",
 		Description: "Connection tracking table usage at or above which the panel warns. A relay that " +
 			"fills the table starts dropping new connections with nothing in the logs to explain it.",

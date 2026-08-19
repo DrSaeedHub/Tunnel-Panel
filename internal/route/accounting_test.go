@@ -325,3 +325,70 @@ func TestSinceBootMeaningIsCarriedWithTheFigures(t *testing.T) {
 		t.Error("the note does not say the two figures must not be blended")
 	}
 }
+
+// What an operator watching a relay wants is not the bytes standing on the open
+// connections but the ones moving. They are subtracted per flow, because a
+// destination's total falls whenever one of its connections closes and a
+// difference taken on the totals reports that fall as negative throughput.
+func TestWhatMovedToEachDestinationIsSubtractedPerFlow(t *testing.T) {
+	state := newConntrackState()
+	spec := rules.RouteSpec{
+		RouteRuleID: 1, Protocol: rules.ProtocolTCP,
+		BindAddress: "203.0.113.10", BindPorts: rules.PortRange{Port: 2044},
+	}
+	at := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+
+	flow := func(source string, destination string, rx, tx uint64) Flow {
+		return Flow{
+			Protocol: "tcp", SourceAddress: source, SourcePort: 51234,
+			BindAddress: "203.0.113.10", BindPort: 2044,
+			DestinationAddress: destination, DestinationPort: 2044,
+			RxBytes: rx, TxBytes: tx,
+		}
+	}
+
+	// The first reading has nothing to subtract from, so it is not a rate.
+	first := []Flow{
+		flow("192.0.2.5", "198.51.100.20", 1_000, 500),
+		flow("192.0.2.6", "198.51.100.21", 2_000, 1_000),
+	}
+	counts := state.observe([]rules.RouteSpec{spec}, first, at)
+	if counts[1].RateIntervalSeconds != 0 {
+		t.Fatalf("the first reading produced a rate over %v", counts[1].RateIntervalSeconds)
+	}
+	if len(counts[1].ByDestination) != 2 {
+		t.Fatalf("by destination = %+v, want both destinations", counts[1].ByDestination)
+	}
+
+	// Five seconds later: one flow moved, one has gone, and one is new. The
+	// one that is new did not exist at the last reading, so everything on it
+	// moved inside the gap and all of it counts.
+	second := []Flow{
+		flow("192.0.2.5", "198.51.100.20", 11_000, 5_500),
+		flow("192.0.2.9", "198.51.100.21", 3_000, 1_500),
+	}
+	counts = state.observe([]rules.RouteSpec{spec}, second, at.Add(5*time.Second))
+	if counts[1].RateIntervalSeconds != 5 {
+		t.Fatalf("interval = %v, want the five seconds between the readings",
+			counts[1].RateIntervalSeconds)
+	}
+
+	byAddress := map[string]DestinationLoad{}
+	for _, entry := range counts[1].ByDestination {
+		byAddress[entry.Address] = entry
+	}
+	// 10_000 bytes over five seconds on the flow that was there both times.
+	if got := byAddress["198.51.100.20"]; got.RxBytesPerSecond != 2000 || got.TxBytesPerSecond != 1000 {
+		t.Errorf("the continuing flow moved %+v, want 2000/1000 per second", got)
+	}
+	// The whole of the new flow, and nothing from the one that disappeared.
+	if got := byAddress["198.51.100.21"]; got.RxBytesPerSecond != 600 || got.TxBytesPerSecond != 300 {
+		t.Errorf("the new flow moved %+v, want 600/300 per second", got)
+	}
+
+	// A reading taken hours later is not a measurement of anything.
+	counts = state.observe([]rules.RouteSpec{spec}, second, at.Add(6*time.Hour))
+	if counts[1].RateIntervalSeconds != 0 {
+		t.Error("two readings six hours apart were reported as a rate")
+	}
+}

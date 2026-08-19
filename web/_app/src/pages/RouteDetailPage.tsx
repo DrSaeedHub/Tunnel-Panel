@@ -299,7 +299,7 @@ export default function RouteDetailPage() {
           </Card>
 
           <div className="mt-4">
-            <RouteDestinationsPanel route={route} />
+            <RouteDestinationsPanel route={route} live={live} />
           </div>
 
           <Card className="mt-4">

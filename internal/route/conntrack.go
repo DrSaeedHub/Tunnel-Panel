@@ -334,6 +334,12 @@ type ConnectionCount struct {
 	// BySource counts connections per client address, which is what a
 	// per-source connection limit is actually enforcing.
 	BySource map[string]int `json:"by_source,omitempty"`
+	// ByDestination is where the connections actually went, with what moved
+	// to each since the previous reading.
+	ByDestination []DestinationLoad `json:"by_destination,omitempty"`
+	// RateIntervalSeconds is the gap those rates were measured over. Zero
+	// means there was no usable previous reading and they are not rates.
+	RateIntervalSeconds float64 `json:"rate_interval_seconds,omitempty"`
 }
 
 // FlowsFor returns the flows belonging to one rule, newest first where the
@@ -349,11 +355,12 @@ func FlowsFor(flows []Flow, spec rules.RouteSpec) []Flow {
 	return out
 }
 
-// conntrackState remembers which flows were seen last time, so the number of
-// new connections is counted rather than estimated from an age the /proc
-// listing does not carry.
+// conntrackState remembers the flows seen last time and the bytes on them, so
+// the number of new connections is counted rather than estimated from an age
+// the /proc listing does not carry, and so what moved to each destination can
+// be subtracted rather than guessed.
 type conntrackState struct {
-	seen map[int64]map[string]bool
+	seen map[int64]map[string]flowBytes
 	at   time.Time
 }
 
@@ -364,18 +371,30 @@ type conntrackState struct {
 const maxTrackedFlows = 50000
 
 func newConntrackState() *conntrackState {
-	return &conntrackState{seen: map[int64]map[string]bool{}}
+	return &conntrackState{seen: map[int64]map[string]flowBytes{}}
 }
 
 // observe folds one conntrack reading into the counts.
 func (c *conntrackState) observe(specs []rules.RouteSpec, flows []Flow, now time.Time) map[int64]ConnectionCount {
 	out := make(map[int64]ConnectionCount, len(specs))
-	next := make(map[int64]map[string]bool, len(specs))
+	next := make(map[int64]map[string]flowBytes, len(specs))
+
+	// A gap outside the window is not a measurement: below the floor the
+	// counters have barely moved and the division amplifies the noise, and
+	// above the ceiling the sampler was stopped and the two readings have
+	// nothing to do with each other.
+	gap := 0.0
+	if !c.at.IsZero() {
+		if elapsed := now.Sub(c.at); elapsed >= minRateGap && elapsed <= maxRateGap {
+			gap = elapsed.Seconds()
+		}
+	}
 
 	for _, spec := range specs {
 		count := ConnectionCount{RouteRuleID: spec.RouteRuleID, BySource: map[string]int{}}
 		previous := c.seen[spec.RouteRuleID]
-		keys := map[string]bool{}
+		keys := make(map[string]flowBytes, len(previous))
+		load := newDestinationTally()
 
 		for _, flow := range flows {
 			if !flow.Belongs(spec) {
@@ -385,11 +404,13 @@ func (c *conntrackState) observe(specs []rules.RouteSpec, flows []Flow, now time
 			count.BySource[flow.SourceAddress]++
 			key := flow.Key()
 			if len(keys) < maxTrackedFlows {
-				keys[key] = true
+				keys[key] = flowBytes{rx: flow.RxBytes, tx: flow.TxBytes}
 			}
-			if previous != nil && !previous[key] {
+			was, seen := previous[key]
+			if previous != nil && !seen {
 				count.New++
 			}
+			load.add(flow, was, seen, previous != nil)
 		}
 		// The first reading has nothing to compare against, so every flow would
 		// look new. Reporting zero is right: they are not new, they are the
@@ -397,6 +418,10 @@ func (c *conntrackState) observe(specs []rules.RouteSpec, flows []Flow, now time
 		if previous == nil {
 			count.New = 0
 		}
+		if previous != nil && gap > 0 {
+			count.RateIntervalSeconds = gap
+		}
+		count.ByDestination = load.result(count.RateIntervalSeconds)
 		next[spec.RouteRuleID] = keys
 		out[spec.RouteRuleID] = count
 	}
@@ -408,3 +433,75 @@ func (c *conntrackState) observe(specs []rules.RouteSpec, flows []Flow, now time
 
 // forget drops a rule's remembered flows.
 func (c *conntrackState) forget(routeRuleID int64) { delete(c.seen, routeRuleID) }
+
+// destinationTally folds a rule's flows into one entry per destination: what is
+// open there now, and what moved to it since the previous reading.
+//
+// The subtraction is per flow and never per destination. A destination's total
+// falls whenever one of its connections closes, and a difference taken on the
+// totals reports that fall as negative throughput. A flow the previous reading
+// did not have did not exist then, so every byte on it moved inside the gap and
+// all of it counts; a flow that has gone takes whatever it carried after the
+// last reading with it, which is why the figure is a floor on the throughput
+// and not an estimate above it.
+type destinationTally struct {
+	index map[destinationKey]int
+	rows  []DestinationLoad
+	moved []movement
+}
+
+func newDestinationTally() *destinationTally {
+	return &destinationTally{index: map[destinationKey]int{}}
+}
+
+func (d *destinationTally) add(flow Flow, was flowBytes, seen, comparable bool) {
+	key := destinationKey{address: flow.DestinationAddress, port: flow.DestinationPort}
+	at, ok := d.index[key]
+	if !ok {
+		at = len(d.rows)
+		d.index[key] = at
+		d.rows = append(d.rows, DestinationLoad{Address: key.address, Port: key.port})
+		d.moved = append(d.moved, movement{})
+	}
+	d.rows[at].Connections++
+	d.rows[at].RxBytes += flow.RxBytes
+	d.rows[at].TxBytes += flow.TxBytes
+
+	if !comparable {
+		return
+	}
+	if !seen {
+		d.moved[at].rx += float64(flow.RxBytes)
+		d.moved[at].tx += float64(flow.TxBytes)
+		return
+	}
+	// A counter that went backwards is a new connection reusing the tuple of
+	// one that closed. It contributes nothing rather than a negative.
+	if flow.RxBytes > was.rx {
+		d.moved[at].rx += float64(flow.RxBytes - was.rx)
+	}
+	if flow.TxBytes > was.tx {
+		d.moved[at].tx += float64(flow.TxBytes - was.tx)
+	}
+}
+
+// result returns the destinations busiest first, with the movement divided by
+// the gap when there was a usable one.
+func (d *destinationTally) result(seconds float64) []DestinationLoad {
+	for i := range d.rows {
+		if seconds > 0 {
+			d.rows[i].RxBytesPerSecond = d.moved[i].rx / seconds
+			d.rows[i].TxBytesPerSecond = d.moved[i].tx / seconds
+		}
+	}
+	sort.SliceStable(d.rows, func(i, j int) bool {
+		if d.rows[i].Connections != d.rows[j].Connections {
+			return d.rows[i].Connections > d.rows[j].Connections
+		}
+		if d.rows[i].Address != d.rows[j].Address {
+			return d.rows[i].Address < d.rows[j].Address
+		}
+		return d.rows[i].Port < d.rows[j].Port
+	})
+	return d.rows
+}

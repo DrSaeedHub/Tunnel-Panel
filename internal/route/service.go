@@ -322,6 +322,7 @@ func (s *Service) previewOf(ctx context.Context, operation string, desired, prev
 	plan, err := previewPlanner.Plan(planInput{
 		operation: operation, desired: desired, previous: previous, subject: subject,
 		forwardingOn: status.IPv4Forwarding, ipv6ForwardingOn: status.IPv6Forwarding,
+		byteAccountingOn: status.ByteAccounting, countBytes: s.countsConnectionBytes(),
 		// The preview is the payload that would be submitted, so it carries the
 		// counter cleanup too rather than showing a file the apply would not use,
 		// and it names the rollback the apply would actually perform. The live
@@ -784,6 +785,7 @@ func (s *Service) applyRecords(ctx context.Context, operation string, subject *R
 	plan, err := s.planner.Plan(planInput{
 		operation: operation, desired: desired, previous: previous, subject: subject,
 		forwardingOn: status.IPv4Forwarding, ipv6ForwardingOn: status.IPv6Forwarding,
+		byteAccountingOn: status.ByteAccounting, countBytes: s.countsConnectionBytes(),
 		retired:     s.retiredCounters(ctx, desired),
 		liveChains:  s.liveChains(ctx),
 		lastApplied: s.appliedPayload(),
@@ -947,7 +949,7 @@ func (s *Service) runStep(ctx context.Context, step Step) error {
 				"so the rules will be installed and carry nothing")
 			return nil
 		}
-		return s.forwarding.Enable(ctx, s.needsIPv6(ctx))
+		return s.forwarding.Enable(ctx, s.needsIPv6(ctx), s.countsConnectionBytes())
 
 	case StepApplyRuleset:
 		if step.Payload == nil {
@@ -975,6 +977,20 @@ func (s *Service) runStep(ctx context.Context, step Step) error {
 		return s.store.Enable(ctx, step.Unit)
 	}
 	return fmt.Errorf("unknown plan step %q", step.Kind)
+}
+
+// countsConnectionBytes reports whether the panel should have the kernel count
+// bytes per tracked connection.
+//
+// It rides along with forwarding because it is the same kind of change -- one
+// kernel parameter a relay needs, recorded in the panel's own file so it
+// survives a reboot and can be put back. Without it the panel can say how many
+// connections a destination is taking and nothing about what is crossing it.
+func (s *Service) countsConnectionBytes() bool {
+	if s.settings == nil {
+		return true
+	}
+	return s.settings.Bool("routes.count_connection_bytes")
 }
 
 func (s *Service) needsIPv6(ctx context.Context) bool {

@@ -923,7 +923,16 @@ function DestinationList({
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => set('destinations', [...extras, { address: '', port: '', weight: '1' }])}
+          onClick={() => {
+            set('destinations', [...extras, { address: '', port: '', weight: '1' }])
+            // A second destination is distributed whatever the mode says:
+            // the ruleset falls back to round robin rather than sending
+            // everything to the first. Saying so beats leaving a control
+            // reading "Single destination" over a list of two.
+            if (form.load_balance_mode_id === LoadBalanceMode.None) {
+              set('load_balance_mode_id', LoadBalanceMode.RoundRobin)
+            }
+          }}
         >
           <Plus className="size-4" aria-hidden="true" />
           {t('routeForm.destination.add')}
@@ -938,12 +947,18 @@ function DestinationList({
           {(props) => (
             <Select
               id={props.id}
-              value={String(form.load_balance_mode_id)}
+              value={String(
+                form.load_balance_mode_id === LoadBalanceMode.None
+                  ? LoadBalanceMode.RoundRobin
+                  : form.load_balance_mode_id,
+              )}
               onValueChange={(value) => set('load_balance_mode_id', Number(value))}
-              options={Object.values(LoadBalanceMode).map((id) => ({
-                value: String(id),
-                label: t(`routes.loadBalance.${id}`),
-              }))}
+              // "Single destination" is not among them: the list it sits
+              // over has more than one, and choosing it would not make the
+              // kernel send everything to the first.
+              options={Object.values(LoadBalanceMode)
+                .filter((id) => id !== LoadBalanceMode.None)
+                .map((id) => ({ value: String(id), label: t(`routes.loadBalance.${id}`) }))}
             />
           )}
         </Field>

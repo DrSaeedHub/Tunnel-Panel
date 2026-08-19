@@ -813,7 +813,8 @@ func (s *Server) handleEnableForwarding(w http.ResponseWriter, r *http.Request) 
 		note = "The kernel parameters the panel changed have been put back and its sysctl file removed."
 		err = forwarding.Revert(ctx)
 	} else {
-		err = forwarding.Enable(ctx, desired.HasIPv6())
+		err = forwarding.Enable(ctx, desired.HasIPv6(),
+			s.settings.Bool("routes.count_connection_bytes"))
 	}
 	if err != nil {
 		s.auditRoute(r, model.AuditActionSettingUpdate, "ip_forward", req, nil, err, start)

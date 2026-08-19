@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
 import { LoadBalanceMode, RouteProtocol, type RouteRule } from '@/lib/types'
 import { PreferencesProvider } from '@/providers/PreferencesProvider'
+import { ToastProvider } from '@/providers/ToastProvider'
 
 vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
@@ -83,7 +84,9 @@ function wrap(children: ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return (
     <QueryClientProvider client={client}>
-      <PreferencesProvider authenticated={false}>{children}</PreferencesProvider>
+      <PreferencesProvider authenticated={false}>
+        <ToastProvider>{children}</ToastProvider>
+      </PreferencesProvider>
     </QueryClientProvider>
   )
 }
@@ -259,9 +262,16 @@ describe('the destinations of a relay', () => {
     render(wrap(<RouteDestinationsPanel route={route()} />))
 
     expect(await screen.findByText(/does not count the bytes on them/)).toBeInTheDocument()
-    expect(screen.getByText('sysctl -w net.netfilter.nf_conntrack_acct=1')).toBeInTheDocument()
     // The counts are exact whatever the byte counting does, so they stay.
     expect(screen.getByText('60 connections open')).toBeInTheDocument()
     expect(screen.queryByText(/0 B/)).toBeNull()
+
+    // And the panel sets the parameter itself rather than printing a command
+    // for the operator to paste into a shell.
+    vi.mocked(api.post).mockResolvedValue({})
+    fireEvent.click(screen.getByRole('button', { name: 'Count bytes per connection' }))
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/system/forwarding/enable', {}),
+    )
   })
 })

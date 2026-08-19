@@ -131,6 +131,12 @@ var additionalKeys = []string{
 	// one dashboard from becoming a stream of requests to the release host.
 	"system.update_check_enabled",
 	"system.update_check_interval_hours",
+	// Whether the kernel counts the bytes on every tracked connection. It is
+	// off by default there, and without it a load-balanced rule can report how
+	// many connections each destination is taking and nothing about what is
+	// crossing them. It is a setting because the counting costs a little on
+	// every packet, which is a trade only the operator can make.
+	"routes.count_connection_bytes",
 }
 
 func TestEverySpecifiedKeyIsDeclared(t *testing.T) {
