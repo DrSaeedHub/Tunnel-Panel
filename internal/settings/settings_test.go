@@ -137,6 +137,15 @@ var additionalKeys = []string{
 	// crossing them. It is a setting because the counting costs a little on
 	// every packet, which is a trade only the operator can make.
 	"routes.count_connection_bytes",
+	// Monitoring a forwarding rule's destinations, which the specification
+	// describes for tunnels and not for relays. The defaults live here for
+	// the same reason the tunnel probe's do: a rule overrides what it needs
+	// and inherits the rest.
+	"routes.monitor_enabled",
+	"routes.monitor_interval_seconds",
+	"routes.monitor_timeout_seconds",
+	"routes.monitor_failure_threshold",
+	"routes.monitor_recovery_threshold",
 }
 
 func TestEverySpecifiedKeyIsDeclared(t *testing.T) {

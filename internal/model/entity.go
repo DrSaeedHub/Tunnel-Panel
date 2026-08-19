@@ -234,6 +234,19 @@ type RouteRule struct {
 	SortOrder int64   `json:"sort_order"`
 	TagsJson  *string `json:"tags_json"`
 
+	// Monitoring, as the rule's own policy. Every field is optional and
+	// inherits the panel-wide setting when it is not set, which is the same
+	// arrangement a tunnel's probe settings use. A destination may override
+	// any of them again.
+	IsMonitorEnabled *bool `json:"is_monitor_enabled"`
+	// MonitorModeID decides what a failed destination costs: reporting only,
+	// or being taken out of the rotation until it answers again.
+	MonitorModeID            *int64   `json:"monitor_mode_id"`
+	MonitorIntervalSeconds   *float64 `json:"monitor_interval_seconds"`
+	MonitorTimeoutSeconds    *float64 `json:"monitor_timeout_seconds"`
+	MonitorFailureThreshold  *int64   `json:"monitor_failure_threshold"`
+	MonitorRecoveryThreshold *int64   `json:"monitor_recovery_threshold"`
+
 	Standard
 }
 
@@ -249,6 +262,26 @@ type RouteDestination struct {
 	Weight             int64  `json:"weight"`
 	IsEnabled          bool   `json:"is_enabled"`
 	SortOrder          int64  `json:"sort_order"`
+
+	// Monitoring for this destination alone. Unset means whatever the rule
+	// says, which in turn means whatever the panel-wide setting says.
+	IsMonitorEnabled *bool `json:"is_monitor_enabled"`
+	// MonitorPort is what to knock on, when that is not where the traffic
+	// goes. A relay carrying UDP has nothing to knock on at all otherwise:
+	// silence from a UDP port proves nothing, and a TCP health port beside
+	// it proves something.
+	MonitorPort              *int64   `json:"monitor_port"`
+	MonitorIntervalSeconds   *float64 `json:"monitor_interval_seconds"`
+	MonitorTimeoutSeconds    *float64 `json:"monitor_timeout_seconds"`
+	MonitorFailureThreshold  *int64   `json:"monitor_failure_threshold"`
+	MonitorRecoveryThreshold *int64   `json:"monitor_recovery_threshold"`
+
+	// IsSuppressed is the monitor's own doing and never the operator's: a
+	// destination it has taken out of the rotation because it stopped
+	// answering. It is kept apart from IsEnabled so that recovering a
+	// destination never re-enables one an operator switched off by hand, and
+	// so the interface can say which of the two happened.
+	IsSuppressed bool `json:"is_suppressed"`
 	Standard
 }
 

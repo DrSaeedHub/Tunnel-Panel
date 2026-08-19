@@ -38,6 +38,17 @@ type RouteDestinationInput struct {
 	Weight    int  `json:"weight,omitempty"`
 	IsEnabled bool `json:"is_enabled"`
 	SortOrder int  `json:"sort_order,omitempty"`
+
+	// Monitoring for this destination alone. Absent means whatever the rule
+	// says, which in turn means whatever the panel-wide setting says.
+	IsMonitorEnabled *bool `json:"is_monitor_enabled,omitempty"`
+	// MonitorPort is what to knock on when that is not the port traffic
+	// goes to, which is the only way to monitor a UDP relay at all.
+	MonitorPort              *int64   `json:"monitor_port,omitempty"`
+	MonitorIntervalSeconds   *float64 `json:"monitor_interval_seconds,omitempty"`
+	MonitorTimeoutSeconds    *float64 `json:"monitor_timeout_seconds,omitempty"`
+	MonitorFailureThreshold  *int64   `json:"monitor_failure_threshold,omitempty"`
+	MonitorRecoveryThreshold *int64   `json:"monitor_recovery_threshold,omitempty"`
 }
 
 // RouteAllowedSourceInput is one entry of a rule's source allowlist.
@@ -95,6 +106,17 @@ type RouteInput struct {
 
 	IsEnabled bool  `json:"is_enabled"`
 	SortOrder int64 `json:"sort_order,omitempty"`
+
+	// Monitoring, as this rule's policy. Absent means the panel-wide
+	// setting, which is what most rules will always want.
+	IsMonitorEnabled *bool `json:"is_monitor_enabled,omitempty"`
+	// MonitorModeID chooses what a failed destination costs: reporting, or
+	// being taken out of the rotation until it answers again.
+	MonitorModeID            *int64   `json:"monitor_mode_id,omitempty"`
+	MonitorIntervalSeconds   *float64 `json:"monitor_interval_seconds,omitempty"`
+	MonitorTimeoutSeconds    *float64 `json:"monitor_timeout_seconds,omitempty"`
+	MonitorFailureThreshold  *int64   `json:"monitor_failure_threshold,omitempty"`
+	MonitorRecoveryThreshold *int64   `json:"monitor_recovery_threshold,omitempty"`
 
 	Destinations   []RouteDestinationInput   `json:"destinations,omitempty"`
 	AllowedSources []RouteAllowedSourceInput `json:"allowed_sources,omitempty"`

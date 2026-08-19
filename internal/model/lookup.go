@@ -92,6 +92,25 @@ const (
 	NatModeNone       int64 = 30
 )
 
+// RouteMonitorMode identifiers. Reporting is what a monitor does at minimum;
+// failover is reporting plus taking the destination out of the rotation, which
+// is a change to the installed ruleset the panel makes without being asked and
+// so is never the default.
+const (
+	RouteMonitorModeReport   int64 = 10
+	RouteMonitorModeFailover int64 = 20
+)
+
+// RouteMonitorModeName maps an identifier to the name the ruleset and the API
+// use. An unknown identifier reports as reporting only, because that is the
+// mode that changes nothing.
+func RouteMonitorModeName(id int64) string {
+	if id == RouteMonitorModeFailover {
+		return "failover"
+	}
+	return "report"
+}
+
 // LoadBalanceMode identifiers. SourceHash keeps a given client on a given
 // destination; RoundRobin does not.
 const (
@@ -341,6 +360,10 @@ func LookupTables() []LookupTable {
 			{NatModeMasquerade, "Masquerade"},
 			{NatModeSnat, "Snat"},
 			{NatModeNone, "None"},
+		}},
+		{Name: "RouteMonitorMode", Values: []LookupValue{
+			{RouteMonitorModeReport, "Report"},
+			{RouteMonitorModeFailover, "Failover"},
 		}},
 		{Name: "LoadBalanceMode", Values: []LookupValue{
 			{LoadBalanceModeNone, "None"},

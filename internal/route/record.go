@@ -73,6 +73,12 @@ func (r Record) Spec() rules.RouteSpec {
 			// on the rule so putting it back is one click rather than retyping.
 			continue
 		}
+		if d.IsSuppressed {
+			// The same, decided by the monitor rather than by the operator. The
+			// two are separate columns so that recovering one never re-enables
+			// a destination somebody switched off by hand.
+			continue
+		}
 		spec.Destinations = append(spec.Destinations, rules.Destination{
 			Address: d.Address,
 			Ports:   rules.PortRange{Port: int(d.Port), End: intOrZero(d.PortRangeEnd)},
@@ -202,6 +208,12 @@ func RecordFrom(in validate.RouteInput) Record {
 		IsEnabled:                in.IsEnabled,
 		ApplyStatusID:            model.ApplyStatusPending,
 		SortOrder:                in.SortOrder,
+		IsMonitorEnabled:         in.IsMonitorEnabled,
+		MonitorModeID:            in.MonitorModeID,
+		MonitorIntervalSeconds:   in.MonitorIntervalSeconds,
+		MonitorTimeoutSeconds:    in.MonitorTimeoutSeconds,
+		MonitorFailureThreshold:  in.MonitorFailureThreshold,
+		MonitorRecoveryThreshold: in.MonitorRecoveryThreshold,
 	}}
 	for i, d := range in.EffectiveDestinations() {
 		rec.Destinations = append(rec.Destinations, model.RouteDestination{
@@ -213,6 +225,13 @@ func RecordFrom(in validate.RouteInput) Record {
 			Weight:             int64(weightOrOne(d.Weight)),
 			IsEnabled:          d.IsEnabled,
 			SortOrder:          int64(i),
+
+			IsMonitorEnabled:         d.IsMonitorEnabled,
+			MonitorPort:              d.MonitorPort,
+			MonitorIntervalSeconds:   d.MonitorIntervalSeconds,
+			MonitorTimeoutSeconds:    d.MonitorTimeoutSeconds,
+			MonitorFailureThreshold:  d.MonitorFailureThreshold,
+			MonitorRecoveryThreshold: d.MonitorRecoveryThreshold,
 		})
 	}
 	for _, s := range in.AllowedSources {

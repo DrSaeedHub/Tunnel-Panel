@@ -301,6 +301,16 @@ func run() error {
 		Repo: routeRepo, Backend: ruleBackend.Backend, Forwarding: routeForwarding,
 		Accounting: routeAccounting, Tunnels: tunnelService, Log: log,
 	})
+	// Probing a rule's destinations. Reapply is the whole of what failover
+	// does: the suppression is a column on the destination, so rebuilding the
+	// ruleset from the records is what takes a dead backend out of it.
+	routeMonitor := route.NewMonitor(route.MonitorDeps{
+		Repo: routeRepo, Settings: store, Store: routeRepo, Log: log,
+		Reapply: func(ctx context.Context) error {
+			_, err := routeService.ApplyAll(ctx, route.Request{})
+			return err
+		},
+	})
 
 	// The two subsystems know about each other through narrow interfaces: a
 	// rule asks whether the tunnel it relays over is up, and a tunnel asks what
@@ -396,6 +406,7 @@ func run() error {
 		Routes:          routeService,
 		RouteAccounting: routeAccounting,
 		RouteDiag:       routeDiag,
+		RouteMonitor:    routeMonitor,
 		Monitor:         monitorSupervisor,
 		Metrics:         metricsSampler,
 		Diag:            diagService,
@@ -438,6 +449,10 @@ func run() error {
 		return fmt.Errorf("starting the forwarding traffic accounting: %w", err)
 	}
 	defer routeAccounting.Stop()
+
+	// The destination monitor. It probes nothing until a rule asks for it,
+	// so it costs a ticker on an installation that never turns it on.
+	go routeMonitor.Run(ctx)
 
 	// Expired database download links are deleted on a slow tick.
 	//

@@ -72,6 +72,10 @@ type Deps struct {
 	Routes          *route.Service
 	RouteAccounting *route.Accounting
 	RouteDiag       *route.Diagnostics
+	// RouteMonitor probes the destinations of the rules that ask for it.
+	// Without it a rule reports its destinations as unmonitored rather than
+	// as healthy, which is the difference between no answer and a good one.
+	RouteMonitor *route.Monitor
 	// Monitor, Metrics and Diag are the subsystems the live views need. Each is
 	// optional; without one, its routes report the feature as unavailable
 	// rather than disappearing, so a client sees why.
@@ -113,28 +117,29 @@ type Deps struct {
 
 // Server owns the router and the handler dependencies.
 type Server struct {
-	cfg         *config.Config
-	db          *db.DB
-	settings    *settings.Store
-	auth        *auth.Service
-	audit       *audit.Writer
-	cookies     *auth.CookieWriter
-	log         *slog.Logger
-	build       BuildInfo
-	health      *HealthRegistry
-	static      *StaticHandler
-	tunnels     *tunnel.Service
-	reconcile   *reconcile.Service
-	routes      *route.Service
-	accounting  *route.Accounting
-	routeDiag   *route.Diagnostics
-	monitor     *monitor.Supervisor
-	metrics     *metrics.Sampler
-	diag        *diag.Service
-	persist     *persist.Store
-	updates     *Updates
-	ruleBackend rules.Detection
-	started     time.Time
+	cfg          *config.Config
+	db           *db.DB
+	settings     *settings.Store
+	auth         *auth.Service
+	audit        *audit.Writer
+	cookies      *auth.CookieWriter
+	log          *slog.Logger
+	build        BuildInfo
+	health       *HealthRegistry
+	static       *StaticHandler
+	tunnels      *tunnel.Service
+	reconcile    *reconcile.Service
+	routes       *route.Service
+	accounting   *route.Accounting
+	routeDiag    *route.Diagnostics
+	routeMonitor *route.Monitor
+	monitor      *monitor.Supervisor
+	metrics      *metrics.Sampler
+	diag         *diag.Service
+	persist      *persist.Store
+	updates      *Updates
+	ruleBackend  rules.Detection
+	started      time.Time
 
 	routeGuard      *safety.RouteGuard
 	addressFallback *address.Fallback
@@ -186,28 +191,29 @@ func New(d Deps) (*Server, error) {
 	}
 
 	s := &Server{
-		cfg:         d.Config,
-		db:          d.DB,
-		settings:    d.Settings,
-		auth:        d.Auth,
-		audit:       d.Audit,
-		cookies:     auth.NewCookieWriter(d.Config.BasePath()),
-		log:         log,
-		build:       d.Build,
-		health:      health,
-		static:      static,
-		tunnels:     d.Tunnels,
-		reconcile:   d.Reconcile,
-		routes:      d.Routes,
-		accounting:  d.RouteAccounting,
-		routeDiag:   d.RouteDiag,
-		monitor:     d.Monitor,
-		metrics:     d.Metrics,
-		diag:        d.Diag,
-		persist:     d.Persist,
-		updates:     d.Updates,
-		ruleBackend: d.RuleBackend,
-		started:     time.Now(),
+		cfg:          d.Config,
+		db:           d.DB,
+		settings:     d.Settings,
+		auth:         d.Auth,
+		audit:        d.Audit,
+		cookies:      auth.NewCookieWriter(d.Config.BasePath()),
+		log:          log,
+		build:        d.Build,
+		health:       health,
+		static:       static,
+		tunnels:      d.Tunnels,
+		reconcile:    d.Reconcile,
+		routes:       d.Routes,
+		accounting:   d.RouteAccounting,
+		routeDiag:    d.RouteDiag,
+		routeMonitor: d.RouteMonitor,
+		monitor:      d.Monitor,
+		metrics:      d.Metrics,
+		diag:         d.Diag,
+		persist:      d.Persist,
+		updates:      d.Updates,
+		ruleBackend:  d.RuleBackend,
+		started:      time.Now(),
 
 		routeGuard:      d.RouteGuard,
 		addressFallback: d.AddressFallback,
@@ -470,6 +476,12 @@ func (s *Server) buildRouter() http.Handler {
 							r.Get("/connections", s.handleRouteConnections)
 							r.Get("/counters", s.handleRouteCounters)
 						})
+
+						// What the destination monitor has found. It needs no
+						// subsystem of its own to be available: a panel without
+						// the monitor answers with an empty list, which is the
+						// truth about what it knows.
+						r.Get("/destinations/health", s.handleRouteDestinationHealth)
 					})
 
 					// The kernel parameters and the netfilter picture (§2.3).

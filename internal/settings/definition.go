@@ -471,6 +471,42 @@ var definitions = []Definition{
 		Default: true,
 	},
 	{
+		Key: "routes.monitor_enabled", Type: KindBool, Category: CategoryRoutes,
+		Description: "Probe the destinations of forwarding rules on a schedule, so a backend that " +
+			"stopped listening is named rather than inferred from a share that went to zero. Each " +
+			"rule, and each destination, may override this. What a failure costs is a per-rule " +
+			"choice: reporting only, or taking the destination out of the rotation.",
+		Default: false,
+	},
+	{
+		Key: "routes.monitor_interval_seconds", Type: KindFloat, Category: CategoryRoutes, Unit: "seconds",
+		Description: "Seconds between probes of one destination. A destination is one TCP connect " +
+			"per interval, so this is also how much traffic the monitoring itself makes.",
+		Default:     15.0,
+		Constraints: Constraints{Min: f64(1), Max: f64(3600)},
+	},
+	{
+		Key: "routes.monitor_timeout_seconds", Type: KindFloat, Category: CategoryRoutes, Unit: "seconds",
+		Description: "How long one probe waits for an answer before it counts as a failure.",
+		Default:     3.0,
+		Constraints: Constraints{Min: f64(0.1), Max: f64(60)},
+	},
+	{
+		Key: "routes.monitor_failure_threshold", Type: KindInt, Category: CategoryRoutes, Unit: "probes",
+		Description: "Consecutive failed probes before a destination is called down. More than one " +
+			"because a single lost probe is a lost probe, not an outage.",
+		Default:     int64(3),
+		Constraints: Constraints{Min: f64(1), Max: f64(100)},
+	},
+	{
+		Key: "routes.monitor_recovery_threshold", Type: KindInt, Category: CategoryRoutes, Unit: "probes",
+		Description: "Consecutive good probes before a destination that was down is called up " +
+			"again, and put back in the rotation where the rule fails over. Raising it is what " +
+			"stops a flapping backend rebuilding the ruleset every minute.",
+		Default:     int64(2),
+		Constraints: Constraints{Min: f64(1), Max: f64(100)},
+	},
+	{
 		Key: "routes.count_connection_bytes", Type: KindBool, Category: CategoryRoutes,
 		Description: "Have the kernel count the bytes on every tracked connection, and record " +
 			"that the panel asked for it. Without it a relay reports how many connections each " +

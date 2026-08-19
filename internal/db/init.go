@@ -187,6 +187,25 @@ type columnAddition struct {
 
 var columnAdditions = []columnAddition{
 	{"Tunnel", "DisplayName", "TEXT"},
+
+	// Monitoring a forwarding rule's destinations. Every one is optional and
+	// inherits from the rule, which inherits from the panel-wide setting, so
+	// an installation that predates them behaves exactly as it did.
+	{"RouteRule", "IsMonitorEnabled", "INTEGER"},
+	{"RouteRule", "MonitorModeID", "INTEGER"},
+	{"RouteRule", "MonitorIntervalSeconds", "REAL"},
+	{"RouteRule", "MonitorTimeoutSeconds", "REAL"},
+	{"RouteRule", "MonitorFailureThreshold", "INTEGER"},
+	{"RouteRule", "MonitorRecoveryThreshold", "INTEGER"},
+	{"RouteDestination", "IsMonitorEnabled", "INTEGER"},
+	{"RouteDestination", "MonitorPort", "INTEGER"},
+	{"RouteDestination", "MonitorIntervalSeconds", "REAL"},
+	{"RouteDestination", "MonitorTimeoutSeconds", "REAL"},
+	{"RouteDestination", "MonitorFailureThreshold", "INTEGER"},
+	{"RouteDestination", "MonitorRecoveryThreshold", "INTEGER"},
+	// NOT NULL with a default is safe to add to an existing table: SQLite
+	// fills the existing rows with it.
+	{"RouteDestination", "IsSuppressed", "INTEGER NOT NULL DEFAULT 0"},
 }
 
 // applyColumnAdditions adds every column in columnAdditions that is missing

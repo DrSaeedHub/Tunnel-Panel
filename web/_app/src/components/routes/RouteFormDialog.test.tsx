@@ -74,7 +74,9 @@ describe('formFromRoute', () => {
 
     // The primary destination is repeated by the backend, so only the tail is
     // shown as extra rows.
-    expect(seeded.destinations).toEqual([{ address: '198.51.100.21', port: '9302', weight: '3' }])
+    expect(seeded.destinations).toEqual([
+      { address: '198.51.100.21', port: '9302', weight: '3', monitor_port: '' },
+    ])
     expect(seeded.allowed_sources).toEqual(['203.0.113.0/24'])
     // The primary's own weight rides along with it. It used to be sent as 1
     // whatever it was stored as, so a weighted rule could not weight the

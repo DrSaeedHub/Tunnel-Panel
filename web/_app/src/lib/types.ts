@@ -1028,6 +1028,8 @@ export interface BackupImportResponse {
 export const RouteProtocol = { TCP: 10, UDP: 20, Both: 30 } as const
 export const NatMode = { Masquerade: 10, Snat: 20, None: 30 } as const
 export const LoadBalanceMode = { None: 10, RoundRobin: 20, SourceHash: 30, Weighted: 40 } as const
+/** What a rule does about a destination that stops answering. */
+export const RouteMonitorMode = { Report: 10, Failover: 20 } as const
 export const AddressFamily = { IPv4: 10, IPv6: 20 } as const
 
 /**
@@ -1054,6 +1056,17 @@ export interface RouteDestination {
   weight: number
   is_enabled: boolean
   sort_order: number
+
+  /** Null means whatever the rule says, which means whatever the panel says. */
+  is_monitor_enabled: boolean | null
+  /** What to knock on, when that is not where the traffic goes. */
+  monitor_port: number | null
+  monitor_interval_seconds: number | null
+  monitor_timeout_seconds: number | null
+  monitor_failure_threshold: number | null
+  monitor_recovery_threshold: number | null
+  /** The monitor took this destination out of the rotation; the operator did not. */
+  is_suppressed: boolean
   created_date: string
   updated_date: string
   is_deleted: boolean
@@ -1108,6 +1121,14 @@ export interface RouteRule {
   sort_order: number
   tags_json: string | null
 
+  /** Monitoring, as this rule's policy. Null on any of them means inherit. */
+  is_monitor_enabled: boolean | null
+  monitor_mode_id: number | null
+  monitor_interval_seconds: number | null
+  monitor_timeout_seconds: number | null
+  monitor_failure_threshold: number | null
+  monitor_recovery_threshold: number | null
+
   created_date: string
   updated_date: string
   is_deleted: boolean
@@ -1128,6 +1149,40 @@ export interface RouteTunnelHealth {
   monitor_state?: string
   peer_address?: string
   addresses?: string[]
+}
+
+/**
+ * What the monitor has found about one destination.
+ *
+ * Separate from the traffic figures on purpose: traffic says a destination
+ * took no connections, which is also what a destination nobody is using looks
+ * like. A probe says whether anything is listening.
+ */
+export interface RouteDestinationHealth {
+  route_destination_id: number
+  route_rule_id: number
+  address: string
+  port: number
+  monitor_port: number
+  state: 'Unknown' | 'Up' | 'Down' | 'Disabled'
+  monitor_state_id: number
+  since?: string
+  detail?: string
+  last_probe_at?: string
+  latency_ms?: number | null
+  consecutive_failures: number
+  consecutive_successes: number
+  /** The monitor has taken it out of the rotation, which only failover does. */
+  is_suppressed: boolean
+  mode: 'report' | 'failover'
+  interval_seconds: number
+}
+
+export interface RouteDestinationHealthResponse {
+  route_rule_id: number
+  destinations: RouteDestinationHealth[]
+  /** False on a panel built without the monitor, where nothing is probed. */
+  monitoring: boolean
 }
 
 export interface RouteHealth {
@@ -1528,6 +1583,9 @@ export interface RouteDestinationInput {
   weight?: number
   is_enabled: boolean
   sort_order?: number
+  /** Null clears an override and goes back to inheriting the rule's. */
+  is_monitor_enabled?: boolean | null
+  monitor_port?: number | null
 }
 
 export interface RouteAllowedSourceInput {

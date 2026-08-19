@@ -1086,6 +1086,10 @@ export default {
       30: 'Source hash',
       40: 'Weighted',
     },
+    monitorMode: {
+      10: 'Report it',
+      20: 'Take it out of the rotation',
+    },
     flowLabel: 'Traffic arriving at {{bind}} is relayed to {{destination}}',
     emptyTitle: 'No forwarding rules',
     emptyBody:
@@ -1146,6 +1150,8 @@ export default {
   },
 
   routeForm: {
+    sectionMonitoring: 'Monitoring — is anything listening',
+    inherited: 'Inherited',
     createTitle: 'New forwarding rule',
     editTitle: 'Edit {{name}}',
     submitCreate: 'Create rule',
@@ -1172,6 +1178,13 @@ export default {
       destinationAddress: 'Destination address',
       destinationPort: 'Destination port',
       port: 'Port',
+      monitorEnabled: 'Monitor the destinations',
+      monitorMode: 'When a destination stops answering',
+      monitorInterval: 'Probe every (seconds)',
+      monitorTimeout: 'Give up after (seconds)',
+      monitorFailures: 'Failures before down',
+      monitorRecoveries: 'Successes before up',
+      monitorPort: 'Probe port',
       destinationPortRangeEnd: 'Range end',
       snatAddress: 'Source address to use',
       loadBalance: 'Distribution',
@@ -1211,6 +1224,16 @@ export default {
         'Restricts who may use the relay, as addresses or CIDRs. Empty means any source that can reach the bind address.',
       destinations:
         'How new connections are spread across the destinations above. Source hash keeps a given client on a given destination, which is what a service holding per-client state needs; round robin does not.',
+      monitorEnabled:
+        'Knock on each destination on a schedule, so a backend that stopped listening is named rather than worked out from a share that went to zero. The probe is one TCP connect per interval and carries no data.',
+      monitorMode: {
+        10: 'The destination is marked down and keeps taking its share. Nothing about the installed rules changes.',
+        20: 'The destination is taken out of the rules until it answers again. The panel never takes out the last one: a rule with nowhere to send traffic is harder to diagnose than one sending it somewhere broken.',
+      },
+      monitorRecoveries:
+        'Raising this is what stops a backend that keeps flapping from rebuilding the ruleset every minute.',
+      monitorUdp:
+        'The probe is a TCP connect whatever the rule forwards, because silence from a UDP port is not an answer either way. Give each destination a probe port that something is listening on, or leave monitoring off.',
       rangeNotBalanced:
         'A port range cannot be spread across destinations, because each one takes a single port. Remove the extra destinations to forward a range.',
       snatAddress: 'Must be an address that exists on this server.',
@@ -1348,6 +1371,10 @@ export default {
         40: 'Each new connection goes to the next destination in turn, with a heavier destination appearing more often in the rotation.',
       },
       order: 'Position {{index}}',
+      outOfRotation: 'Out of the rotation',
+      down: 'The last probe did not get an answer: {{detail}}',
+      downAndOut:
+        'The last probe did not get an answer: {{detail}} This rule fails over, so the destination has been taken out of the rules until it answers again.',
       weight: 'Weight {{weight}}',
       expected: 'Expected {{percent}}',
       connections: '{{count}} connection open',

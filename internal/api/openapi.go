@@ -93,7 +93,7 @@ var routeDescriptions = map[string]routeSummary{
 		"The port is bind-tested and checked against the protected ports before anything is stored. " +
 			"The response carries the new URL and is sent before the restart, because the connection " +
 			"asking the question is the one the restart breaks.", "system"},
-	"GET /api/v1/system/health":       {"Component health", "Unauthenticated and reachable before setup, for the installer's readiness poll.", "system"},
+	"GET /api/v1/system/health": {"Component health", "Unauthenticated and reachable before setup, for the installer's readiness poll.", "system"},
 
 	"GET /api/v1/system/update": {"Whether a newer panel is being served",
 		"Answers from a cached lookup and refreshes in the background when it has aged past the " +
@@ -138,6 +138,7 @@ var routeDescriptions = map[string]routeSummary{
 	"POST /api/v1/routes/diagnostics/test":         {"Test a destination before creating a rule", "The pre-flight: takes an address and a port, so the answer arrives before the rule exists.", "diagnostics"},
 	"POST /api/v1/routes/{id}/diagnostics/test":    {"Test a rule's destination", "TCP connect, or a UDP probe whose silence is reported as proving nothing rather than as unreachable.", "diagnostics"},
 	"POST /api/v1/routes/{id}/diagnostics/analyze": {"Diagnose a forwarding rule", "Returns a specific verdict with the evidence it rests on, including the state of the tunnel the rule relays over.", "diagnostics"},
+	"GET /api/v1/routes/{id}/destinations/health":  {"How each destination of a rule is answering", "The monitor's verdict per destination: up, down or not monitored, how long it has been that way, and whether a rule that fails over has taken it out of the rotation.", "diagnostics"},
 	"GET /api/v1/routes/{id}/connections":          {"Live connections through a rule", "From connection tracking: source, state, age and bytes, with a breakdown of where the connections actually went for a rule that has more than one destination. An empty list from an unreadable table says so rather than reporting that nobody is using it.", "diagnostics"},
 	"GET /api/v1/routes/{id}/counters":             {"A rule's hit counters", "Read from the accounting rules in the filter hooks, never from a nat chain: a nat hook sees only the first packet of a connection. A rule that also relays traffic this server originates is counted on the output and input hooks too, since such traffic is never forwarded.", "diagnostics"},
 

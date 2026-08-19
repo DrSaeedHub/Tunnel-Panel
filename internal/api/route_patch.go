@@ -53,6 +53,16 @@ type routePatch struct {
 	IsEnabled *bool  `json:"is_enabled,omitempty"`
 	SortOrder *int64 `json:"sort_order,omitempty"`
 
+	// Monitoring. Every one is nullable rather than merely optional,
+	// because clearing one is an instruction of its own: null means "go
+	// back to inheriting this", which is not the same as not saying it.
+	IsMonitorEnabled         nullableBool  `json:"is_monitor_enabled,omitempty"`
+	MonitorModeID            nullableInt   `json:"monitor_mode_id,omitempty"`
+	MonitorIntervalSeconds   nullableFloat `json:"monitor_interval_seconds,omitempty"`
+	MonitorTimeoutSeconds    nullableFloat `json:"monitor_timeout_seconds,omitempty"`
+	MonitorFailureThreshold  nullableInt   `json:"monitor_failure_threshold,omitempty"`
+	MonitorRecoveryThreshold nullableInt   `json:"monitor_recovery_threshold,omitempty"`
+
 	Destinations   *[]validate.RouteDestinationInput   `json:"destinations,omitempty"`
 	AllowedSources *[]validate.RouteAllowedSourceInput `json:"allowed_sources,omitempty"`
 
@@ -122,6 +132,19 @@ func (p routePatch) applyTo(in *validate.RouteInput) {
 	setBool(&in.IsEnabled, p.IsEnabled)
 	setInt64(&in.SortOrder, p.SortOrder)
 	setBool(&in.Force, p.Force)
+
+	if p.IsMonitorEnabled.Set {
+		in.IsMonitorEnabled = p.IsMonitorEnabled.Value
+	}
+	setNullable(&in.MonitorModeID, p.MonitorModeID)
+	setNullable(&in.MonitorFailureThreshold, p.MonitorFailureThreshold)
+	setNullable(&in.MonitorRecoveryThreshold, p.MonitorRecoveryThreshold)
+	if p.MonitorIntervalSeconds.Set {
+		in.MonitorIntervalSeconds = p.MonitorIntervalSeconds.Value
+	}
+	if p.MonitorTimeoutSeconds.Set {
+		in.MonitorTimeoutSeconds = p.MonitorTimeoutSeconds.Value
+	}
 
 	if p.Destinations != nil {
 		in.Destinations = *p.Destinations

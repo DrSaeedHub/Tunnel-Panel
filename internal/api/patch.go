@@ -38,6 +38,27 @@ func (n nullableInt) MarshalJSON() ([]byte, error) { return json.Marshal(n.Value
 // monitoring overrides need it because null is meaningful there too: it is how
 // a tunnel says "inherit the global", which is a different instruction from not
 // mentioning the field at all.
+// nullableBool is a flag that can be sent, sent as null, or left out. The three
+// mean set it, go back to inheriting it, and change nothing.
+type nullableBool struct {
+	Set   bool
+	Value *bool
+}
+
+func (n *nullableBool) UnmarshalJSON(raw []byte) error {
+	n.Set = true
+	if string(raw) == "null" {
+		n.Value = nil
+		return nil
+	}
+	var v bool
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return err
+	}
+	n.Value = &v
+	return nil
+}
+
 type nullableFloat struct {
 	Set   bool
 	Value *float64

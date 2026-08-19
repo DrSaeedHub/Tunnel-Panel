@@ -264,10 +264,18 @@ var entityDDL = []string{
 		SortOrder INTEGER NOT NULL DEFAULT 0,
 		TagsJson  TEXT,
 
+		IsMonitorEnabled         INTEGER,
+		MonitorModeID            INTEGER,
+		MonitorIntervalSeconds   REAL,
+		MonitorTimeoutSeconds    REAL,
+		MonitorFailureThreshold  INTEGER,
+		MonitorRecoveryThreshold INTEGER,
+
 		CreatedDate TEXT    NOT NULL,
 		UpdatedDate TEXT    NOT NULL,
 		IsDeleted   INTEGER NOT NULL DEFAULT 0,
 
+		FOREIGN KEY (MonitorModeID)     REFERENCES RouteMonitorMode (RouteMonitorModeID),
 		FOREIGN KEY (RouteProtocolID)   REFERENCES RouteProtocol (RouteProtocolID),
 		FOREIGN KEY (AddressFamilyID)   REFERENCES AddressFamily (AddressFamilyID),
 		FOREIGN KEY (NatModeID)         REFERENCES NatMode (NatModeID),
@@ -303,6 +311,15 @@ var entityDDL = []string{
 		Weight             INTEGER NOT NULL DEFAULT 1,
 		IsEnabled          INTEGER NOT NULL DEFAULT 1,
 		SortOrder          INTEGER NOT NULL DEFAULT 0,
+
+		IsMonitorEnabled         INTEGER,
+		MonitorPort              INTEGER,
+		MonitorIntervalSeconds   REAL,
+		MonitorTimeoutSeconds    REAL,
+		MonitorFailureThreshold  INTEGER,
+		MonitorRecoveryThreshold INTEGER,
+		IsSuppressed             INTEGER NOT NULL DEFAULT 0,
+
 		CreatedDate        TEXT    NOT NULL,
 		UpdatedDate        TEXT    NOT NULL,
 		IsDeleted          INTEGER NOT NULL DEFAULT 0,

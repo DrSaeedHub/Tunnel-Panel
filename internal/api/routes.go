@@ -713,6 +713,28 @@ func (s *Server) handleRouteConnections(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, list)
 }
 
+// handleRouteDestinationHealth reports what the monitor has found about each of
+// a rule's destinations.
+//
+// A panel with no monitor answers with an empty list rather than a 503: the
+// question "what does monitoring say" has an honest answer on an installation
+// that does no monitoring, and it is "nothing".
+func (s *Server) handleRouteDestinationHealth(w http.ResponseWriter, r *http.Request) {
+	rec, ok := s.routeFromPath(w, r)
+	if !ok {
+		return
+	}
+	health := []route.DestinationHealth{}
+	if s.routeMonitor != nil {
+		health = s.routeMonitor.Health(rec.RouteRuleID)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"route_rule_id": rec.RouteRuleID,
+		"destinations":  health,
+		"monitoring":    s.routeMonitor != nil,
+	})
+}
+
 func (s *Server) handleRouteCounters(w http.ResponseWriter, r *http.Request) {
 	rec, ok := s.routeFromPath(w, r)
 	if !ok {

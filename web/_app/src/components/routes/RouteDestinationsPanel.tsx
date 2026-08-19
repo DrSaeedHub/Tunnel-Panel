@@ -11,6 +11,8 @@ import {
   type RouteDestination,
   type RouteDestinationLoad,
   type RelayTraffic,
+  type RouteDestinationHealth,
+  type RouteDestinationHealthResponse,
   type RouteReachabilityResult,
   type RouteRule,
 } from '@/lib/types'
@@ -62,6 +64,25 @@ export function RouteDestinationsPanel({
     queryFn: () => api.get<RouteConnectionList>(`/routes/${route.route_rule_id}/connections`),
     refetchInterval: 10_000,
   })
+
+  // What the monitor has found, which is a different question from what the
+  // traffic shows: a destination with no connections may be dead or may
+  // simply be next in the rotation.
+  const healthQuery = useQuery({
+    queryKey: ['routes', route.route_rule_id, 'destinations', 'health'],
+    queryFn: () =>
+      api.get<RouteDestinationHealthResponse>(
+        `/routes/${route.route_rule_id}/destinations/health`,
+      ),
+    refetchInterval: 10_000,
+  })
+  const healthByAddress = useMemo(() => {
+    const map = new Map<string, RouteDestinationHealth>()
+    for (const entry of healthQuery.data?.destinations ?? []) {
+      map.set(`${entry.address}:${entry.port}`, entry)
+    }
+    return map
+  }, [healthQuery.data])
 
   const rows = useMemo(
     () => joinDestinations(route, query.data?.by_destination ?? []),
@@ -132,6 +153,7 @@ export function RouteDestinationsPanel({
                   index={index}
                   route={route}
                   live={live}
+                  health={healthByAddress.get(`${row.address}:${row.port}`)}
                   counting={counting}
                   rated={rateSeconds > 0}
                   balanced={balanced}
@@ -216,6 +238,7 @@ function DestinationRow({
   index,
   route,
   live,
+  health,
   counting,
   rated,
   balanced,
@@ -227,6 +250,8 @@ function DestinationRow({
   index: number
   route: RouteRule
   live: boolean
+  /** The monitor's verdict, when this rule is monitored at all. */
+  health?: RouteDestinationHealth
   /** Whether the kernel is counting bytes, without which volume is not zero — it is unknown. */
   counting: boolean
   /** Whether there have been two readings to measure a rate between. */
@@ -252,11 +277,26 @@ function DestinationRow({
         <Technical className="text-sm font-medium">
           {endpointLabel(row.address, row.port, row.portRangeEnd)}
         </Technical>
+        {/* The monitor's verdict leads the badges: it is the one that says
+            whether anything is listening, rather than whether anything
+            happens to be connected. */}
+        {health && health.state !== 'Disabled' ? (
+          <Badge
+            tone={health.state === 'Up' ? 'ok' : health.state === 'Down' ? 'danger' : 'neutral'}
+          >
+            {t(`monitor.state.${health.state}`)}
+          </Badge>
+        ) : null}
+        {health?.is_suppressed ? (
+          <Badge tone="warn">{t('routeDetail.destinations.outOfRotation')}</Badge>
+        ) : null}
         {!row.enabled ? <Badge tone="neutral">{t('routeDetail.destinations.disabled')}</Badge> : null}
         {!row.configured ? (
           <Badge tone="warn">{t('routeDetail.destinations.unconfigured')}</Badge>
         ) : null}
-        {idle ? <Badge tone="warn">{t('routeDetail.destinations.idle')}</Badge> : null}
+        {idle && health?.state !== 'Up' ? (
+          <Badge tone="warn">{t('routeDetail.destinations.idle')}</Badge>
+        ) : null}
         <Button
           type="button"
           variant="secondary"
@@ -344,7 +384,17 @@ function DestinationRow({
         </p>
       ) : null}
 
-      {idle ? (
+      {/* The probe's own words when it failed, which is the difference
+          between a refused connection and a timeout. */}
+      {health && health.state === 'Down' && health.detail ? (
+        <p className="mt-1.5 text-2xs text-danger">
+          {health.is_suppressed
+            ? t('routeDetail.destinations.downAndOut', { detail: health.detail })
+            : t('routeDetail.destinations.down', { detail: health.detail })}
+        </p>
+      ) : null}
+
+      {idle && !health ? (
         <p className="mt-1.5 text-2xs text-warn">{t('routeDetail.destinations.idleHint')}</p>
       ) : null}
       {!row.configured ? (

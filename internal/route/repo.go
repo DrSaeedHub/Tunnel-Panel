@@ -25,7 +25,10 @@ const routeColumns = `
 	IsClampMssToPmtu, IsIncludeLocalOriginated, IsLoggingEnabled, FwMark,
 	MaxConnectionsPerSource, ConnectionRateLimit,
 	IsEnabled, ApplyStatusID, LastAppliedDate, LastApplyError,
-	SortOrder, TagsJson, CreatedDate, UpdatedDate, IsDeleted`
+	SortOrder, TagsJson,
+	IsMonitorEnabled, MonitorModeID, MonitorIntervalSeconds, MonitorTimeoutSeconds,
+	MonitorFailureThreshold, MonitorRecoveryThreshold,
+	CreatedDate, UpdatedDate, IsDeleted`
 
 // Repo is the database view of forwarding rules, their destinations and their
 // allowlists. It satisfies validate.RouteRepository through ForValidation.
@@ -80,6 +83,9 @@ func scanRoute(scan func(...any) error) (model.RouteRule, error) {
 		isClampMss, isIncludeLocal, isLogging            int64
 		isEnabled, isDeleted                             int64
 		description                                      string
+		isMonitorEnabled                                 sql.NullBool
+		monitorMode, failureThreshold, recoveryThreshold sql.NullInt64
+		monitorInterval, monitorTimeout                  sql.NullFloat64
 	)
 
 	err := scan(
@@ -90,7 +96,10 @@ func scanRoute(scan func(...any) error) (model.RouteRule, error) {
 		&isClampMss, &isIncludeLocal, &isLogging, &fwMark,
 		&maxConnections, &connectionRate,
 		&isEnabled, &rule.ApplyStatusID, &lastAppliedDate, &lastApplyError,
-		&rule.SortOrder, &tagsJson, &rule.CreatedDate, &rule.UpdatedDate, &isDeleted,
+		&rule.SortOrder, &tagsJson,
+		&isMonitorEnabled, &monitorMode, &monitorInterval, &monitorTimeout,
+		&failureThreshold, &recoveryThreshold,
+		&rule.CreatedDate, &rule.UpdatedDate, &isDeleted,
 	)
 	if err != nil {
 		return rule, err
@@ -112,6 +121,12 @@ func scanRoute(scan func(...any) error) (model.RouteRule, error) {
 	rule.LastAppliedDate = nullString(lastAppliedDate)
 	rule.LastApplyError = nullString(lastApplyError)
 	rule.TagsJson = nullString(tagsJson)
+	rule.IsMonitorEnabled = nullBool(isMonitorEnabled)
+	rule.MonitorModeID = nullInt(monitorMode)
+	rule.MonitorIntervalSeconds = nullFloat(monitorInterval)
+	rule.MonitorTimeoutSeconds = nullFloat(monitorTimeout)
+	rule.MonitorFailureThreshold = nullInt(failureThreshold)
+	rule.MonitorRecoveryThreshold = nullInt(recoveryThreshold)
 	rule.IsDeleted = isDeleted != 0
 	return rule, nil
 }
@@ -197,21 +212,35 @@ func (r *Repo) ByTunnel(ctx context.Context, tunnelID int64) ([]Record, error) {
 
 const destinationColumns = `
 	RouteDestinationID, RouteRuleID, Address, Port, PortRangeEnd, Weight, IsEnabled, SortOrder,
+	IsMonitorEnabled, MonitorPort, MonitorIntervalSeconds, MonitorTimeoutSeconds,
+	MonitorFailureThreshold, MonitorRecoveryThreshold, IsSuppressed,
 	CreatedDate, UpdatedDate, IsDeleted`
 
 func scanDestinations(rows *sql.Rows) ([]model.RouteDestination, error) {
 	var out []model.RouteDestination
 	for rows.Next() {
 		var d model.RouteDestination
-		var portRangeEnd sql.NullInt64
-		var isEnabled, isDeleted int64
+		var portRangeEnd, monitorPort sql.NullInt64
+		var failureThreshold, recoveryThreshold sql.NullInt64
+		var monitorInterval, monitorTimeout sql.NullFloat64
+		var isMonitorEnabled sql.NullBool
+		var isEnabled, isSuppressed, isDeleted int64
 		if err := rows.Scan(&d.RouteDestinationID, &d.RouteRuleID, &d.Address, &d.Port,
 			&portRangeEnd, &d.Weight, &isEnabled, &d.SortOrder,
+			&isMonitorEnabled, &monitorPort, &monitorInterval, &monitorTimeout,
+			&failureThreshold, &recoveryThreshold, &isSuppressed,
 			&d.CreatedDate, &d.UpdatedDate, &isDeleted); err != nil {
 			return nil, fmt.Errorf("reading a destination row: %w", err)
 		}
 		d.PortRangeEnd = nullInt(portRangeEnd)
 		d.IsEnabled = isEnabled != 0
+		d.IsMonitorEnabled = nullBool(isMonitorEnabled)
+		d.MonitorPort = nullInt(monitorPort)
+		d.MonitorIntervalSeconds = nullFloat(monitorInterval)
+		d.MonitorTimeoutSeconds = nullFloat(monitorTimeout)
+		d.MonitorFailureThreshold = nullInt(failureThreshold)
+		d.MonitorRecoveryThreshold = nullInt(recoveryThreshold)
+		d.IsSuppressed = isSuppressed != 0
 		d.IsDeleted = isDeleted != 0
 		out = append(out, d)
 	}
@@ -339,8 +368,11 @@ func (r *Repo) Insert(ctx context.Context, in validate.RouteInput) (int64, error
 			 NatModeID, SnatAddress, LoadBalanceModeID, TunnelID,
 			 IsClampMssToPmtu, IsIncludeLocalOriginated, IsLoggingEnabled, FwMark,
 			 MaxConnectionsPerSource, ConnectionRateLimit,
+			 IsMonitorEnabled, MonitorModeID, MonitorIntervalSeconds, MonitorTimeoutSeconds,
+			 MonitorFailureThreshold, MonitorRecoveryThreshold,
 			 IsEnabled, ApplyStatusID, SortOrder, CreatedDate, UpdatedDate, IsDeleted)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, ?, ?, ?, ?, 0)`,
 		rec.RouteRuleTitle, rec.Description, rec.RouteProtocolID, rec.AddressFamilyID,
 		rec.BindAddress, rec.BindPort, rec.BindPortRangeEnd, rec.BindInterface,
 		rec.DestinationAddress, rec.DestinationPort, rec.DestinationPortRangeEnd,
@@ -348,6 +380,9 @@ func (r *Repo) Insert(ctx context.Context, in validate.RouteInput) (int64, error
 		boolToInt(rec.IsClampMssToPmtu), boolToInt(rec.IsIncludeLocalOriginated),
 		boolToInt(rec.IsLoggingEnabled), rec.FwMark,
 		rec.MaxConnectionsPerSource, rec.ConnectionRateLimit,
+		boolPtrToInt(rec.IsMonitorEnabled), rec.MonitorModeID,
+		rec.MonitorIntervalSeconds, rec.MonitorTimeoutSeconds,
+		rec.MonitorFailureThreshold, rec.MonitorRecoveryThreshold,
 		boolToInt(rec.IsEnabled), model.ApplyStatusPending, nextSortOrder(ctx, tx, rec.SortOrder),
 		now, now)
 	if err != nil {
@@ -402,6 +437,9 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.RouteInput) err
 			NatModeID = ?, SnatAddress = ?, LoadBalanceModeID = ?, TunnelID = ?,
 			IsClampMssToPmtu = ?, IsIncludeLocalOriginated = ?, IsLoggingEnabled = ?, FwMark = ?,
 			MaxConnectionsPerSource = ?, ConnectionRateLimit = ?,
+			IsMonitorEnabled = ?, MonitorModeID = ?,
+			MonitorIntervalSeconds = ?, MonitorTimeoutSeconds = ?,
+			MonitorFailureThreshold = ?, MonitorRecoveryThreshold = ?,
 			IsEnabled = ?, SortOrder = ?, UpdatedDate = ?
 		WHERE RouteRuleID = ? AND IsDeleted = 0`,
 		rec.RouteRuleTitle, rec.Description, rec.RouteProtocolID, rec.AddressFamilyID,
@@ -411,6 +449,9 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.RouteInput) err
 		boolToInt(rec.IsClampMssToPmtu), boolToInt(rec.IsIncludeLocalOriginated),
 		boolToInt(rec.IsLoggingEnabled), rec.FwMark,
 		rec.MaxConnectionsPerSource, rec.ConnectionRateLimit,
+		boolPtrToInt(rec.IsMonitorEnabled), rec.MonitorModeID,
+		rec.MonitorIntervalSeconds, rec.MonitorTimeoutSeconds,
+		rec.MonitorFailureThreshold, rec.MonitorRecoveryThreshold,
 		boolToInt(rec.IsEnabled), rec.SortOrder, now, id); err != nil {
 		return fmt.Errorf("updating forwarding rule %d: %w", id, err)
 	}
@@ -439,9 +480,14 @@ func replaceChildren(ctx context.Context, tx *sql.Tx, id int64, rec Record, now 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO RouteDestination
 				(RouteRuleID, Address, Port, PortRangeEnd, Weight, IsEnabled, SortOrder,
+				 IsMonitorEnabled, MonitorPort, MonitorIntervalSeconds, MonitorTimeoutSeconds,
+				 MonitorFailureThreshold, MonitorRecoveryThreshold, IsSuppressed,
 				 CreatedDate, UpdatedDate, IsDeleted)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)`,
 			id, d.Address, d.Port, d.PortRangeEnd, d.Weight, boolToInt(d.IsEnabled), d.SortOrder,
+			boolPtrToInt(d.IsMonitorEnabled), d.MonitorPort,
+			d.MonitorIntervalSeconds, d.MonitorTimeoutSeconds,
+			d.MonitorFailureThreshold, d.MonitorRecoveryThreshold,
 			now, now); err != nil {
 			return fmt.Errorf("storing a destination of rule %d: %w", id, err)
 		}
@@ -459,6 +505,24 @@ func replaceChildren(ctx context.Context, tx *sql.Tx, id int64, rec Record, now 
 			id, s.Cidr, s.Description, now, now); err != nil {
 			return fmt.Errorf("storing an allowlist entry of rule %d: %w", id, err)
 		}
+	}
+	return nil
+}
+
+// SetDestinationSuppressed records that the monitor has taken a destination out
+// of the rotation, or put it back.
+//
+// It is deliberately the narrowest write in this file. The monitor makes it
+// without an operator asking, so it touches one column of one row and never
+// IsEnabled: a destination somebody switched off by hand must not come back
+// because a probe succeeded.
+func (r *Repo) SetDestinationSuppressed(ctx context.Context, destinationID int64, suppressed bool) error {
+	_, err := r.db.Write.ExecContext(ctx, `
+		UPDATE RouteDestination SET IsSuppressed = ?, UpdatedDate = ?
+		WHERE RouteDestinationID = ? AND IsDeleted = 0`,
+		boolToInt(suppressed), model.NowUTC(), destinationID)
+	if err != nil {
+		return fmt.Errorf("recording the rotation state of destination %d: %w", destinationID, err)
 	}
 	return nil
 }
@@ -596,6 +660,31 @@ func nullInt(v sql.NullInt64) *int64 {
 	}
 	n := v.Int64
 	return &n
+}
+
+// boolPtrToInt renders an optional flag for SQLite: nil stays NULL, which is
+// what "inherit whatever the rule says" is stored as.
+func boolPtrToInt(v *bool) any {
+	if v == nil {
+		return nil
+	}
+	return boolToInt(*v)
+}
+
+func nullBool(v sql.NullBool) *bool {
+	if !v.Valid {
+		return nil
+	}
+	b := v.Bool
+	return &b
+}
+
+func nullFloat(v sql.NullFloat64) *float64 {
+	if !v.Valid {
+		return nil
+	}
+	f := v.Float64
+	return &f
 }
 
 func nullString(v sql.NullString) *string {

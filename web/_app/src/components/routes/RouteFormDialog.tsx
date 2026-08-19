@@ -7,6 +7,7 @@ import { ApiError, api } from '@/lib/api'
 import {
   LoadBalanceMode,
   NatMode,
+  RouteMonitorMode,
   RouteProtocol,
   type HostInterface,
   type InterfacesResponse,
@@ -58,7 +59,23 @@ interface FormState {
   is_enabled: boolean
   /** The weight of the primary destination, which leads the list. */
   destination_weight: string
-  destinations: { address: string; port: string; weight: string }[]
+  /** The primary destination's own monitor port, when it needs one. */
+  destination_monitor_port: string
+  destinations: {
+    address: string
+    port: string
+    weight: string
+    monitor_port: string
+  }[]
+
+  // Monitoring. Empty means inherit, which is how a rule that has never
+  // been given a policy keeps following the panel's.
+  is_monitor_enabled: boolean
+  monitor_mode_id: number
+  monitor_interval_seconds: string
+  monitor_timeout_seconds: string
+  monitor_failure_threshold: string
+  monitor_recovery_threshold: string
   allowed_sources: string[]
 }
 
@@ -125,7 +142,7 @@ export function RouteFormDialog({
     }
     if (form) return
     if (route) {
-      setForm(formFromRoute(route))
+      setForm(formFromRoute(route, settingsQuery.data?.settings['routes.monitor_enabled'] === true))
       setDestinationMode(route.tunnel_id ? 'tunnel' : 'manual')
     } else if (settingsQuery.isSuccess) {
       setForm(defaultsFrom(settingsQuery.data.settings))
@@ -426,7 +443,99 @@ export function RouteFormDialog({
             />
           </section>
 
-          {/* 4 — NAT mode, in plain language rather than raw terminology */}
+          {/* 4 — Monitoring the destinations above */}
+          <section className="space-y-3">
+            <h3 className="display text-xs font-bold text-muted-foreground">
+              {t('routeForm.sectionMonitoring')}
+            </h3>
+            <SwitchField
+              label={t('routeForm.fields.monitorEnabled')}
+              description={t('routeForm.help.monitorEnabled')}
+              checked={form.is_monitor_enabled}
+              onCheckedChange={(value) => set('is_monitor_enabled', value)}
+            />
+
+            {form.is_monitor_enabled ? (
+              <>
+                <Field
+                  label={t('routeForm.fields.monitorMode')}
+                  description={t(`routeForm.help.monitorMode.${form.monitor_mode_id}`)}
+                >
+                  {(props) => (
+                    <Select
+                      id={props.id}
+                      value={String(form.monitor_mode_id)}
+                      onValueChange={(value) => set('monitor_mode_id', Number(value))}
+                      options={Object.values(RouteMonitorMode).map((id) => ({
+                        value: String(id),
+                        label: t(`routes.monitorMode.${id}`),
+                      }))}
+                    />
+                  )}
+                </Field>
+
+                {/* Every one of these is optional: an empty box inherits the
+                    panel-wide setting, which is what most rules want. */}
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <Field label={t('routeForm.fields.monitorInterval')}>
+                    {(props) => (
+                      <TechnicalInput
+                        {...props}
+                        inputMode="numeric"
+                        value={form.monitor_interval_seconds}
+                        onChange={(event) => set('monitor_interval_seconds', event.target.value)}
+                        placeholder={t('routeForm.inherited')}
+                      />
+                    )}
+                  </Field>
+                  <Field label={t('routeForm.fields.monitorTimeout')}>
+                    {(props) => (
+                      <TechnicalInput
+                        {...props}
+                        inputMode="numeric"
+                        value={form.monitor_timeout_seconds}
+                        onChange={(event) => set('monitor_timeout_seconds', event.target.value)}
+                        placeholder={t('routeForm.inherited')}
+                      />
+                    )}
+                  </Field>
+                  <Field label={t('routeForm.fields.monitorFailures')}>
+                    {(props) => (
+                      <TechnicalInput
+                        {...props}
+                        inputMode="numeric"
+                        value={form.monitor_failure_threshold}
+                        onChange={(event) => set('monitor_failure_threshold', event.target.value)}
+                        placeholder={t('routeForm.inherited')}
+                      />
+                    )}
+                  </Field>
+                  <Field
+                    label={t('routeForm.fields.monitorRecoveries')}
+                    description={t('routeForm.help.monitorRecoveries')}
+                  >
+                    {(props) => (
+                      <TechnicalInput
+                        {...props}
+                        inputMode="numeric"
+                        value={form.monitor_recovery_threshold}
+                        onChange={(event) => set('monitor_recovery_threshold', event.target.value)}
+                        placeholder={t('routeForm.inherited')}
+                      />
+                    )}
+                  </Field>
+                </div>
+
+                {form.route_protocol_id !== RouteProtocol.TCP ? (
+                  <p className="text-2xs text-muted-foreground">
+                    {t('routeForm.help.monitorUdp')}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+          </section>
+
+          {/* 5 — NAT mode, in plain language rather than raw terminology */}
           <section className="space-y-3">
             <h3 className="display text-xs font-bold text-muted-foreground">
               {t('routeForm.sectionNat')}
@@ -878,6 +987,9 @@ function DestinationList({
           port={form.destination_port}
           weight={form.destination_weight}
           weighted={weighted}
+          monitored={form.is_monitor_enabled}
+          monitorPort={form.destination_monitor_port}
+          onMonitorPortChange={(value) => set('destination_monitor_port', value)}
           protocol={form.route_protocol_id}
           digits={digits}
           labelled
@@ -897,6 +1009,9 @@ function DestinationList({
             port={destination.port}
             weight={destination.weight}
             weighted={weighted}
+            monitored={form.is_monitor_enabled}
+            monitorPort={destination.monitor_port}
+            onMonitorPortChange={(value) => update(index, { monitor_port: value })}
             protocol={form.route_protocol_id}
             digits={digits}
             onAddressChange={(value) => update(index, { address: value })}
@@ -924,7 +1039,7 @@ function DestinationList({
           variant="secondary"
           size="sm"
           onClick={() => {
-            set('destinations', [...extras, { address: '', port: '', weight: '1' }])
+            set('destinations', [...extras, { address: '', port: '', weight: '1', monitor_port: '' }])
             // A second destination is distributed whatever the mode says:
             // the ruleset falls back to round robin rather than sending
             // everything to the first. Saying so beats leaving a control
@@ -982,6 +1097,9 @@ function DestinationRow({
   port,
   weight,
   weighted,
+  monitored,
+  monitorPort,
+  onMonitorPortChange,
   protocol,
   digits,
   labelled,
@@ -999,6 +1117,10 @@ function DestinationRow({
   port: string
   weight: string
   weighted: boolean
+  /** Whether the rule monitors at all, which is what the knock port is for. */
+  monitored: boolean
+  monitorPort: string
+  onMonitorPortChange: (value: string) => void
   protocol: number
   digits: 'latin' | 'persian'
   labelled?: boolean
@@ -1096,6 +1218,32 @@ function DestinationRow({
                 onChange={(event) => onWeightChange(event.target.value)}
                 placeholder="1"
                 aria-label={weightLabel}
+              />
+            )}
+          </div>
+        ) : null}
+
+        {monitored ? (
+          <div className="w-24 shrink-0">
+            {labelled ? (
+              <Field label={t('routeForm.fields.monitorPort')}>
+                {(props) => (
+                  <TechnicalInput
+                    {...props}
+                    inputMode="numeric"
+                    value={monitorPort}
+                    onChange={(event) => onMonitorPortChange(event.target.value)}
+                    placeholder={port || '2044'}
+                  />
+                )}
+              </Field>
+            ) : (
+              <TechnicalInput
+                inputMode="numeric"
+                value={monitorPort}
+                onChange={(event) => onMonitorPortChange(event.target.value)}
+                placeholder={port || '2044'}
+                aria-label={t('routeForm.fields.monitorPort')}
               />
             )}
           </div>
@@ -1292,12 +1440,32 @@ function defaultsFrom(settings: Record<string, unknown>): FormState {
     connection_rate_limit: '',
     is_enabled: true,
     destination_weight: '1',
+    destination_monitor_port: '',
     destinations: [],
+    is_monitor_enabled: settings['routes.monitor_enabled'] === true,
+    monitor_mode_id: RouteMonitorMode.Report,
+    monitor_interval_seconds: '',
+    monitor_timeout_seconds: '',
+    monitor_failure_threshold: '',
+    monitor_recovery_threshold: '',
     allowed_sources: [],
   }
 }
 
-export function formFromRoute(route: RouteRule): FormState {
+/** A stored optional number as a form field: absent becomes the empty box. */
+function numberField(value: number | null | undefined): string {
+  return value === null || value === undefined ? '' : String(value)
+}
+
+/**
+ * Seeds the form from a stored rule.
+ *
+ * monitorsByDefault is the panel-wide setting, because a rule that has never
+ * stated a policy of its own follows it: showing the switch off there would
+ * be showing something other than what is happening, and saving the rule
+ * would then pin the wrong answer.
+ */
+export function formFromRoute(route: RouteRule, monitorsByDefault = false): FormState {
   return {
     route_rule_title: route.route_rule_title,
     description: route.description,
@@ -1330,11 +1498,19 @@ export function formFromRoute(route: RouteRule): FormState {
     // with null here used to throw inside the seed and take the whole page
     // down rather than opening the dialog.
     destination_weight: String((route.destinations ?? [])[0]?.weight ?? 1),
+    destination_monitor_port: numberField((route.destinations ?? [])[0]?.monitor_port),
     destinations: (route.destinations ?? []).slice(1).map((destination) => ({
       address: destination.address,
       port: String(destination.port),
       weight: String(destination.weight),
+      monitor_port: numberField(destination.monitor_port),
     })),
+    is_monitor_enabled: route.is_monitor_enabled ?? monitorsByDefault,
+    monitor_mode_id: route.monitor_mode_id ?? RouteMonitorMode.Report,
+    monitor_interval_seconds: numberField(route.monitor_interval_seconds),
+    monitor_timeout_seconds: numberField(route.monitor_timeout_seconds),
+    monitor_failure_threshold: numberField(route.monitor_failure_threshold),
+    monitor_recovery_threshold: numberField(route.monitor_recovery_threshold),
     allowed_sources: (route.allowed_sources ?? []).map((source) => source.cidr),
   }
 }
@@ -1389,9 +1565,19 @@ function toPatch(form: FormState): Record<string, unknown> {
     patch.allowed_sources = []
   }
 
+  // Monitoring is always sent: turning it off is an instruction, and an
+  // absent field would be read as "leave it as it was". The parameters are
+  // nullable, because an empty one means "go back to inheriting this".
+  patch.is_monitor_enabled = form.is_monitor_enabled
+  patch.monitor_mode_id = form.monitor_mode_id
+  patch.monitor_interval_seconds = number(form.monitor_interval_seconds) ?? null
+  patch.monitor_timeout_seconds = number(form.monitor_timeout_seconds) ?? null
+  patch.monitor_failure_threshold = number(form.monitor_failure_threshold) ?? null
+  patch.monitor_recovery_threshold = number(form.monitor_recovery_threshold) ?? null
+
   // The primary destination leads the list; the extras follow it.
   const extras = form.destinations.filter((destination) => destination.address && destination.port)
-  if (extras.length) {
+  if (extras.length || form.destination_monitor_port) {
     patch.destinations = [
       {
         address: form.destination_address,
@@ -1399,12 +1585,14 @@ function toPatch(form: FormState): Record<string, unknown> {
         port_range_end: destinationEnd,
         weight: number(form.destination_weight) ?? 1,
         is_enabled: true,
+        monitor_port: number(form.destination_monitor_port) ?? null,
       },
       ...extras.map((destination) => ({
         address: destination.address,
         port: number(destination.port) ?? 0,
         weight: number(destination.weight) ?? 1,
         is_enabled: true,
+        monitor_port: number(destination.monitor_port) ?? null,
       })),
     ]
   }
