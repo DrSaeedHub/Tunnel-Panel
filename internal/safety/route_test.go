@@ -305,3 +305,33 @@ func TestOnlyThePanelsOwnFilesAreWritten(t *testing.T) {
 		refusal(t, guard.CheckPath(refused), CodeProtectedPath)
 	}
 }
+
+// Both of the panel's own sysctl files are writable, and nothing else under
+// /etc/sysctl.d is.
+//
+// The regression: the tuning file was given a path of its own and the guard was
+// never told about it, so every attempt to tune the host was refused with a
+// message about protected paths — the panel forbidding itself from writing its
+// own file. The guard's job is to keep the panel out of files belonging to the
+// system and to other software; a file the panel wrote, named after the panel,
+// is neither.
+func TestThePanelMayWriteItsOwnSysctlFilesAndNoOthers(t *testing.T) {
+	guard := NewRouteGuard(8443, nil, "/var/lib/gre-panel/rules")
+
+	for _, own := range []string{PanelSysctlFile, PanelTuningSysctlFile} {
+		if err := guard.CheckPath(own); err != nil {
+			t.Errorf("the panel is refused its own file %s: %v", own, err)
+		}
+	}
+
+	for _, foreign := range []string{
+		"/etc/sysctl.conf",
+		"/etc/sysctl.d/99-sysctl.conf",
+		"/etc/sysctl.d/10-network-security.conf",
+		"/etc/sysctl.d/98-conntrack.conf",
+	} {
+		if err := guard.CheckPath(foreign); err == nil {
+			t.Errorf("the panel was allowed to write %s, which is not its file", foreign)
+		}
+	}
+}

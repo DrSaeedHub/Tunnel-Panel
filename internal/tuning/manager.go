@@ -67,10 +67,15 @@ type Manager struct {
 	Log        *slog.Logger
 }
 
-// TuningSysctlFile is the panel's own file for these parameters. It is separate
-// from the forwarding one so that reverting the throughput tuning never touches
-// the parameters a relay cannot work without.
-const TuningSysctlFile = "/etc/sysctl.d/99-gre-panel-tuning.conf"
+// TuningSysctlFile is the panel's own file for these parameters. It is
+// separate from the forwarding one so that reverting the throughput tuning
+// never touches the parameters a relay cannot work without.
+//
+// It is the safety package's constant rather than a second spelling of the
+// same path: the guard refuses to write a file it does not recognise as the
+// panel's, so a copy here that drifted would refuse every apply with a
+// message about protected paths.
+const TuningSysctlFile = safety.PanelTuningSysctlFile
 
 // New returns a manager rooted at the real filesystem.
 func New(store *persist.Store, renderer *persist.Renderer, guard *safety.RouteGuard, log *slog.Logger) *Manager {
@@ -153,7 +158,12 @@ func (m *Manager) Apply(ctx context.Context, groups ...Group) (int, error) {
 		}
 		if m.Guard != nil {
 			if err := m.Guard.CheckSysctl(parameter.Key); err != nil {
-				return 0, err
+				// Skipped, not fatal. An operator asking for the host to be
+				// tuned wants it tuned as far as it can be; handing them a
+				// refusal and nothing done is the worse answer.
+				m.logger().Warn("a tuning parameter is not one the panel may set",
+					"key", parameter.Key, "error", err)
+				continue
 			}
 		}
 		values = append(values, persist.SysctlValue{
@@ -262,7 +272,9 @@ func (m *Manager) EnsureSafety(ctx context.Context, liveConnections int) (int, e
 		}
 		if m.Guard != nil {
 			if err := m.Guard.CheckSysctl(parameter.Key); err != nil {
-				return 0, err
+				m.logger().Warn("a safety parameter is not one the panel may set",
+					"key", parameter.Key, "error", err)
+				continue
 			}
 		}
 		values = append(values, persist.SysctlValue{

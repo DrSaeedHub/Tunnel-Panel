@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/drs/gre-panel/internal/safety"
 )
 
 // newHost builds a fixture filesystem with the kernel parameters a real host
@@ -182,4 +184,26 @@ func (m *Manager) mustRead(t *testing.T, proc string) string {
 		t.Fatalf("%s could not be read", proc)
 	}
 	return value
+}
+
+// Every parameter the panel offers is one the panel is allowed to set, and the
+// file it writes them to is one it is allowed to write.
+//
+// The regression this guards is the one that made tuning impossible: the file
+// was given a path of its own and the guard was never told, so every apply came
+// back as a protected-path refusal — the panel forbidding itself. The same trap
+// is one line away for a parameter added to the catalogue without being added
+// to the guard's list, and an operator would meet it as a button that silently
+// does less than it says.
+func TestEveryOfferedParameterIsOneThePanelMaySet(t *testing.T) {
+	guard := safety.NewRouteGuard(8443, nil, "/var/lib/gre-panel/rules")
+
+	if err := guard.CheckPath(TuningSysctlFile); err != nil {
+		t.Errorf("the panel may not write its own tuning file %s: %v", TuningSysctlFile, err)
+	}
+	for _, parameter := range Catalogue() {
+		if err := guard.CheckSysctl(parameter.Key); err != nil {
+			t.Errorf("%s is offered but the guard refuses it: %v", parameter.Key, err)
+		}
+	}
 }

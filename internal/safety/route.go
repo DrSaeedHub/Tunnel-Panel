@@ -31,6 +31,15 @@ const (
 // or to another package (§6.3.3).
 const PanelSysctlFile = "/etc/sysctl.d/99-gre-panel.conf"
 
+// PanelTuningSysctlFile is the panel's other sysctl file: the kernel
+// parameters an operator asked it to tune, kept apart from the ones above so
+// that reverting the tuning never touches what a relay cannot work without.
+//
+// Both are the panel's own. The guard's job is to keep it out of files
+// belonging to the system and to other software, and a file the panel wrote,
+// named after the panel, is neither.
+const PanelTuningSysctlFile = "/etc/sysctl.d/99-gre-panel-tuning.conf"
+
 // AllowedSysctls are the only kernel parameters the panel ever sets.
 //
 // The first two are there because a relay cannot work without them. The
@@ -313,8 +322,10 @@ func (g *RouteGuard) CheckPath(target string) error {
 		return violation(CodeProtectedPath, "path",
 			fmt.Sprintf("%q is not an absolute path.", target), map[string]any{"path": target})
 	}
-	if cleaned == hostPath(g.sysctlFile()) {
-		return nil
+	for _, own := range g.ownFiles() {
+		if cleaned == hostPath(own) {
+			return nil
+		}
 	}
 	for _, protectedPath := range ProtectedPaths {
 		if isUnderHostPath(cleaned, protectedPath) {
@@ -329,6 +340,14 @@ func (g *RouteGuard) CheckPath(target string) error {
 	return violation(CodeProtectedPath, "path",
 		fmt.Sprintf("%s is outside the directories the forwarding subsystem writes to.", cleaned),
 		map[string]any{"path": cleaned, "rules_dir": g.RulesDir, "sysctl_file": g.sysctlFile()})
+}
+
+// ownFiles are the sysctl files the panel writes. They live under a
+// protected directory, which is the point: /etc/sysctl.d is where a sysctl
+// file has to go, and the guard's rule is that the panel writes its own
+// files there and touches nobody else's.
+func (g *RouteGuard) ownFiles() []string {
+	return []string{g.sysctlFile(), PanelTuningSysctlFile}
 }
 
 func (g *RouteGuard) sysctlFile() string {
