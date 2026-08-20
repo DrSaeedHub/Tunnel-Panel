@@ -147,3 +147,24 @@ func ParsePreviousValues(content string) map[string]string {
 	}
 	return out
 }
+
+// ParseValues reads back the parameters a rendered sysctl file sets.
+//
+// The panel rewrites the whole file every time it changes one parameter, so it
+// has to know what the file already said. Without this, editing one value would
+// silently drop every other value the panel had been asked to keep.
+func ParseValues(content string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(trimmed, "=")
+		if !ok {
+			continue
+		}
+		out[strings.TrimSpace(key)] = strings.TrimSpace(value)
+	}
+	return out
+}

@@ -515,6 +515,7 @@ func (s *Server) buildRouter() http.Handler {
 						r.Use(s.requireTuning)
 						r.Get("/system/tuning", s.handleTuning)
 						r.Post("/system/tuning/apply", s.handleApplyTuning)
+						r.Post("/system/tuning/set", s.handleSetTuning)
 						r.Post("/system/tuning/revert", s.handleRevertTuning)
 					})
 

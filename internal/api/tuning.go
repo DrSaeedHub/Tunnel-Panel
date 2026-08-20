@@ -2,10 +2,13 @@ package api
 
 import (
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/tuning"
+	"github.com/drs/gre-panel/internal/validate"
 )
 
 // The kernel parameters a relay's throughput and stability depend on.
@@ -76,4 +79,77 @@ func (s *Server) liveConnections() int {
 		return 0
 	}
 	return s.accounting.Summary().ActiveConnections
+}
+
+// tuningRequest is the parameters an operator set by hand.
+//
+// A parameter absent from the map is left exactly as it is, so the interface
+// can send only the fields somebody touched rather than the whole page. A
+// parameter present with an empty value asks the panel to stop keeping it.
+type tuningRequest struct {
+	Values map[string]string `json:"values"`
+}
+
+// handleSetTuning keeps the values an operator chose.
+//
+// Every value is checked before anything is written, and all the bad ones are
+// reported at once: someone correcting a form should see every field that is
+// wrong, not discover them one save at a time.
+func (s *Server) handleSetTuning(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	var req tuningRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.Values) == 0 {
+		writeError(w, http.StatusBadRequest, CodeValidationFailed,
+			"No parameters were sent.", "values", nil)
+		return
+	}
+
+	errs := &validate.Errors{}
+	for _, key := range sortedKeys(req.Values) {
+		value := req.Values[key]
+		if _, known := tuning.ParameterFor(key); !known {
+			errs.Addf("values."+key, CodeValidationFailed,
+				"%s is not a parameter the panel knows.", key)
+			continue
+		}
+		if strings.TrimSpace(value) == "" {
+			// Asking the panel to stop keeping a parameter is not a value to
+			// be validated.
+			continue
+		}
+		if err := s.tuning.Validate(key, value); err != nil {
+			errs.Addf("values."+key, CodeValidationFailed, "%s %s.", key, err.Error())
+		}
+	}
+	if !errs.Empty() {
+		s.writeRouteError(w, r, errs)
+		return
+	}
+
+	applied, err := s.tuning.Set(r.Context(), req.Values)
+	if err != nil {
+		s.auditRoute(r, model.AuditActionSettingUpdate, "tuning", nil, nil, err, start)
+		s.writeRouteError(w, r, err)
+		return
+	}
+	s.auditRoute(r, model.AuditActionSettingUpdate, "tuning",
+		map[string]any{"applied": applied, "values": req.Values}, nil, nil, start)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"applied": applied,
+		"tuning":  s.tuning.Report(s.liveConnections()),
+	})
+}
+
+// sortedKeys keeps the order of reported failures stable, so two saves of the
+// same bad form say the same thing in the same order.
+func sortedKeys(values map[string]string) []string {
+	out := make([]string, 0, len(values))
+	for key := range values {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }

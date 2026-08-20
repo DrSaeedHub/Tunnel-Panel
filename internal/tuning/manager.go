@@ -32,6 +32,33 @@ type Reading struct {
 	Available bool `json:"available"`
 	// Matches reports that the current value is already the recommended one.
 	Matches bool `json:"matches"`
+
+	// Kind is the shape of the value, and so the control the interface offers
+	// for editing it.
+	Kind Kind `json:"kind"`
+	// Choices are the values this kernel takes here, each with the
+	// plain-language name for what picking it does.
+	Choices []Choice `json:"choices,omitempty"`
+	// Open marks a choice an operator may type into as well as pick from,
+	// because the panel has no way to ask this kernel what it supports.
+	Open bool `json:"open,omitempty"`
+	// Min and Max bound a number. Zero means unbounded in that direction.
+	Min int `json:"min,omitempty"`
+	Max int `json:"max,omitempty"`
+	// Fields is how many numbers a multi-number value wants.
+	Fields int `json:"fields,omitempty"`
+	// Unit is what the number counts, in the operator's words.
+	Unit string `json:"unit,omitempty"`
+	// Desired is what the panel's own file sets this to, which is where an
+	// edited field starts. Empty means the panel is not keeping this one and
+	// the field starts from whatever the kernel holds.
+	Desired string `json:"desired"`
+	// Custom reports that the operator chose a value of their own here rather
+	// than the panel's recommendation.
+	Custom bool `json:"custom"`
+	// Drifted reports that the panel is keeping a value the kernel does not
+	// hold: something else set it since, or the kernel refused the write.
+	Drifted bool `json:"drifted"`
 }
 
 // Report is the whole picture: what the recommendations were computed from,
@@ -109,6 +136,8 @@ func (m *Manager) Report(liveConnections int) Report {
 		report.PanelManaged = strings.Contains(string(content), persist.OwnershipMarker)
 	}
 
+	recorded, _ := m.recorded()
+
 	for _, parameter := range Catalogue() {
 		current, ok := m.read(parameter.Proc)
 		recommended := ""
@@ -119,7 +148,16 @@ func (m *Manager) Report(liveConnections int) Report {
 			Key: parameter.Key, Group: parameter.Group,
 			Title: parameter.Title, Explain: parameter.Explain,
 			Current: current, Recommended: recommended, Available: ok,
+
+			Kind: parameter.Kind, Open: parameter.Open,
+			Min: parameter.Min, Max: parameter.Max,
+			Fields: parameter.Fields, Unit: parameter.Unit,
+			Choices: m.offeredChoices(parameter),
+			Desired: recorded[parameter.Key],
 		}
+		reading.Custom = reading.Desired != "" && recommended != "" &&
+			!Matches(reading.Desired, recommended)
+		reading.Drifted = reading.Desired != "" && ok && !Matches(current, reading.Desired)
 		reading.Matches = ok && recommended != "" && Matches(current, recommended)
 		if ok && recommended != "" && !reading.Matches {
 			report.Pending++
@@ -132,28 +170,137 @@ func (m *Manager) Report(liveConnections int) Report {
 	return report
 }
 
-// Apply sets the parameters of the given groups and records them.
+// Apply sets the parameters of the given groups to what the panel recommends.
 //
-// It writes the file first and the live values second, for the same reason the
-// forwarding manager does: the file is what survives a reboot, and a panel that
-// set the value and then failed to record it would leave a host tuned until the
-// next restart and mysteriously untuned after it.
+// This is the one-click tuning: it says nothing about the operator's own
+// choices except to replace them, which is what pressing a button labelled
+// "use the recommended values" is asking for.
 func (m *Manager) Apply(ctx context.Context, groups ...Group) (int, error) {
-	wanted := map[Group]bool{}
+	inGroup := map[Group]bool{}
 	for _, group := range groups {
-		wanted[group] = true
+		inGroup[group] = true
 	}
 	facts := m.HostFacts(0)
 
-	var values []persist.SysctlValue
-	var live []struct{ proc, value string }
+	wanted := map[string]string{}
 	for _, parameter := range Catalogue() {
-		if !wanted[parameter.Group] || parameter.Recommend == nil {
+		if !inGroup[parameter.Group] || parameter.Recommend == nil {
 			continue
 		}
-		recommended := parameter.Recommend(facts)
-		current, ok := m.read(parameter.Proc)
-		if recommended == "" || !ok || Matches(current, recommended) {
+		if recommended := parameter.Recommend(facts); recommended != "" {
+			wanted[parameter.Key] = recommended
+		}
+	}
+	return m.commit(ctx, wanted)
+}
+
+// Set makes the panel keep the values an operator chose, alongside whatever it
+// was already keeping. An empty value asks it to stop keeping that parameter:
+// the kernel holds whatever it holds, and only the record goes.
+//
+// Values are validated before anything is written, so a rejected field leaves
+// the host exactly as it was rather than half-tuned.
+func (m *Manager) Set(ctx context.Context, values map[string]string) (int, error) {
+	for key, value := range values {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		if err := m.Validate(key, value); err != nil {
+			return 0, err
+		}
+	}
+	return m.commit(ctx, values)
+}
+
+// Validate checks one value against the parameter it is for, using what this
+// kernel says it supports rather than what the panel assumes.
+func (m *Manager) Validate(key, value string) error {
+	parameter, ok := ParameterFor(key)
+	if !ok {
+		return fmt.Errorf("not a parameter the panel knows")
+	}
+	allowed := make([]string, 0, len(parameter.Choices))
+	for _, choice := range m.offeredChoices(parameter) {
+		allowed = append(allowed, choice.Value)
+	}
+	return parameter.Validate(value, allowed)
+}
+
+// offeredChoices is what a choice parameter may be set to on this host.
+//
+// The kernel's own list comes first where it publishes one, because which
+// algorithms a kernel has depends on the modules it was built with. The panel's
+// list is merged in rather than replaced: a module the kernel will load on
+// demand is not in the published list until something asks for it, and BBR --
+// the recommendation on nearly every relay -- is usually exactly that module.
+func (m *Manager) offeredChoices(parameter Parameter) []Choice {
+	if parameter.Kind != KindChoice {
+		return nil
+	}
+	detail := map[string]string{}
+	for _, choice := range parameter.Choices {
+		detail[choice.Value] = choice.Detail
+	}
+
+	var out []Choice
+	seen := map[string]bool{}
+	add := func(value string) {
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, Choice{Value: value, Detail: detail[value]})
+	}
+
+	if parameter.ChoicesProc != "" {
+		if raw, ok := m.read(parameter.ChoicesProc); ok {
+			for _, value := range strings.Fields(raw) {
+				add(value)
+			}
+		}
+	}
+	for _, choice := range parameter.Choices {
+		add(choice.Value)
+	}
+	return out
+}
+
+// commit makes the panel's file say what wanted says, on top of what it already
+// said, and sets live every parameter whose kernel value differs from it.
+//
+// The whole desired set is written every time rather than only the part that
+// changed. Writing the delta was a quiet way to lose work: editing one
+// parameter would rewrite the file with that parameter alone, and every other
+// value the operator had asked the panel to keep would be gone at the next
+// reboot -- present in the running kernel, absent from the file, and so
+// impossible to notice until the host came back untuned.
+//
+// The file goes first and the live values second, for the same reason the
+// forwarding manager does it that way: the file is what survives a reboot, and
+// a panel that set a value and then failed to record it would leave a host
+// tuned until the next restart and mysteriously untuned after it.
+func (m *Manager) commit(ctx context.Context, wanted map[string]string) (int, error) {
+	recorded, previous := m.recorded()
+
+	desired := map[string]string{}
+	for key, value := range recorded {
+		desired[key] = value
+	}
+	for key, value := range wanted {
+		if strings.TrimSpace(value) == "" {
+			delete(desired, key)
+			continue
+		}
+		desired[key] = strings.TrimSpace(value)
+	}
+
+	var values []persist.SysctlValue
+	var live []struct{ proc, value string }
+	// Catalogue order rather than map order, so the file reads the same way
+	// twice running and a diff of it shows what actually changed.
+	for _, parameter := range Catalogue() {
+		value, keeping := desired[parameter.Key]
+		if !keeping {
 			continue
 		}
 		if m.Guard != nil {
@@ -166,14 +313,17 @@ func (m *Manager) Apply(ctx context.Context, groups ...Group) (int, error) {
 				continue
 			}
 		}
+		current, readable := m.read(parameter.Proc)
+		was := previous[parameter.Key]
+		if was == "" {
+			was = current
+		}
 		values = append(values, persist.SysctlValue{
-			Key: parameter.Key, Value: recommended,
-			Previous: m.previousFor(parameter.Key, current),
+			Key: parameter.Key, Value: value, Previous: was,
 		})
-		live = append(live, struct{ proc, value string }{parameter.Proc, recommended})
-	}
-	if len(values) == 0 {
-		return 0, nil
+		if readable && !Matches(current, value) {
+			live = append(live, struct{ proc, value string }{parameter.Proc, value})
+		}
 	}
 
 	path := m.sysctlFile()
@@ -181,6 +331,17 @@ func (m *Manager) Apply(ctx context.Context, groups ...Group) (int, error) {
 		if err := m.Guard.CheckPath(path); err != nil {
 			return 0, err
 		}
+	}
+	if len(values) == 0 {
+		// Nothing left to keep. Removing the file rather than leaving an empty
+		// one is what makes "the panel is not tuning this host" readable, both
+		// in the interface and to anyone reading /etc/sysctl.d by hand.
+		if m.Store != nil && persist.Exists(path) {
+			if _, err := m.Store.Remove(ctx, path, false); err != nil {
+				return 0, err
+			}
+		}
+		return 0, nil
 	}
 	if m.Store != nil && m.Renderer != nil {
 		if _, err := m.Store.Write(ctx, path, m.Renderer.SysctlFile(values), false); err != nil {
@@ -201,6 +362,16 @@ func (m *Manager) Apply(ctx context.Context, groups ...Group) (int, error) {
 		applied++
 	}
 	return applied, nil
+}
+
+// recorded is what the panel's own file currently sets, and what each parameter
+// held before the panel first touched it.
+func (m *Manager) recorded() (values, previous map[string]string) {
+	content, err := os.ReadFile(m.sysctlFile())
+	if err != nil || !strings.Contains(string(content), persist.OwnershipMarker) {
+		return map[string]string{}, map[string]string{}
+	}
+	return persist.ParseValues(string(content)), persist.ParsePreviousValues(string(content))
 }
 
 // Revert puts back what the parameters were before the panel changed them and
@@ -251,16 +422,29 @@ func (m *Manager) Revert(ctx context.Context) error {
 // are what fill it, so keeping it sized is the panel's job.
 func (m *Manager) EnsureSafety(ctx context.Context, liveConnections int) (int, error) {
 	facts := m.HostFacts(liveConnections)
+	recorded, _ := m.recorded()
 
-	var values []persist.SysctlValue
-	var live []struct{ proc, value string }
+	wanted := map[string]string{}
 	for _, parameter := range Catalogue() {
 		if parameter.Group != GroupSafety || parameter.Recommend == nil {
 			continue
 		}
-		recommended := parameter.Recommend(facts)
 		current, ok := m.read(parameter.Proc)
-		if !ok || recommended == "" {
+		if !ok {
+			continue
+		}
+		// An operator who has said what this parameter should be has said it.
+		// The panel holds the host to that value and does not offer a second
+		// opinion about it -- the point of an editable field is that editing it
+		// means something.
+		if chosen, said := recorded[parameter.Key]; said {
+			if !Matches(current, chosen) {
+				wanted[parameter.Key] = chosen
+			}
+			continue
+		}
+		recommended := parameter.Recommend(facts)
+		if recommended == "" {
 			continue
 		}
 		// Only ever raised, never lowered: an operator who has given the table
@@ -270,36 +454,15 @@ func (m *Manager) EnsureSafety(ctx context.Context, liveConnections int) (int, e
 		if !shouldReplace(parameter.Key, current, recommended) {
 			continue
 		}
-		if m.Guard != nil {
-			if err := m.Guard.CheckSysctl(parameter.Key); err != nil {
-				m.logger().Warn("a safety parameter is not one the panel may set",
-					"key", parameter.Key, "error", err)
-				continue
-			}
-		}
-		values = append(values, persist.SysctlValue{
-			Key: parameter.Key, Value: recommended,
-			Previous: m.previousFor(parameter.Key, current),
-		})
-		live = append(live, struct{ proc, value string }{parameter.Proc, recommended})
+		wanted[parameter.Key] = recommended
 	}
-	if len(values) == 0 {
+	if len(wanted) == 0 {
 		return 0, nil
 	}
 
-	path := m.sysctlFile()
-	if m.Store != nil && m.Renderer != nil {
-		if _, err := m.Store.Write(ctx, path, m.Renderer.SysctlFile(values), false); err != nil {
-			return 0, fmt.Errorf("writing %s: %w", path, err)
-		}
-	}
-	applied := 0
-	for _, item := range live {
-		if err := m.write(item.proc, item.value); err != nil {
-			m.logger().Warn("a safety parameter could not be set", "path", item.proc, "error", err)
-			continue
-		}
-		applied++
+	applied, err := m.commit(ctx, wanted)
+	if err != nil {
+		return 0, err
 	}
 	m.logger().Info("connection tracking was resized for the traffic this host carries",
 		"parameters", applied, "connections", liveConnections)
@@ -364,18 +527,6 @@ func (m *Manager) write(proc, value string) error {
 		return fmt.Errorf("setting %s: %w", full, err)
 	}
 	return nil
-}
-
-// previousFor is what the parameter held the first time the panel changed it,
-// so that reverting keeps pointing at the operator's own value rather than at
-// one the panel wrote on a previous run.
-func (m *Manager) previousFor(key, current string) string {
-	if content, err := os.ReadFile(m.sysctlFile()); err == nil {
-		if recorded, ok := persist.ParsePreviousValues(string(content))[key]; ok {
-			return recorded
-		}
-	}
-	return current
 }
 
 // memoryMB reads total memory from /proc/meminfo. Zero when it cannot be read,

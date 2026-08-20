@@ -1195,6 +1195,27 @@ export default {
     absent: 'Not on this kernel',
     absentHint: 'This kernel does not have this parameter, so there is nothing to set.',
     file: 'Written to',
+    edit: {
+      value: 'Value',
+      save: 'Save',
+      saveCount: 'Save {{count}} change',
+      saveCount_other: 'Save {{count}} changes',
+      saved: 'Nothing needed changing',
+      saved_other: '{{count}} parameters were set',
+      discard: 'Discard changes',
+      useRecommended: 'Use the suggestion',
+      release: 'Stop keeping this',
+      released: 'The panel is no longer keeping that parameter. The kernel holds what it has.',
+      keeping: 'The panel keeps this at {{value}}',
+      yours: 'Your value',
+      drifted: 'Something else changed it',
+      driftedHint:
+        'The panel is set to keep this at {{value}} and the kernel holds {{current}}. It is put back on the next check, or when you save.',
+      range: 'Between {{min}} and {{max}}',
+      fields: '{{count}} numbers separated by spaces',
+      custom: 'Or type another value',
+      unsaved: 'Not saved yet',
+    },
   },
 
   sourceLists: {

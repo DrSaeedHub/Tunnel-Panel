@@ -1572,6 +1572,25 @@ export interface TuningReading {
   /** False when this kernel does not have the parameter at all. */
   available: boolean
   matches: boolean
+
+  /** The shape of the value, which decides the control offered for editing it. */
+  kind: 'number' | 'numbers' | 'choice'
+  /** For a choice: the values this kernel takes, each with what picking it does. */
+  choices?: { value: string; detail?: string }[]
+  /** A choice whose listed values are suggestions; another may be typed. */
+  open?: boolean
+  min?: number
+  max?: number
+  /** How many numbers a multi-number value wants. */
+  fields?: number
+  /** What the number counts, in the operator's words. */
+  unit?: string
+  /** What the panel's own file sets this to. Empty when it is not keeping it. */
+  desired: string
+  /** The operator chose this value rather than taking the recommendation. */
+  custom: boolean
+  /** The panel is keeping a value the kernel does not currently hold. */
+  drifted: boolean
 }
 
 export interface TuningReport {
