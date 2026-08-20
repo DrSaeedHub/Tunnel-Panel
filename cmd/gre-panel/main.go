@@ -345,6 +345,7 @@ func run() error {
 	monitorSupervisor := monitor.New(monitor.Deps{
 		Tunnels: repo, Store: monitor.NewStore(database), Settings: store,
 		Links: links, Log: log, Dialer: probeDialer,
+		PanelPort: cfg.BindPort,
 	})
 	metricsSampler := metrics.New(metrics.Deps{
 		Reader: metrics.NewReader(), Links: links,
@@ -353,6 +354,7 @@ func run() error {
 	diagService := diag.New(diag.Deps{
 		DB: database, Repo: repo, Links: links, Runner: runner, Settings: store, Log: log,
 		Dialer:      probeDialer,
+		PanelPort:   cfg.BindPort,
 		TcpdumpBin:  lookupBinary("tcpdump", "/usr/bin/tcpdump"),
 		NftBin:      lookupBinary("nft", "/usr/sbin/nft"),
 		IptablesBin: lookupBinary("iptables", "/usr/sbin/iptables"),

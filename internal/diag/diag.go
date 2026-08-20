@@ -79,6 +79,10 @@ type Deps struct {
 	TcpdumpBin  string
 	NftBin      string
 	IptablesBin string
+	// PanelPort is the port this panel serves on, which is what the TCP
+	// check knocks on by default: the far end of a tunnel this panel
+	// manages is usually running it too.
+	PanelPort int
 }
 
 // Service runs diagnostics and remembers them.
@@ -91,9 +95,10 @@ type Service struct {
 	settings Settings
 	log      *slog.Logger
 
-	tcpdumpBin  string
-	nftBin      string
-	iptablesBin string
+	tcpdumpBin      string
+	nftBin          string
+	iptablesBin     string
+	panelPortNumber int
 
 	mu sync.Mutex
 	// cancels holds the in-flight runs, so deleting a run stops it (§13.1).
@@ -114,7 +119,8 @@ func New(d Deps) *Service {
 		db: d.DB, repo: d.Repo, links: d.Links, dialer: dialer, runner: d.Runner,
 		settings: d.Settings, log: log,
 		tcpdumpBin: d.TcpdumpBin, nftBin: d.NftBin, iptablesBin: d.IptablesBin,
-		cancels: map[int64]context.CancelFunc{},
+		panelPortNumber: d.PanelPort,
+		cancels:         map[int64]context.CancelFunc{},
 	}
 }
 

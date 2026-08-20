@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   HelpCircle,
+  PlugZap,
   Ruler,
   Square,
   Waypoints,
@@ -21,6 +22,7 @@ import type {
   PingPacket,
   PingResult,
   SettingsResponse,
+  TcpCheckResult,
   TracerouteResult,
   Tunnel,
 } from '@/lib/types'
@@ -29,7 +31,7 @@ import { usePreferences } from '@/providers/PreferencesProvider'
 import { useToast } from '@/providers/ToastProvider'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
-import { Field, Input, SwitchField } from '../ui/form'
+import { Field, Input, SwitchField, TechnicalInput } from '../ui/form'
 import { Badge, EmptyState, ErrorState, Skeleton } from '../ui/feedback'
 import { Technical, TechnicalBlock } from '../ui/technical'
 import { cn } from '@/lib/utils'
@@ -41,6 +43,7 @@ export function DiagnosticsPanel({ tunnel }: { tunnel: Tunnel }) {
       <div className="grid gap-4 lg:grid-cols-2">
         <PingCard tunnel={tunnel} />
         <div className="space-y-4">
+          <TcpCheckCard tunnel={tunnel} />
           <MtuProbeCard tunnel={tunnel} />
           <TracerouteCard tunnel={tunnel} />
         </div>
@@ -722,3 +725,95 @@ function Figure({ label, value }: { label: string; value: string }) {
 }
 
 export { TechnicalBlock }
+
+/**
+ * Opening a connection across the tunnel.
+ *
+ * The ping beside it is the better measurement when it works — loss, round-trip
+ * time, jitter — but it measures ICMP, and on a great many paths something in
+ * between drops ICMP outright while carrying TCP perfectly well. There the ping
+ * measures the filter and this measures the tunnel.
+ *
+ * A refused connection is a pass, not a failure, and the card says so plainly:
+ * a reset could only have come back if the tunnel carried the packet there and
+ * carried the answer back, which is the entire question being asked.
+ */
+function TcpCheckCard({ tunnel }: { tunnel: Tunnel }) {
+  const { t } = useTranslation()
+  const { digits } = usePreferences()
+  const [port, setPort] = useState('')
+
+  const check = useMutation({
+    mutationFn: () =>
+      api.post<TcpCheckResult>(`/tunnels/${tunnel.tunnel_id}/diagnostics/tcp`, {
+        port: port.trim() ? Number(port) : undefined,
+      }),
+  })
+  const result = check.data
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <PlugZap className="size-4 text-muted-foreground" aria-hidden="true" />
+          {t('diagnostics.tcp.title')}
+        </CardTitle>
+        <Button variant="secondary" size="sm" loading={check.isPending} onClick={() => check.mutate()}>
+          {check.isPending ? t('diagnostics.tcp.running') : t('diagnostics.tcp.run')}
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-xs text-muted-foreground">{t('diagnostics.tcp.subtitle')}</p>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-32">
+            <Field label={t('diagnostics.tcp.port')}>
+              {(props) => (
+                <TechnicalInput
+                  {...props}
+                  inputMode="numeric"
+                  value={port}
+                  onChange={(event) => setPort(event.target.value)}
+                  placeholder={t('diagnostics.tcp.portDefault')}
+                />
+              )}
+            </Field>
+          </div>
+        </div>
+
+        {check.error ? (
+          <ErrorState error={check.error} onRetry={() => check.mutate()} compact />
+        ) : !result ? (
+          <p className="text-2xs text-muted-foreground">{t('diagnostics.tcp.hint')}</p>
+        ) : (
+          <div
+            className={cn(
+              'rounded-md border p-3',
+              result.answered ? 'border-ok/30 bg-ok-muted' : 'border-danger/30 bg-danger-muted',
+            )}
+          >
+            <p className="flex flex-wrap items-center gap-2 text-xs font-medium">
+              {result.answered ? (
+                <CheckCircle2 className="size-3.5 text-ok" aria-hidden="true" />
+              ) : (
+                <XCircle className="size-3.5 text-danger" aria-hidden="true" />
+              )}
+              <Technical className="text-xs">{`${result.target}:${result.port}`}</Technical>
+              {result.answered ? (
+                <Badge tone="ok">
+                  {result.refused ? t('diagnostics.tcp.refused') : t('diagnostics.tcp.accepted')}
+                </Badge>
+              ) : (
+                <Badge tone="danger">{t('diagnostics.tcp.silent')}</Badge>
+              )}
+              {result.latency_ms ? (
+                <Badge tone="neutral">{formatMs(result.latency_ms, digits) ?? ''}</Badge>
+              ) : null}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">{result.detail}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}

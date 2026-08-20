@@ -81,6 +81,34 @@ func (s *Server) handleDiagPing(w http.ResponseWriter, r *http.Request) {
 	_ = stream.Send("summary", run)
 }
 
+// handleDiagTcpCheck opens a connection across the tunnel and reports what
+// answered.
+//
+// It exists because the ping measures ICMP, and on a great many of the paths
+// this panel is used across ICMP is dropped outright while TCP is carried
+// perfectly well. On those the ping measures the filter and this measures the
+// tunnel. Like the other probes it changes nothing and is not audited: it is a
+// read of the network.
+func (s *Server) handleDiagTcpCheck(w http.ResponseWriter, r *http.Request) {
+	rec, ok := s.tunnelFromPath(w, r)
+	if !ok {
+		return
+	}
+	var params diag.TCPParams
+	if r.ContentLength > 0 {
+		if !decodeJSON(w, r, &params) {
+			return
+		}
+	}
+	result, err := s.diag.TCPCheck(r.Context(), rec.TunnelID, params)
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
+			capitalise(err.Error())+".", "", nil)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 // handleDiagMtuProbe runs the path MTU binary search (§13.2).
 func (s *Server) handleDiagMtuProbe(w http.ResponseWriter, r *http.Request) {
 	rec, ok := s.tunnelFromPath(w, r)

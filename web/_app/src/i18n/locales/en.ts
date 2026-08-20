@@ -706,6 +706,19 @@ export default {
       dropped: 'Dropped',
       delta: 'Change over {{seconds}}',
     },
+    tcp: {
+      title: 'Connection check',
+      subtitle:
+        'Opens a connection to the far end across the tunnel. The ping beside this measures ICMP, and on many paths something in between drops ICMP while carrying everything else perfectly well — there the ping measures the filter and this measures the tunnel.',
+      run: 'Open a connection',
+      running: 'Connecting…',
+      port: 'Port',
+      portDefault: "the panel's",
+      hint: 'Leave the port empty to knock on the port this panel serves. Any port will do: what matters is whether the far end answers at all.',
+      accepted: 'Answered',
+      refused: 'Refused — which is an answer',
+      silent: 'Nothing came back',
+    },
     runs: { title: 'Recent runs', empty: 'No diagnostics have been run yet.' },
   },
 

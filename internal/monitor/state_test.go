@@ -1,8 +1,10 @@
 package monitor
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/drs/gre-panel/internal/model"
 )
@@ -90,4 +92,59 @@ type fakeTraffic struct{ totals map[string]uint64 }
 func (f *fakeTraffic) Bytes(name string) (uint64, bool) {
 	total, ok := f.totals[name]
 	return total, ok
+}
+
+// The case an operator on a filtered path actually hits: a tunnel that is idle,
+// so its counters say nothing, on a route where ICMP is dropped, so its probes
+// say nothing either. Neither of the free signals can settle it, and knocking
+// on the far end can.
+func TestAnIdleTunnelOnAFilteredPathIsProvedUpByTheFarEndAnswering(t *testing.T) {
+	cfg := Config{StateChangeSamples: 3, DownLossPercent: 80, DegradedLossPercent: 20}
+
+	state, reason := Classify(Stats{
+		Sent: 10, Received: 0, Lost: 10, LossPercent: 100,
+		CarryingTraffic: false, PeerAnswered: true,
+	}, cfg)
+	if state != model.MonitorStateUp {
+		t.Errorf("state = %s, want Up: the far end answered across the tunnel", StateName(state))
+	}
+	if !strings.Contains(reason, "TCP") {
+		t.Errorf("the reason does not say what settled it: %q", reason)
+	}
+
+	// Nothing answering by any means is a tunnel that is genuinely down.
+	state, _ = Classify(Stats{
+		Sent: 10, Received: 0, Lost: 10, LossPercent: 100,
+		CarryingTraffic: false, PeerAnswered: false,
+	}, cfg)
+	if state != model.MonitorStateDown {
+		t.Errorf("state = %s, want Down", StateName(state))
+	}
+}
+
+// The knock costs a round trip and a socket, and the answer does not change
+// between one probe interval and the next.
+func TestTheFarEndIsNotKnockedOnEveryInterval(t *testing.T) {
+	checker := &countingPeer{answer: true}
+	watch := &peerWatch{checker: checker}
+	cfg := Config{Source: "172.17.1.1", Target: "172.17.1.2", Timeout: time.Second}
+
+	for i := 0; i < 20; i++ {
+		if !watch.answered(context.Background(), cfg) {
+			t.Fatal("the remembered answer was lost")
+		}
+	}
+	if checker.calls != 1 {
+		t.Errorf("knocked %d times in twenty intervals, want once", checker.calls)
+	}
+}
+
+type countingPeer struct {
+	answer bool
+	calls  int
+}
+
+func (c *countingPeer) Answered(context.Context, string, string, time.Duration) bool {
+	c.calls++
+	return c.answer
 }

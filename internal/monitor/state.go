@@ -48,6 +48,17 @@ func Classify(stats Stats, cfg Config) (int64, string) {
 					"path is up and something along it is filtering ICMP rather than dropping packets",
 				stats.LossPercent)
 		}
+		// An idle tunnel carries nothing, so the counters say nothing either.
+		// Knocking on the far end over TCP is what separates a tunnel nobody
+		// is using from one that does not work, and the far end's stack
+		// answering -- by accepting or by refusing -- is proof that the tunnel
+		// carried a packet there and carried the answer back.
+		if stats.PeerAnswered {
+			return model.MonitorStateUp, fmt.Sprintf(
+				"%.1f%% of probes are unanswered and the tunnel is idle, but the far end "+
+					"answered a TCP connection across it: the path is up and ICMP is being filtered",
+				stats.LossPercent)
+		}
 		return model.MonitorStateDown, fmt.Sprintf(
 			"%.1f%% of probes over the last %d are unanswered, at or above the down threshold of %.1f%%",
 			stats.LossPercent, stats.Sent, cfg.DownLossPercent)

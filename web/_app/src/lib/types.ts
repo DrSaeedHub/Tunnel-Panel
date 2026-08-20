@@ -1539,6 +1539,28 @@ export interface RouteAnalyzeResult {
  * One kernel parameter as it stands on this host, beside what the panel would
  * set it to.
  */
+/**
+ * What opening a connection across a tunnel found.
+ *
+ * `answered` is the whole question: a refused connection settles it as well as
+ * an accepted one, because a reset could only have come back if the tunnel
+ * carried the packet there and carried the answer back.
+ */
+export interface TcpCheckResult {
+  source: string
+  target: string
+  port: number
+  answered: boolean
+  /** Something was listening. Stronger than answered, and less important. */
+  accepted: boolean
+  /** The far end sent a reset. Reads like a failure and is not one. */
+  refused: boolean
+  latency_ms?: number
+  detail: string
+  error?: string
+  checked_at: string
+}
+
 export interface TuningReading {
   key: string
   /** 'safety' is kept set by the panel; 'throughput' is offered and applied on request. */

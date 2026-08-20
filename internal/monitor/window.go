@@ -44,6 +44,11 @@ type Stats struct {
 	// sample and the last one. It is set by the prober rather than by the
 	// window, because it is a fact about the link and not about the probes.
 	CarryingTraffic bool `json:"carrying_traffic"`
+	// PeerAnswered reports that the far end's IP stack replied to a TCP
+	// knock. It is asked only when every probe has gone unanswered and the
+	// interface is idle, which is the one case where the two cheaper signals
+	// cannot tell a filtered path from a dead one.
+	PeerAnswered bool `json:"peer_answered"`
 
 	RttMinMs  *float64 `json:"rtt_min_ms"`
 	RttAvgMs  *float64 `json:"rtt_avg_ms"`
