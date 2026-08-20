@@ -537,7 +537,15 @@ export default {
     createdTitle: 'Tunnel created',
     createdBody: '{{name}} was created and verified.',
     updatedTitle: 'Tunnel updated',
-    confirmRecreate: 'I understand the interface will be rebuilt',
+    recreateNotice: 'Saving this rebuilds the interface, because the kernel cannot change it on a tunnel that already exists.',
+    recreateConfirm: {
+      title: 'This rebuilds the tunnel',
+      body: 'The kernel cannot change these on a tunnel that already exists, so the panel deletes the interface and builds it again with the new settings.',
+      traffic: 'Traffic crossing the tunnel stops while it is rebuilt, which is a few seconds.',
+      keyWarning:
+        'A GRE key identifies the tunnel at both ends. Change it here and the far end has to be given the same key, or the tunnel comes back up looking healthy and carries nothing.',
+      confirm: 'Rebuild the tunnel',
+    },
     force: 'Apply anyway',
     forceHint: 'Overrides the warnings above. It cannot override a safety rule.',
   },

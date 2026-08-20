@@ -133,6 +133,7 @@ export function TunnelFormDialog({
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [force, setForce] = useState(false)
   const [confirmRecreate, setConfirmRecreate] = useState(false)
+  const [askingToRecreate, setAskingToRecreate] = useState(false)
 
   // The form is seeded once per opening, from the tunnel being edited, from a
   // pairing code, or from the panel's configured defaults.
@@ -143,6 +144,7 @@ export function TunnelFormDialog({
       setSubmitError(null)
       setForce(false)
       setConfirmRecreate(false)
+      setAskingToRecreate(false)
       return
     }
     if (form) return
@@ -192,17 +194,21 @@ export function TunnelFormDialog({
   })
 
   const submitMutation = useMutation({
-    mutationFn: async () => {
+    // The confirmation travels with the request rather than being read from
+    // state: it is given and acted on in the same moment, and a state update
+    // would not have landed by the time the body is built.
+    mutationFn: async (confirmed: boolean) => {
       const body = {
         ...patch,
         force: force || undefined,
-        confirm_recreate: confirmRecreate || undefined,
+        confirm_recreate: confirmed || confirmRecreate || undefined,
       }
       return tunnel
         ? api.patch<CreateResponse>(`/tunnels/${tunnel.tunnel_id}`, body)
         : api.post<CreateResponse>('/tunnels', body)
     },
     onSuccess: async (result) => {
+      setAskingToRecreate(false)
       await queryClient.invalidateQueries({ queryKey: ['tunnels'] })
       await queryClient.invalidateQueries({ queryKey: ['monitor'] })
 
@@ -226,6 +232,7 @@ export function TunnelFormDialog({
       if (!tunnel) onCreated?.(result.tunnel)
     },
     onError: (error) => {
+      setAskingToRecreate(false)
       if (error instanceof ApiError) {
         setFieldErrors(error.fieldErrors)
         setSubmitError(Object.keys(error.fieldErrors).length ? null : describeError(error, t).message)
@@ -259,6 +266,19 @@ export function TunnelFormDialog({
   const mtuAdvice = previewQuery.data?.mtu
   const warnings = previewQuery.data?.warnings ?? []
   const requiresRecreate = previewQuery.data?.plan.requires_recreate ?? false
+  const recreateReasons = previewQuery.data?.plan.recreate_reasons ?? []
+  // A key is the one changed field whose consequence lands somewhere the panel
+  // cannot see. The rest of a rebuild is over in seconds; a key that no longer
+  // matches the far end leaves a tunnel that comes up and carries nothing.
+  const keyIsChanging = (previewQuery.data?.diffs ?? []).some(
+    (diff) => diff.field === 'ikey' || diff.field === 'okey',
+  )
+  // Editing a tunnel is never refused outright. A change the kernel cannot make
+  // in place is a change worth explaining before it happens, which is what the
+  // confirmation does -- it used to be a checkbox at the foot of a long
+  // scrolling form, out of sight of the button it unlocked, so a greyed-out
+  // Save was the whole of what an operator saw.
+  const mustConfirmRecreate = requiresRecreate && Boolean(tunnel) && !confirmRecreate
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -745,14 +765,14 @@ export function TunnelFormDialog({
             </div>
           ) : null}
 
+          {/* Said here as well as at the moment of saving. The rebuild is not a
+              reason to refuse the change, but it is a thing worth knowing before
+              a button is pressed rather than after. */}
           {requiresRecreate && tunnel ? (
-            <label className="flex items-center gap-2 text-xs font-medium">
-              <Checkbox
-                checked={confirmRecreate}
-                onCheckedChange={(value) => setConfirmRecreate(value === true)}
-              />
-              {t('tunnelForm.confirmRecreate')}
-            </label>
+            <p className="flex items-start gap-2 text-xs text-warn">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+              {t('tunnelForm.recreateNotice')}
+            </p>
           ) : null}
         </DialogBody>
 
@@ -763,14 +783,105 @@ export function TunnelFormDialog({
           <Button
             variant="primary"
             loading={submitMutation.isPending}
-            disabled={requiresRecreate && Boolean(tunnel) && !confirmRecreate}
-            onClick={() => submitMutation.mutate()}
+            onClick={() =>
+              mustConfirmRecreate ? setAskingToRecreate(true) : submitMutation.mutate(false)
+            }
           >
             {submitMutation.isPending
               ? t('tunnelForm.applying')
               : tunnel
                 ? t('tunnelForm.submitEdit')
                 : t('tunnelForm.submitCreate')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+
+      <RecreateDialog
+        open={askingToRecreate}
+        onOpenChange={setAskingToRecreate}
+        reasons={recreateReasons}
+        keyIsChanging={keyIsChanging}
+        carryingTraffic={Boolean(tunnel?.is_enabled)}
+        pending={submitMutation.isPending}
+        onConfirm={() => {
+          setConfirmRecreate(true)
+          submitMutation.mutate(true)
+        }}
+      />
+    </Dialog>
+  )
+}
+
+/**
+ * What a rebuild is, said before it happens rather than after.
+ *
+ * The kernel cannot change a tunnel's key, its endpoints or its type on a
+ * running interface, so the panel takes the interface down and builds it again.
+ * That is worth a sentence and a confirmation, and it used to be a checkbox at
+ * the foot of a long scrolling form -- out of sight of the button it unlocked,
+ * so what an operator actually met was a Save button that would not click and
+ * no stated reason.
+ *
+ * The key gets a warning of its own because its consequence lands somewhere the
+ * panel cannot see. A GRE key identifies the tunnel at both ends; change it on
+ * one side only and the interface comes back up looking healthy and carries
+ * nothing at all.
+ */
+function RecreateDialog({
+  open,
+  onOpenChange,
+  reasons,
+  keyIsChanging,
+  carryingTraffic,
+  pending,
+  onConfirm,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  reasons: string[]
+  keyIsChanging: boolean
+  carryingTraffic: boolean
+  pending: boolean
+  onConfirm: () => void
+}) {
+  const { t } = useTranslation()
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>{t('tunnelForm.recreateConfirm.title')}</DialogTitle>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          <p className="text-sm">{t('tunnelForm.recreateConfirm.body')}</p>
+
+          {reasons.length ? (
+            <ul className="space-y-1 rounded-md border border-border bg-muted/40 p-3">
+              {reasons.map((reason) => (
+                <li key={reason} className="text-2xs text-muted-foreground">
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {carryingTraffic ? (
+            <p className="text-xs text-muted-foreground">{t('tunnelForm.recreateConfirm.traffic')}</p>
+          ) : null}
+
+          {keyIsChanging ? (
+            <p className="flex items-start gap-2 rounded-md border border-warn/40 bg-warn-muted p-3 text-xs">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden="true" />
+              {t('tunnelForm.recreateConfirm.keyWarning')}
+            </p>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            {t('actions.cancel')}
+          </Button>
+          <Button variant="primary" loading={pending} onClick={onConfirm}>
+            {t('tunnelForm.recreateConfirm.confirm')}
           </Button>
         </DialogFooter>
       </DialogContent>
