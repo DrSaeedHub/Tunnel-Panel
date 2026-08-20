@@ -12,6 +12,7 @@ import {
   type HostInterface,
   type InterfacesResponse,
   type RouteListResponse,
+  type RouteDestination,
   type RouteReachabilityResult,
   type RoutePreviewResponse,
   type RouteResultResponse,
@@ -65,11 +66,14 @@ interface FormState {
   destination_monitor_port: string
   /** The shared address lists this rule allows, by identifier. */
   source_list_ids: number[]
+  /** What this dialog does not edit about the primary destination. */
+  destination_carried?: CarriedDestination
   destinations: {
     address: string
     port: string
     weight: string
     monitor_port: string
+    carried?: CarriedDestination
   }[]
 
   // Monitoring. Empty means inherit, which is how a rule that has never
@@ -81,6 +85,36 @@ interface FormState {
   monitor_failure_threshold: string
   monitor_recovery_threshold: string
   allowed_sources: string[]
+}
+
+/**
+ * The parts of a destination this dialog does not edit, carried through it.
+ *
+ * Saving a rule rewrites its whole destination list, so anything this form does
+ * not send is a thing this form deletes. Taking a destination out of rotation
+ * and setting its monitoring both happen on the rule's own page rather than
+ * here, and neither should survive only until the next time somebody corrects
+ * a title.
+ */
+type CarriedDestination = {
+  is_enabled: boolean
+  is_monitor_enabled: boolean | null
+  monitor_interval_seconds: number | null
+  monitor_timeout_seconds: number | null
+  monitor_failure_threshold: number | null
+  monitor_recovery_threshold: number | null
+}
+
+function carriedFrom(destination: RouteDestination | undefined): CarriedDestination | undefined {
+  if (!destination) return undefined
+  return {
+    is_enabled: destination.is_enabled,
+    is_monitor_enabled: destination.is_monitor_enabled ?? null,
+    monitor_interval_seconds: destination.monitor_interval_seconds ?? null,
+    monitor_timeout_seconds: destination.monitor_timeout_seconds ?? null,
+    monitor_failure_threshold: destination.monitor_failure_threshold ?? null,
+    monitor_recovery_threshold: destination.monitor_recovery_threshold ?? null,
+  }
 }
 
 export function RouteFormDialog({
@@ -1026,12 +1060,15 @@ function DestinationList({
             onAddressChange={(value) => update(index, { address: value })}
             onPortChange={(value) => update(index, { port: value })}
             onWeightChange={(value) => update(index, { weight: value })}
-            onRemove={() =>
-              set(
-                'destinations',
-                extras.filter((_, i) => i !== index),
-              )
-            }
+            onRemove={() => {
+              const left = extras.filter((_, i) => i !== index)
+              set('destinations', left)
+              // The mirror of adding one. A second destination moves the
+              // control off "Single destination" because two are distributed
+              // whatever it says; the last one leaving has to move it back,
+              // or the rule reads as balanced across a single backend.
+              if (!left.length) set('load_balance_mode_id', LoadBalanceMode.None)
+            }}
           />
         ))}
 
@@ -1509,12 +1546,14 @@ export function formFromRoute(route: RouteRule, monitorsByDefault = false): Form
     // down rather than opening the dialog.
     destination_weight: String((route.destinations ?? [])[0]?.weight ?? 1),
     destination_monitor_port: numberField((route.destinations ?? [])[0]?.monitor_port),
+    destination_carried: carriedFrom((route.destinations ?? [])[0]),
     source_list_ids: (route.source_lists ?? []).map((list) => list.source_list_id),
     destinations: (route.destinations ?? []).slice(1).map((destination) => ({
       address: destination.address,
       port: String(destination.port),
       weight: String(destination.weight),
       monitor_port: numberField(destination.monitor_port),
+      carried: carriedFrom(destination),
     })),
     is_monitor_enabled: route.is_monitor_enabled ?? monitorsByDefault,
     monitor_mode_id: route.monitor_mode_id ?? RouteMonitorMode.Report,
@@ -1533,7 +1572,7 @@ export function formFromRoute(route: RouteRule, monitorsByDefault = false): Form
  * distinguishes a field that was not mentioned from one explicitly cleared, and
  * an empty bind address means "this server's primary address", not "".
  */
-function toPatch(form: FormState): Record<string, unknown> {
+export function toPatch(form: FormState): Record<string, unknown> {
   const number = (value: string): number | undefined => {
     const parsed = Number(value)
     return value.trim() && Number.isFinite(parsed) ? parsed : undefined
@@ -1587,29 +1626,73 @@ function toPatch(form: FormState): Record<string, unknown> {
   patch.monitor_failure_threshold = number(form.monitor_failure_threshold) ?? null
   patch.monitor_recovery_threshold = number(form.monitor_recovery_threshold) ?? null
 
-  // The primary destination leads the list; the extras follow it.
+  // The destination list is always sent, with the primary leading it.
+  //
+  // It used to be sent only when there was more than one, and an absent field
+  // reads to the backend as "leave it as it was". So a rule could grow a second
+  // destination but never lose one: removing the last extra and saving left the
+  // stored pair untouched, and the rule stayed in multi-destination mode with a
+  // backend the operator had just deleted still taking traffic.
   const extras = form.destinations.filter((destination) => destination.address && destination.port)
-  if (extras.length || form.destination_monitor_port) {
-    patch.destinations = [
-      {
-        address: form.destination_address,
-        port: number(form.destination_port) ?? 0,
-        port_range_end: destinationEnd,
-        weight: number(form.destination_weight) ?? 1,
-        is_enabled: true,
-        monitor_port: number(form.destination_monitor_port) ?? null,
-      },
-      ...extras.map((destination) => ({
-        address: destination.address,
-        port: number(destination.port) ?? 0,
-        weight: number(destination.weight) ?? 1,
-        is_enabled: true,
-        monitor_port: number(destination.monitor_port) ?? null,
-      })),
-    ]
+  if (!extras.length) {
+    // One destination is not balanced across anything. The control is hidden
+    // at this point rather than reset, so the mode it was left on has to be
+    // corrected here too -- a row also stops being a destination by having its
+    // address cleared, which never passes through the remove button.
+    patch.load_balance_mode_id = LoadBalanceMode.None
   }
+  patch.destinations = [
+    entry({
+      address: form.destination_address,
+      port: form.destination_port,
+      weight: form.destination_weight,
+      monitorPort: form.destination_monitor_port,
+      carried: form.destination_carried,
+      portRangeEnd: destinationEnd,
+    }),
+    ...extras.map((destination) =>
+      entry({
+        address: destination.address,
+        port: destination.port,
+        weight: destination.weight,
+        monitorPort: destination.monitor_port,
+        carried: destination.carried,
+      }),
+    ),
+  ]
 
   return patch
+
+  /**
+   * One destination as the backend takes it.
+   *
+   * The carried fields ride along unchanged. Whether a destination is in
+   * rotation, and how it is monitored, are decided on the rule's own page; this
+   * dialog rewrites the list on every save and would erase both if it sent only
+   * what it happens to show.
+   */
+  function entry(row: {
+    address: string
+    port: string
+    weight: string
+    monitorPort: string
+    carried?: CarriedDestination
+    portRangeEnd?: number
+  }) {
+    return {
+      address: row.address,
+      port: number(row.port) ?? 0,
+      port_range_end: row.portRangeEnd,
+      weight: number(row.weight) ?? 1,
+      is_enabled: row.carried?.is_enabled ?? true,
+      monitor_port: number(row.monitorPort) ?? null,
+      is_monitor_enabled: row.carried?.is_monitor_enabled ?? null,
+      monitor_interval_seconds: row.carried?.monitor_interval_seconds ?? null,
+      monitor_timeout_seconds: row.carried?.monitor_timeout_seconds ?? null,
+      monitor_failure_threshold: row.carried?.monitor_failure_threshold ?? null,
+      monitor_recovery_threshold: row.carried?.monitor_recovery_threshold ?? null,
+    }
+  }
 }
 
 /**

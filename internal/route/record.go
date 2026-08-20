@@ -195,6 +195,13 @@ func RecordFrom(in validate.RouteInput) Record {
 	if in.LoadBalanceModeID == 0 {
 		in.LoadBalanceModeID = model.LoadBalanceModeNone
 	}
+	// One destination is not balanced across anything, whatever the request
+	// says. A rule that had two and has been taken back down to one keeps its
+	// old mode otherwise, and every page that reads the stored value goes on
+	// calling a single backend a rotation.
+	if len(in.EffectiveDestinations()) < 2 {
+		in.LoadBalanceModeID = model.LoadBalanceModeNone
+	}
 	if in.AddressFamilyID == 0 {
 		in.AddressFamilyID = model.AddressFamilyIPv4
 		if in.Family() == rules.FamilyIPv6 {

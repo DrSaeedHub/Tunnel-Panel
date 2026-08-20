@@ -459,3 +459,57 @@ func assertListsNotNull(t *testing.T, from string, rec Record) {
 		}
 	}
 }
+
+// A rule that has been taken back down to one destination has one destination.
+//
+// This is the shape the form sends when the last extra is removed: the list
+// holds the primary and nothing else. It is a case worth pinning because the
+// primary appears twice in the request -- once in the rule's own fields and
+// once at the head of the list -- and counting it twice would leave a rule
+// still balanced across a backend that no longer exists, which is the failure
+// this is here to prevent.
+func TestARuleTakenBackDownToOneDestinationKeepsOne(t *testing.T) {
+	ctx, _, repo := openRepo(t)
+	id, err := repo.Insert(ctx, sampleInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := repo.ByID(ctx, id); err != nil {
+		t.Fatal(err)
+	} else if len(rec.Destinations) != 2 {
+		t.Fatalf("the rule did not start with two destinations: %+v", rec.Destinations)
+	}
+
+	// The mode is left on Weighted, the way a rule that used to have two
+	// destinations arrives. Storing it that way would leave every page reading
+	// the value calling a single backend a rotation.
+	in := sampleInput()
+	in.RouteRuleID = id
+	in.Destinations = []validate.RouteDestinationInput{
+		{Address: "172.31.7.2", Port: 30000, PortRangeEnd: 30100, Weight: 1, IsEnabled: true},
+	}
+	if err := repo.Update(ctx, id, in); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := repo.ByID(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Destinations) != 1 {
+		t.Fatalf("got %d destinations, want the one that was kept: %+v",
+			len(rec.Destinations), rec.Destinations)
+	}
+	if rec.Destinations[0].Address != "172.31.7.2" {
+		t.Errorf("the wrong destination survived: %+v", rec.Destinations[0])
+	}
+	if rec.LoadBalanceModeID != model.LoadBalanceModeNone {
+		t.Errorf("a rule with one destination is still stored as balanced (mode %d)",
+			rec.LoadBalanceModeID)
+	}
+	// And the removed backend takes no traffic, which is the point of all of it.
+	spec := rec.Spec()
+	if len(spec.Destinations) != 1 {
+		t.Errorf("the ruleset still sends to %d destinations: %+v", len(spec.Destinations), spec.Destinations)
+	}
+}
