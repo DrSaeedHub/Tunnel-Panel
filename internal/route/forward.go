@@ -31,7 +31,8 @@ const (
 	procConntrackUsed = "proc/sys/net/netfilter/nf_conntrack_count"
 )
 
-// LowConntrackMax is the table size below which a busy relay is at risk. The
+// LowConntrackMax is the table size at or below which a busy relay is at
+// risk. The
 // kernel sizes the table from the machine's memory, which has nothing to do
 // with how many connections a relay carries, so a small VPS routinely ships
 // with a limit a single busy service can exhaust — and when it does, new
@@ -161,7 +162,10 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 				status.ConntrackUsagePercent, status.ConntrackCount, status.ConntrackMax),
 		})
 	}
-	if enabledRules > 0 && status.ConntrackMax > 0 && status.ConntrackMax < LowConntrackMax {
+	// At or below, not below. 65536 is the stock default on the machines this
+	// panel runs on, and a strict comparison meant the one value most likely
+	// to be too small was the one value that never warned.
+	if enabledRules > 0 && status.ConntrackMax > 0 && status.ConntrackMax <= LowConntrackMax {
 		status.Warnings = append(status.Warnings, validate.Warning{
 			Code: WarnConntrackMaxLow,
 			Message: fmt.Sprintf("The connection tracking table holds %d connections. The kernel sizes "+

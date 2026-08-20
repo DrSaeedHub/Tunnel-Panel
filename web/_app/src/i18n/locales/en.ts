@@ -1153,6 +1153,37 @@ export default {
       'The copy was created disabled and with a free name, because an exact copy would claim the same listener. Edit it, then enable it.',
   },
 
+  tuning: {
+    title: 'Kernel tuning',
+    intro:
+      'A stock kernel is sized for a machine that serves a handful of connections at a time. A relay is not that machine, and several of its limits are low enough to stop one outright. Each is shown with what this kernel holds now and what this server should be setting it to.',
+    basis:
+      'Worked out from this server: {{memory}} MB of memory, {{cores}} processor(s), and {{connections}} connections currently crossing its rules.',
+    group: {
+      safety: 'Keeping the server reachable',
+      safetyBody:
+        'The panel keeps these two set by itself, because its own rules are what push them over. When the connection tracking table fills, the kernel stops accepting every new connection on the machine — the panel, SSH, everything — and writes one line to the kernel log. Rebooting appears to fix it, because rebooting empties the table.',
+      throughput: 'Getting the most out of the link',
+      throughputBody:
+        'These decide how much bandwidth and how many connections the server can actually handle. They are left alone until you ask, because they apply to everything running on the machine and not only to the relay.',
+    },
+    apply: 'Apply the recommended values',
+    applyCount: 'Apply {{count}} change',
+    applyCount_other: 'Apply {{count}} changes',
+    upToDate: 'Everything is already set',
+    applied: 'Nothing needed changing',
+    applied_other: '{{count}} parameters were set',
+    revert: 'Put back what was there',
+    reverted: 'The parameters were put back to what they were before',
+    now: 'Now',
+    recommended: 'Recommended',
+    set: 'Set',
+    pending: 'Not set yet',
+    absent: 'Not on this kernel',
+    absentHint: 'This kernel does not have this parameter, so there is nothing to set.',
+    file: 'Written to',
+  },
+
   sourceLists: {
     title: 'Address lists',
     intro:

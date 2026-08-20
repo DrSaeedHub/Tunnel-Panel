@@ -471,6 +471,15 @@ var definitions = []Definition{
 		Default: true,
 	},
 	{
+		Key: "routes.manage_conntrack", Type: KindBool, Category: CategoryRoutes,
+		Description: "Keep the connection tracking table sized for the traffic these rules carry. " +
+			"The kernel sizes it from how much memory the machine has, which has nothing to do with " +
+			"how many connections a relay carries; when it fills, every new connection on the host is " +
+			"refused, SSH included, and the only trace is one line in the kernel log. The panel's own " +
+			"rules are what fill it, so it keeps it sized and records what the values were first.",
+		Default: true,
+	},
+	{
 		Key: "routes.monitor_enabled", Type: KindBool, Category: CategoryRoutes,
 		Description: "Probe the destinations of forwarding rules on a schedule, so a backend that " +
 			"stopped listening is named rather than inferred from a share that went to zero. Each " +

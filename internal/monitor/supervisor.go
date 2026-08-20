@@ -40,6 +40,7 @@ type Supervisor struct {
 	hub      *Hub
 	log      *slog.Logger
 	dialer   Dialer
+	traffic  TrafficReader
 
 	aggregator *aggregator
 
@@ -85,6 +86,9 @@ type Deps struct {
 	Log      *slog.Logger
 	// Dialer opens probe sockets. Nil means real ones.
 	Dialer Dialer
+	// Traffic reads the interface counters that tell a filtered path from a
+	// dead one. Nil means the kernel's own, under /sys.
+	Traffic TrafficReader
 }
 
 // New returns a supervisor. It does not start anything until Start is called.
@@ -97,6 +101,10 @@ func New(d Deps) *Supervisor {
 	if dialer == nil {
 		dialer = SystemDialer{}
 	}
+	traffic := d.Traffic
+	if traffic == nil {
+		traffic = SysfsTraffic{}
+	}
 	return &Supervisor{
 		tunnels:    d.Tunnels,
 		store:      d.Store,
@@ -105,6 +113,7 @@ func New(d Deps) *Supervisor {
 		hub:        NewHub(),
 		log:        log,
 		dialer:     dialer,
+		traffic:    traffic,
 		aggregator: newAggregator(d.Store, log),
 		running:    map[int64]*worker{},
 		disabled:   map[int64]Snapshot{},
@@ -319,7 +328,7 @@ func needsRestart(current, next Config) bool {
 // (§10.3).
 func (s *Supervisor) startProber(ctx context.Context, cfg Config) {
 	probeCtx, cancel := context.WithCancel(ctx)
-	p := newProber(cfg, s.dialer, s.hub, s, s.aggregator)
+	p := newProber(cfg, s.dialer, s.hub, s, s.aggregator, s.traffic)
 	w := &worker{prober: p, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 
 	s.mu.Lock()

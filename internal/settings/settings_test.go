@@ -141,6 +141,11 @@ var additionalKeys = []string{
 	// describes for tunnels and not for relays. The defaults live here for
 	// the same reason the tunnel probe's do: a rule overrides what it needs
 	// and inherits the rest.
+	// Keeping the connection tracking table sized for what the rules carry.
+	// It is a setting rather than unconditional because it is the panel
+	// changing a machine-wide kernel parameter on its own initiative, and an
+	// operator who wants to size it themselves should be able to say so.
+	"routes.manage_conntrack",
 	"routes.monitor_enabled",
 	"routes.monitor_interval_seconds",
 	"routes.monitor_timeout_seconds",

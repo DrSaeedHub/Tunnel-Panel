@@ -49,6 +49,35 @@ var AllowedSysctls = []string{
 	"net.ipv4.ip_forward",
 	"net.ipv6.conf.all.forwarding",
 	"net.netfilter.nf_conntrack_acct",
+
+	// The connection tracking table. These two are on the list because the
+	// panel's own rules are what fill it, and a full table does not slow the
+	// host down -- it takes it off the network. Every new connection is
+	// refused, SSH included, and the only trace is one line in the kernel log.
+	"net.netfilter.nf_conntrack_max",
+	"net.netfilter.nf_conntrack_tcp_timeout_established",
+
+	// Throughput tuning. Every one of these changes how fast this machine
+	// moves packets and none of them changes where a packet goes, which is
+	// the line this list draws. They are also the only ones the panel sets
+	// exclusively on request: a relay operator asking the panel to tune the
+	// host is asking for these, and the panel records what each was first so
+	// the whole set can be put back.
+	"net.ipv4.tcp_congestion_control",
+	"net.core.default_qdisc",
+	"net.core.somaxconn",
+	"net.ipv4.tcp_max_syn_backlog",
+	"net.core.netdev_max_backlog",
+	"net.core.rmem_max",
+	"net.core.wmem_max",
+	"net.ipv4.tcp_rmem",
+	"net.ipv4.tcp_wmem",
+	"net.ipv4.tcp_fastopen",
+	"net.ipv4.tcp_tw_reuse",
+	"net.ipv4.tcp_fin_timeout",
+	"net.ipv4.tcp_keepalive_time",
+	"net.ipv4.ip_local_port_range",
+	"fs.file-max",
 }
 
 // SocketTable is the kernel socket table as the guard reads it. It is an

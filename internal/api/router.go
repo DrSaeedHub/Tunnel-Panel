@@ -31,6 +31,7 @@ import (
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/settings"
 	"github.com/drs/gre-panel/internal/sourcelist"
+	"github.com/drs/gre-panel/internal/tuning"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/update"
 )
@@ -75,6 +76,8 @@ type Deps struct {
 	RouteDiag       *route.Diagnostics
 	// SourceLists are the named address lists a rule allows traffic from.
 	SourceLists *sourcelist.Repo
+	// Tuning reads and applies the kernel parameters a relay depends on.
+	Tuning *tuning.Manager
 	// RouteMonitor probes the destinations of the rules that ask for it.
 	// Without it a rule reports its destinations as unmonitored rather than
 	// as healthy, which is the difference between no answer and a good one.
@@ -137,6 +140,7 @@ type Server struct {
 	routeDiag    *route.Diagnostics
 	routeMonitor *route.Monitor
 	sourceLists  *sourcelist.Repo
+	tuning       *tuning.Manager
 	monitor      *monitor.Supervisor
 	metrics      *metrics.Sampler
 	diag         *diag.Service
@@ -212,6 +216,7 @@ func New(d Deps) (*Server, error) {
 		routeDiag:    d.RouteDiag,
 		routeMonitor: d.RouteMonitor,
 		sourceLists:  d.SourceLists,
+		tuning:       d.Tuning,
 		monitor:      d.Monitor,
 		metrics:      d.Metrics,
 		diag:         d.Diag,
@@ -503,6 +508,15 @@ func (s *Server) buildRouter() http.Handler {
 					})
 
 					// The kernel parameters and the netfilter picture (§2.3).
+					// What the kernel is set to, what it should be, and the two
+					// buttons that change it.
+					r.Group(func(r chi.Router) {
+						r.Use(s.requireTuning)
+						r.Get("/system/tuning", s.handleTuning)
+						r.Post("/system/tuning/apply", s.handleApplyTuning)
+						r.Post("/system/tuning/revert", s.handleRevertTuning)
+					})
+
 					r.Get("/system/forwarding", s.handleForwarding)
 					r.Post("/system/forwarding/enable", s.handleEnableForwarding)
 				})

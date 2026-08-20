@@ -42,6 +42,7 @@ import (
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/settings"
 	"github.com/drs/gre-panel/internal/sourcelist"
+	"github.com/drs/gre-panel/internal/tuning"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/update"
 	"github.com/drs/gre-panel/internal/validate"
@@ -280,6 +281,7 @@ func run() error {
 	sockets := rules.NewSocketReader()
 	routeGuard := safety.NewRouteGuard(cfg.BindPort, sockets, filepath.Join(cfg.DataDir, "rules"))
 	routeForwarding := route.NewForwarding(persistStore, renderer, routeGuard)
+	kernelTuning := tuning.New(persistStore, renderer, routeGuard, log)
 	routeAccounting := route.NewAccounting(route.AccountingDeps{
 		Repo:     route.NewCounterRepo(database),
 		Routes:   routeRepo,
@@ -413,6 +415,7 @@ func run() error {
 		RouteDiag:       routeDiag,
 		RouteMonitor:    routeMonitor,
 		SourceLists:     sourceLists,
+		Tuning:          kernelTuning,
 		Monitor:         monitorSupervisor,
 		Metrics:         metricsSampler,
 		Diag:            diagService,
@@ -459,6 +462,38 @@ func run() error {
 	// The destination monitor. It probes nothing until a rule asks for it,
 	// so it costs a ticker on an installation that never turns it on.
 	go routeMonitor.Run(ctx)
+
+	// Keeping the connection tracking table big enough for the traffic the
+	// rules carry.
+	//
+	// This is the one kernel parameter the panel maintains on its own
+	// initiative, because filling that table does not make the host slow --
+	// it refuses every new connection on it, the panel's own port and SSH
+	// included, and writes one line to the kernel log that nobody is reading.
+	// The panel's rules are what fill it. It only ever raises the ceiling and
+	// shortens the timeout, so an operator who has sized it themselves keeps
+	// their numbers.
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if !store.Bool("routes.manage_conntrack") {
+					continue
+				}
+				live := 0
+				if summary := routeAccounting.Summary(); summary.Routes > 0 {
+					live = summary.ActiveConnections
+				}
+				if _, err := kernelTuning.EnsureSafety(ctx, live); err != nil {
+					log.Debug("sizing the connection tracking table failed", "error", err)
+				}
+			}
+		}
+	}()
 
 	// Expired database download links are deleted on a slow tick.
 	//

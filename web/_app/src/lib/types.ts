@@ -1535,6 +1535,33 @@ export interface RouteAnalyzeResult {
   checked_at: string
 }
 
+/**
+ * One kernel parameter as it stands on this host, beside what the panel would
+ * set it to.
+ */
+export interface TuningReading {
+  key: string
+  /** 'safety' is kept set by the panel; 'throughput' is offered and applied on request. */
+  group: 'safety' | 'throughput'
+  title: string
+  explain: string
+  current: string
+  recommended: string
+  /** False when this kernel does not have the parameter at all. */
+  available: boolean
+  matches: boolean
+}
+
+export interface TuningReport {
+  facts: { MemoryMB: number; Cores: number; LiveConnections: number }
+  /** The panel's own tuning file is in place, so reverting means something. */
+  panel_managed: boolean
+  sysctl_path: string
+  readings: TuningReading[]
+  pending: number
+  safety_pending: number
+}
+
 export interface ForwardingStatus {
   ipv4_forwarding: boolean
   ipv6_forwarding: boolean

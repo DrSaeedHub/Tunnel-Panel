@@ -40,6 +40,10 @@ type Stats struct {
 	Pending  int `json:"pending"`
 
 	LossPercent float64 `json:"loss_percent"`
+	// CarryingTraffic reports that the interface moved bytes between this
+	// sample and the last one. It is set by the prober rather than by the
+	// window, because it is a fact about the link and not about the probes.
+	CarryingTraffic bool `json:"carrying_traffic"`
 
 	RttMinMs  *float64 `json:"rtt_min_ms"`
 	RttAvgMs  *float64 `json:"rtt_avg_ms"`

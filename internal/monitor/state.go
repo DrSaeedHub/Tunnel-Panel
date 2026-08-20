@@ -32,11 +32,29 @@ func Classify(stats Stats, cfg Config) (int64, string) {
 			"only %d of the %d probes needed for a verdict have finished", stats.Sent, cfg.StateChangeSamples)
 	}
 	if stats.LossPercent >= cfg.DownLossPercent {
+		// A link carrying traffic is not down, whatever the probes say.
+		//
+		// On a path where ICMP is filtered -- which is the ordinary condition
+		// on a good many of the routes this panel is used across -- a tunnel
+		// running at full speed answers no probes at all. Calling that down is
+		// not merely a wrong label: it is the input to everything that acts on
+		// a tunnel being down, so a working link gets torn up and rebuilt on a
+		// schedule. The interface's own counters settle it, and they are the
+		// stronger evidence: a probe is a question the far end may decline to
+		// answer, and a byte count is packets that actually crossed.
+		if stats.CarryingTraffic {
+			return model.MonitorStateUp, fmt.Sprintf(
+				"%.1f%% of probes are unanswered, but the interface is carrying traffic: the "+
+					"path is up and something along it is filtering ICMP rather than dropping packets",
+				stats.LossPercent)
+		}
 		return model.MonitorStateDown, fmt.Sprintf(
 			"%.1f%% of probes over the last %d are unanswered, at or above the down threshold of %.1f%%",
 			stats.LossPercent, stats.Sent, cfg.DownLossPercent)
 	}
 	if stats.LossPercent >= cfg.DegradedLossPercent {
+		// Partial loss with traffic moving is still degraded: some probes did
+		// come back, so the far end is answering and the loss is real.
 		return model.MonitorStateDegraded, fmt.Sprintf(
 			"%.1f%% of probes over the last %d are unanswered, at or above the degraded threshold of %.1f%%",
 			stats.LossPercent, stats.Sent, cfg.DegradedLossPercent)

@@ -16,6 +16,7 @@ import { EmptyState, ErrorState, Skeleton, describeError } from '@/components/ui
 import { SettingField } from '@/components/settings/SettingField'
 import { PoolsSection } from '@/components/settings/PoolsSection'
 import { SourceListsSection } from '@/components/settings/SourceListsSection'
+import { TuningSection } from '@/components/settings/TuningSection'
 import { AccountSection, BackupSection } from '@/components/settings/AccountAndBackup'
 import { PanelAddressSection } from '@/components/settings/PanelAddressSection'
 import { DatabaseSection } from '@/components/settings/DatabaseSection'
@@ -203,6 +204,12 @@ export default function SettingsPage() {
         return (
           <div key="sourceLists" id="settings-source-lists">
             <SourceListsSection />
+          </div>
+        )
+      case 'tuning':
+        return (
+          <div key="tuning" id="settings-tuning">
+            <TuningSection />
           </div>
         )
       case 'address':

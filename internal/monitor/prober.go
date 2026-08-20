@@ -61,6 +61,9 @@ type prober struct {
 
 	identifier int
 	isIPv6     bool
+	// traffic answers whether the interface moved anything since the last
+	// sample, which is what keeps a filtered path from reading as a dead one.
+	traffic *trafficWatch
 
 	mu        sync.Mutex
 	since     time.Time
@@ -73,7 +76,8 @@ type prober struct {
 // newProber builds a prober for one tunnel. The echo identifier is derived from
 // the tunnel identifier so that replies can never be miscounted across tunnels
 // sharing a raw socket's view of the network (§10.1).
-func newProber(cfg Config, dialer Dialer, publisher Publisher, transitions TransitionSink, agg *aggregator) *prober {
+func newProber(cfg Config, dialer Dialer, publisher Publisher, transitions TransitionSink,
+	agg *aggregator, traffic TrafficReader) *prober {
 	p := &prober{
 		dialer:      dialer,
 		window:      NewWindow(cfg.WindowSize),
@@ -84,6 +88,7 @@ func newProber(cfg Config, dialer Dialer, publisher Publisher, transitions Trans
 		identifier:  identifierFor(cfg.TunnelID),
 		since:       time.Now(),
 		lastState:   model.MonitorStateUnknown,
+		traffic:     &trafficWatch{reader: traffic},
 	}
 	p.cfg.Store(&cfg)
 	return p
@@ -330,6 +335,7 @@ func (p *prober) evaluate(ctx context.Context) error {
 func (p *prober) sample(ctx context.Context, now time.Time) {
 	cfg := p.Config()
 	stats := p.window.Stats(now)
+	stats.CarryingTraffic = p.traffic.moved(cfg.InterfaceName)
 	state, reason := Classify(stats, cfg)
 
 	p.mu.Lock()

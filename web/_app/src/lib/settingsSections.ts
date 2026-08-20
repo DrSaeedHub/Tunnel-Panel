@@ -33,7 +33,14 @@ export interface SettingsPageDef {
   categories: string[]
   /** Non-schema panels rendered on this page, in order. */
   extras: Array<
-    'density' | 'pools' | 'sourceLists' | 'address' | 'database' | 'account' | 'backup'
+    | 'density'
+    | 'pools'
+    | 'sourceLists'
+    | 'tuning'
+    | 'address'
+    | 'database'
+    | 'account'
+    | 'backup'
   >
 }
 
@@ -52,7 +59,7 @@ const PAGES: SettingsPageDef[] = [
   { key: 'diagnostics', Icon: Stethoscope, labelKey: 'settings.category.diagnostics', categories: ['diagnostics'], extras: [] },
   { key: 'metrics', Icon: BarChart3, labelKey: 'settings.category.metrics', categories: ['metrics'], extras: [] },
   { key: 'security', Icon: Shield, labelKey: 'settings.category.security', categories: ['security'], extras: [] },
-  { key: 'system', Icon: Wrench, labelKey: 'settings.category.system', categories: ['system'], extras: [] },
+  { key: 'system', Icon: Wrench, labelKey: 'settings.category.system', categories: ['system'], extras: ['tuning'] },
   { key: 'address', Icon: Globe, labelKey: 'settings.address.title', categories: [], extras: ['address'] },
   { key: 'database', Icon: Database, labelKey: 'settings.database.title', categories: [], extras: ['database'] },
   { key: 'account', Icon: KeyRound, labelKey: 'settings.account.title', categories: [], extras: ['account', 'backup'] },
