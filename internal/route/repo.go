@@ -745,6 +745,23 @@ func (r *Repo) SetDestinationSuppressed(ctx context.Context, destinationID int64
 	return nil
 }
 
+// SetDestinationEnabled switches one destination in or out of service.
+//
+// The quota checker uses it when a destination's traffic limit is enforced:
+// unlike suppression, which the monitor reverses the moment a probe succeeds,
+// this is the same IsEnabled an operator sets, so nothing switches it back
+// until the limit's window rolls over or somebody resets the usage.
+func (r *Repo) SetDestinationEnabled(ctx context.Context, destinationID int64, enabled bool) error {
+	_, err := r.db.Write.ExecContext(ctx, `
+		UPDATE RouteDestination SET IsEnabled = ?, UpdatedDate = ?
+		WHERE RouteDestinationID = ? AND IsDeleted = 0`,
+		boolToInt(enabled), model.NowUTC(), destinationID)
+	if err != nil {
+		return fmt.Errorf("switching destination %d: %w", destinationID, err)
+	}
+	return nil
+}
+
 // SoftDelete marks a rule and its children deleted. Business rows are never
 // hard-deleted (§6).
 func (r *Repo) SoftDelete(ctx context.Context, id int64) error {

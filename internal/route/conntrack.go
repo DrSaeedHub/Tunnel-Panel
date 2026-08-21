@@ -337,6 +337,10 @@ type ConnectionCount struct {
 	// ByDestination is where the connections actually went, with what moved
 	// to each since the previous reading.
 	ByDestination []DestinationLoad `json:"by_destination,omitempty"`
+	// MovedByDestination is the same movement as raw byte counts, which is
+	// what the cumulative per-destination accounting folds up. Internal: the
+	// response already carries the movement as rates.
+	MovedByDestination []DestinationMoved `json:"-"`
 	// RateIntervalSeconds is the gap those rates were measured over. Zero
 	// means there was no usable previous reading and they are not rates.
 	RateIntervalSeconds float64 `json:"rate_interval_seconds,omitempty"`
@@ -421,7 +425,7 @@ func (c *conntrackState) observe(specs []rules.RouteSpec, flows []Flow, now time
 		if previous != nil && gap > 0 {
 			count.RateIntervalSeconds = gap
 		}
-		count.ByDestination = load.result(count.RateIntervalSeconds)
+		count.ByDestination, count.MovedByDestination = load.result(count.RateIntervalSeconds)
 		next[spec.RouteRuleID] = keys
 		out[spec.RouteRuleID] = count
 	}
@@ -485,10 +489,26 @@ func (d *destinationTally) add(flow Flow, was flowBytes, seen, comparable bool) 
 	}
 }
 
+// DestinationMoved is what one reading saw move to one destination, in bytes.
+type DestinationMoved struct {
+	Address string
+	Port    int
+	RxBytes uint64
+	TxBytes uint64
+}
+
 // result returns the destinations busiest first, with the movement divided by
-// the gap when there was a usable one.
-func (d *destinationTally) result(seconds float64) []DestinationLoad {
+// the gap when there was a usable one, and the raw movement beside it for the
+// cumulative accounting.
+func (d *destinationTally) result(seconds float64) ([]DestinationLoad, []DestinationMoved) {
+	var moved []DestinationMoved
 	for i := range d.rows {
+		if d.moved[i].rx > 0 || d.moved[i].tx > 0 {
+			moved = append(moved, DestinationMoved{
+				Address: d.rows[i].Address, Port: d.rows[i].Port,
+				RxBytes: uint64(d.moved[i].rx), TxBytes: uint64(d.moved[i].tx),
+			})
+		}
 		if seconds > 0 {
 			d.rows[i].RxBytesPerSecond = d.moved[i].rx / seconds
 			d.rows[i].TxBytesPerSecond = d.moved[i].tx / seconds
@@ -503,5 +523,5 @@ func (d *destinationTally) result(seconds float64) []DestinationLoad {
 		}
 		return d.rows[i].Port < d.rows[j].Port
 	})
-	return d.rows
+	return d.rows, moved
 }

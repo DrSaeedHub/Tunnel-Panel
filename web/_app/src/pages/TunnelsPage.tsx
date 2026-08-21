@@ -24,6 +24,7 @@ import {
   type TunnelInput,
   type TunnelListResponse,
   type TunnelResponse,
+  type QuotaStatus,
 } from '@/lib/types'
 import { formatMs, formatPercent, hasDisplayName, tunnelLabel } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
@@ -41,6 +42,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/overlay'
 import { ApplyStatusBadge, StatusPill, monitorStateKey } from '@/components/ui/status'
+import { QuotaBadge, tunnelQuota, useQuotaStatuses } from '@/components/quota/TrafficLimit'
 import { Technical, TunnelName } from '@/components/ui/technical'
 import { cn } from '@/lib/utils'
 import { TunnelFormDialog } from '@/components/tunnels/TunnelFormDialog'
@@ -77,6 +79,7 @@ export default function TunnelsPage() {
 
   useDocumentTitle(t('tunnels.title'))
 
+  const quotaQuery = useQuotaStatuses()
   const listQuery = useQuery({
     queryKey: ['tunnels', 'list'],
     queryFn: () => api.get<TunnelListResponse>('/tunnels'),
@@ -302,6 +305,7 @@ export default function TunnelsPage() {
               <tbody className="divide-y divide-border">
                 {rows.map((row) => (
                   <TunnelRow
+                    quota={tunnelQuota(quotaQuery.data, row.tunnel.tunnel_id)}
                     key={row.tunnel.tunnel_id}
                     entry={row}
                     snapshot={monitor.byTunnel.get(row.tunnel.tunnel_id)}
@@ -402,6 +406,7 @@ function SortableHeader({
 
 function TunnelRow({
   entry,
+  quota,
   snapshot,
   selected,
   onSelect,
@@ -414,6 +419,7 @@ function TunnelRow({
   onPairingCode,
 }: {
   entry: TunnelResponse
+  quota?: QuotaStatus
   snapshot?: MonitorSnapshot
   selected: boolean
   onSelect: () => void
@@ -473,6 +479,7 @@ function TunnelRow({
           <div className="mt-0.5 flex flex-wrap items-center gap-1">
             <Badge>{tunnel.tunnel_side_id === TunnelSide.A ? t('tunnel.side.a') : t('tunnel.side.b')}</Badge>
             {!tunnel.is_enabled ? <Badge tone="neutral">{t('states.disabled')}</Badge> : null}
+            <QuotaBadge status={quota} />
           </div>
         </td>
         <td className="hidden px-2 py-[var(--row-padding-block)] md:table-cell">

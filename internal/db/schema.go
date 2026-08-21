@@ -429,6 +429,63 @@ var entityDDL = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS UX_RouteTrafficCounter_Rule
 		ON RouteTrafficCounter (RouteRuleID) WHERE IsDeleted = 0`,
 
+	// One traffic limit. The limited thing is named by scope: a tunnel by its
+	// id, a rule by its id, and a rule's destination by rule, address and port
+	// — by address rather than by RouteDestinationID, because saving a rule
+	// rewrites its destination rows and the limit has to survive that.
+	//
+	// The baseline columns are what the cumulative counters read when the
+	// current window began; usage is the counter minus the baseline, so a
+	// window rolls over by rebasing rather than by zeroing anything.
+	`CREATE TABLE IF NOT EXISTS TrafficQuota (
+		TrafficQuotaID    INTEGER PRIMARY KEY AUTOINCREMENT,
+		ScopeTypeID       INTEGER NOT NULL,
+		TunnelID          INTEGER,
+		RouteRuleID       INTEGER,
+		Address           TEXT,
+		Port              INTEGER,
+
+		LimitBytes        INTEGER NOT NULL,
+		ModeID            INTEGER NOT NULL DEFAULT 10,
+		PeriodID          INTEGER NOT NULL DEFAULT 40,
+
+		BaselineRxBytes   INTEGER NOT NULL DEFAULT 0,
+		BaselineTxBytes   INTEGER NOT NULL DEFAULT 0,
+		PeriodStartDate   TEXT,
+		QuotaDisabledDate TEXT,
+
+		CreatedDate       TEXT    NOT NULL,
+		UpdatedDate       TEXT    NOT NULL,
+		IsDeleted         INTEGER NOT NULL DEFAULT 0
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_TrafficQuota_Tunnel
+		ON TrafficQuota (TunnelID) WHERE IsDeleted = 0 AND ScopeTypeID = 10`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_TrafficQuota_Rule
+		ON TrafficQuota (RouteRuleID) WHERE IsDeleted = 0 AND ScopeTypeID = 20`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_TrafficQuota_Destination
+		ON TrafficQuota (RouteRuleID, Address, Port) WHERE IsDeleted = 0 AND ScopeTypeID = 30`,
+
+	// Cumulative per-destination traffic, folded from connection tracking the
+	// way RouteTrafficCounter is folded from the rule counters. Keyed by rule,
+	// address and port for the same reason the quota table is: destination
+	// rows are rewritten on every save and a lifetime total has to survive it.
+	`CREATE TABLE IF NOT EXISTS RouteDestinationTrafficCounter (
+		RouteDestinationTrafficCounterID INTEGER PRIMARY KEY AUTOINCREMENT,
+		RouteRuleID   INTEGER NOT NULL,
+		Address       TEXT    NOT NULL,
+		Port          INTEGER NOT NULL,
+		RxBytesTotal  INTEGER NOT NULL DEFAULT 0,
+		TxBytesTotal  INTEGER NOT NULL DEFAULT 0,
+		LastSeenDate  TEXT    NOT NULL,
+		CreatedDate   TEXT    NOT NULL,
+		UpdatedDate   TEXT    NOT NULL,
+		IsDeleted     INTEGER NOT NULL DEFAULT 0,
+
+		FOREIGN KEY (RouteRuleID) REFERENCES RouteRule (RouteRuleID)
+	)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS UX_RouteDestinationTrafficCounter_Dest
+		ON RouteDestinationTrafficCounter (RouteRuleID, Address, Port) WHERE IsDeleted = 0`,
+
 	`CREATE TABLE IF NOT EXISTS RouteTrafficSample (
 		RouteTrafficSampleID INTEGER PRIMARY KEY AUTOINCREMENT,
 		RouteRuleID          INTEGER NOT NULL,

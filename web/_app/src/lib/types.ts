@@ -1603,6 +1603,32 @@ export interface TuningReport {
   safety_pending: number
 }
 
+/** One traffic limit's standing, computed by the backend's quota checker. */
+export interface QuotaStatus {
+  limit_bytes: number
+  /** 10 = warn only, 20 = stop when reached. */
+  mode_id: number
+  /** 10 = total, 20 = daily, 30 = weekly, 40 = monthly. */
+  period_id: number
+  used_bytes: number
+  period_start?: string
+  /** Usage has reached the limit. */
+  exhausted: boolean
+  /** The panel stopped the subject because of this limit. */
+  stopped: boolean
+}
+
+/** Every limit's standing, keyed by subject. */
+export interface QuotaStatuses {
+  tunnels: Record<string, QuotaStatus>
+  rules: Record<string, QuotaStatus>
+  /** Rule id → "address:port" → status. */
+  destinations: Record<string, Record<string, QuotaStatus>>
+}
+
+export const TrafficLimitMode = { Warn: 10, Enforce: 20 } as const
+export const TrafficPeriod = { Total: 10, Daily: 20, Weekly: 30, Monthly: 40 } as const
+
 export interface ForwardingStatus {
   ipv4_forwarding: boolean
   ipv6_forwarding: boolean

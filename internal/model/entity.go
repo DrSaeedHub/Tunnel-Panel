@@ -43,6 +43,24 @@ type AppUser struct {
 //
 // The Monitor* fields are nullable overrides: NULL means "inherit the global
 // setting", which is what powers the inherit/override control in the UI (§6).
+// QuotaStatus is one traffic limit as it stands: what was allowed, what has
+// been used, and whether the panel has acted on it. It is computed by the
+// quota checker and embedded wherever the limited thing appears.
+type QuotaStatus struct {
+	LimitBytes int64 `json:"limit_bytes"`
+	ModeID     int64 `json:"mode_id"`
+	PeriodID   int64 `json:"period_id"`
+	UsedBytes  int64 `json:"used_bytes"`
+	// PeriodStart is when the current counting window began.
+	PeriodStart string `json:"period_start,omitempty"`
+	// Exhausted reports that usage has reached the limit.
+	Exhausted bool `json:"exhausted"`
+	// Stopped reports that the panel disabled the subject because of this
+	// limit, which only the enforcing mode does. It clears when the window
+	// rolls over, when usage is reset, or when the limit is removed.
+	Stopped bool `json:"stopped"`
+}
+
 type Tunnel struct {
 	TunnelID          int64   `json:"tunnel_id"`
 	TunnelTypeID      int64   `json:"tunnel_type_id"`

@@ -11,6 +11,39 @@ export default {
     repository: 'Source and releases on GitHub',
   },
 
+  quota: {
+    title: 'Traffic limit',
+    set: 'Set traffic limit',
+    edit: 'Edit the traffic limit',
+    hint: 'How much this may carry, both directions together. When it has carried that much, the panel warns or stops it — your choice below.',
+    limit: 'Allowance',
+    unit: 'Unit',
+    window: 'Counted per',
+    onReached: 'When the limit is reached',
+    used: '{{used}} of {{limit}}',
+    period: {
+      10: 'in total',
+      20: 'per day',
+      30: 'per week',
+      40: 'per month',
+    },
+    mode: {
+      10: 'Warn only',
+      20: 'Stop it',
+    },
+    modeHint: {
+      10: 'Traffic keeps flowing; the panel marks it as over its limit.',
+      20: 'The panel stops it, and starts it again when the window rolls over or you reset the usage.',
+    },
+    stopped: 'Stopped at limit',
+    overLimit: 'Over limit',
+    reset: 'Reset usage',
+    remove: 'Remove limit',
+    saved: 'The traffic limit was saved',
+    removed: 'The traffic limit was removed',
+    resetDone: 'The count starts over from zero',
+  },
+
   nav: {
     dashboard: 'Dashboard',
     tunnels: 'Tunnels',

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { QuotaBadge, ruleQuota, useQuotaStatuses } from '@/components/quota/TrafficLimit'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
@@ -27,6 +28,7 @@ import {
   type RouteResponse,
   type RouteRule,
   type TunnelListResponse,
+  type QuotaStatus,
 } from '@/lib/types'
 import {
   formatCount,
@@ -91,6 +93,7 @@ export default function RoutesPage() {
 
   useDocumentTitle(t('routes.title'))
 
+  const quotaQuery = useQuotaStatuses()
   const listQuery = useQuery({
     queryKey: ['routes', 'list'],
     queryFn: () => api.get<RouteListResponse>('/routes'),
@@ -414,6 +417,7 @@ export default function RoutesPage() {
                     <RouteRow
                       key={row.route.route_rule_id}
                       entry={row}
+                      quota={ruleQuota(quotaQuery.data, row.route.route_rule_id)}
                       index={index}
                       count={rows.length}
                       traffic={trafficById.get(row.route.route_rule_id)}
@@ -545,6 +549,7 @@ function SortableHeader({
 
 function RouteRow({
   entry,
+  quota,
   index,
   count,
   traffic,
@@ -570,6 +575,7 @@ function RouteRow({
   formatCountText,
 }: {
   entry: RouteResponse
+  quota?: QuotaStatus
   index: number
   count: number
   traffic?: RelayTraffic
@@ -673,6 +679,7 @@ function RouteRow({
               </Badge>
             ) : null}
             {index === 0 && count > 1 ? <Badge tone="neutral">{t('routes.order.hint')}</Badge> : null}
+            <QuotaBadge status={quota} />
           </div>
         </td>
 

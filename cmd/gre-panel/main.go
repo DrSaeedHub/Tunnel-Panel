@@ -36,6 +36,7 @@ import (
 	"github.com/drs/gre-panel/internal/metrics"
 	"github.com/drs/gre-panel/internal/monitor"
 	"github.com/drs/gre-panel/internal/persist"
+	"github.com/drs/gre-panel/internal/quota"
 	"github.com/drs/gre-panel/internal/reconcile"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/rules"
@@ -347,9 +348,60 @@ func run() error {
 		Links: links, Log: log, Dialer: probeDialer,
 		PanelPort: cfg.BindPort,
 	})
+	trafficCounters := metrics.NewCounters(database)
 	metricsSampler := metrics.New(metrics.Deps{
 		Reader: metrics.NewReader(), Links: links,
-		Counters: metrics.NewCounters(database), Settings: store, Log: log,
+		Counters: trafficCounters, Settings: store, Log: log,
+	})
+
+	// Traffic limits. The checker reads the cumulative counters the panel
+	// already keeps and acts through the same services an operator's own click
+	// would, so an enforced limit tears down the interface or rebuilds the
+	// ruleset exactly as if the switch had been flipped by hand.
+	quotaChecker := quota.New(quota.Deps{
+		DB: database,
+		TunnelVolume: func(name string) (uint64, uint64, bool) {
+			volume, ok := trafficCounters.Volumes()[name]
+			if !ok {
+				return 0, 0, false
+			}
+			return volume.RxBytesTotal, volume.TxBytesTotal, true
+		},
+		RuleVolume: func(id int64) (uint64, uint64, bool) {
+			traffic, ok := routeAccounting.Traffic(id)
+			if !ok {
+				return 0, 0, false
+			}
+			return traffic.RxBytesSinceCreation, traffic.TxBytesSinceCreation, true
+		},
+		DestinationVolume: func(ruleID int64, address string, port int64) (uint64, uint64, bool) {
+			rx, tx := routeAccounting.DestinationVolume(ruleID, address, int(port))
+			return rx, tx, true
+		},
+		StopTunnel: func(ctx context.Context, id int64) error {
+			_, err := tunnelService.Down(ctx, id, tunnel.Request{IUnderstandIMayLoseAccess: true})
+			return err
+		},
+		StartTunnel: func(ctx context.Context, id int64) error {
+			_, err := tunnelService.Up(ctx, id, tunnel.Request{IUnderstandIMayLoseAccess: true})
+			return err
+		},
+		StopRule: func(ctx context.Context, id int64) error {
+			_, err := routeService.SetEnabled(ctx, id, false, route.Request{})
+			return err
+		},
+		StartRule: func(ctx context.Context, id int64) error {
+			_, err := routeService.SetEnabled(ctx, id, true, route.Request{})
+			return err
+		},
+		SetDestinationEnabled: func(ctx context.Context, destID int64, enabled bool) error {
+			if err := routeRepo.SetDestinationEnabled(ctx, destID, enabled); err != nil {
+				return err
+			}
+			_, err := routeService.ApplyAll(ctx, route.Request{})
+			return err
+		},
+		Log: log,
 	})
 	diagService := diag.New(diag.Deps{
 		DB: database, Repo: repo, Links: links, Runner: runner, Settings: store, Log: log,
@@ -418,6 +470,7 @@ func run() error {
 		RouteMonitor:    routeMonitor,
 		SourceLists:     sourceLists,
 		Tuning:          kernelTuning,
+		Quota:           quotaChecker,
 		Monitor:         monitorSupervisor,
 		Metrics:         metricsSampler,
 		Diag:            diagService,
@@ -464,6 +517,10 @@ func run() error {
 	// The destination monitor. It probes nothing until a rule asks for it,
 	// so it costs a ticker on an installation that never turns it on.
 	go routeMonitor.Run(ctx)
+	// Traffic limits are checked on a half-minute sweep: fine enough that an
+	// enforced limit acts within a minute of being crossed, coarse enough to
+	// cost nothing.
+	go quotaChecker.Run(ctx, 30*time.Second)
 
 	// Keeping the connection tracking table big enough for the traffic the
 	// rules carry.

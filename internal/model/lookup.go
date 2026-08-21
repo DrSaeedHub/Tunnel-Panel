@@ -111,6 +111,51 @@ func RouteMonitorModeName(id int64) string {
 	return "report"
 }
 
+// TrafficLimitMode identifiers: what the panel does when a traffic limit is
+// reached. Warning is the mode that changes nothing, which is why it is the
+// default and why an unknown identifier reads as it.
+const (
+	TrafficLimitModeWarn    int64 = 10
+	TrafficLimitModeEnforce int64 = 20
+)
+
+// TrafficLimitModeName maps an identifier to the name the API uses.
+func TrafficLimitModeName(id int64) string {
+	if id == TrafficLimitModeEnforce {
+		return "enforce"
+	}
+	return "warn"
+}
+
+// TrafficPeriod identifiers: the window a traffic limit is counted over.
+// Monthly is the default because traffic is bought by the month.
+const (
+	TrafficPeriodTotal   int64 = 10
+	TrafficPeriodDaily   int64 = 20
+	TrafficPeriodWeekly  int64 = 30
+	TrafficPeriodMonthly int64 = 40
+)
+
+// TrafficPeriodName maps an identifier to the name the API uses.
+func TrafficPeriodName(id int64) string {
+	switch id {
+	case TrafficPeriodTotal:
+		return "total"
+	case TrafficPeriodDaily:
+		return "daily"
+	case TrafficPeriodWeekly:
+		return "weekly"
+	}
+	return "monthly"
+}
+
+// QuotaScope identifiers: what a traffic limit is attached to.
+const (
+	QuotaScopeTunnel      int64 = 10
+	QuotaScopeRule        int64 = 20
+	QuotaScopeDestination int64 = 30
+)
+
 // LoadBalanceMode identifiers. SourceHash keeps a given client on a given
 // destination; RoundRobin does not.
 const (

@@ -131,6 +131,9 @@ type Accounting struct {
 	titles  map[int64]string
 	specs   []rules.RouteSpec
 
+	destVolumes map[destVolumeKey]*DestVolume
+	destDirty   map[destVolumeKey]bool
+
 	conn         *conntrackState
 	lastSampleAt time.Time
 	lastConnAt   time.Time
@@ -157,6 +160,7 @@ func NewAccounting(d AccountingDeps) *Accounting {
 		live: map[int64]Traffic{}, history: map[int64][]Point{},
 		pending: map[int64]*bucket{}, counts: map[int64]ConnectionCount{},
 		titles: map[int64]string{}, conn: newConntrackState(),
+		destVolumes: map[destVolumeKey]*DestVolume{}, destDirty: map[destVolumeKey]bool{},
 	}
 }
 
@@ -176,10 +180,19 @@ func (a *Accounting) Load(ctx context.Context) error {
 		return err
 	}
 
+	destVolumes, err := a.repo.LoadDestinationVolumes(ctx)
+	if err != nil {
+		return err
+	}
+
 	a.mu.Lock()
 	for _, v := range volumes {
 		copied := v
 		a.state[v.RouteRuleID] = &copied
+	}
+	for _, v := range destVolumes {
+		copied := v
+		a.destVolumes[destVolumeKey{routeRuleID: v.RouteRuleID, address: v.Address, port: v.Port}] = &copied
 	}
 	a.mu.Unlock()
 
@@ -513,6 +526,8 @@ func (a *Accounting) SampleConnections(ctx context.Context) map[int64]Connection
 	a.lastConnAt = now
 	a.counts = counts
 
+	a.foldDestinationMovement(counts)
+
 	for id, count := range counts {
 		traffic := a.live[id]
 		traffic.ActiveConnections = count.Active
@@ -555,6 +570,13 @@ func (a *Accounting) Flush(ctx context.Context) error {
 		}
 	}
 	a.dirty = map[int64]bool{}
+	pendingDest := make([]DestVolume, 0, len(a.destDirty))
+	for key := range a.destDirty {
+		if v, ok := a.destVolumes[key]; ok {
+			pendingDest = append(pendingDest, *v)
+		}
+	}
+	a.destDirty = map[destVolumeKey]bool{}
 	a.mu.Unlock()
 
 	if err := a.repo.Save(ctx, pending); err != nil {
@@ -563,6 +585,14 @@ func (a *Accounting) Flush(ctx context.Context) error {
 		a.mu.Lock()
 		for _, v := range pending {
 			a.dirty[v.RouteRuleID] = true
+		}
+		a.mu.Unlock()
+		return err
+	}
+	if err := a.repo.SaveDestinationVolumes(ctx, pendingDest); err != nil {
+		a.mu.Lock()
+		for _, v := range pendingDest {
+			a.destDirty[destVolumeKey{routeRuleID: v.RouteRuleID, address: v.Address, port: v.Port}] = true
 		}
 		a.mu.Unlock()
 		return err

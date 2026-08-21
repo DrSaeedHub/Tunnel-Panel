@@ -37,6 +37,7 @@ import { TunnelFormDialog } from '@/components/tunnels/TunnelFormDialog'
 import { DeleteTunnelDialog } from '@/components/tunnels/DeleteTunnelDialog'
 import { PairingCodeDialog } from '@/components/tunnels/PairingDialogs'
 import { TunnelRoutesCard } from '@/components/routes/TunnelRoutesCard'
+import { QuotaRow, tunnelQuota, useQuotaStatuses } from '@/components/quota/TrafficLimit'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
 type Range = 'live' | 'hour' | 'day' | 'week' | 'month'
@@ -73,6 +74,7 @@ export default function TunnelDetailPage() {
     staleTime: 10_000,
   })
 
+  const quotaQuery = useQuotaStatuses()
   const statusQuery = useQuery({
     queryKey: ['tunnels', tunnelId, 'status'],
     queryFn: () => api.get<MonitorStatusResponse>(`/tunnels/${tunnelId}/status`),
@@ -280,6 +282,18 @@ export default function TunnelDetailPage() {
                   ) : (
                     <Skeleton className="h-24" />
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('quota.title')}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <QuotaRow
+                    subject={{ scope: 'tunnel', tunnel_id: tunnelId }}
+                    status={tunnelQuota(quotaQuery.data, tunnelId)}
+                  />
                 </CardContent>
               </Card>
 

@@ -15,6 +15,7 @@ import {
   type RouteDestinationHealthResponse,
   type RouteReachabilityResult,
   type RouteRule,
+  type QuotaStatus,
 } from '@/lib/types'
 import {
   formatMs,
@@ -31,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, Meter, Skeleton } from '../ui/feedback'
 import { Technical } from '../ui/technical'
 import { endpointLabel } from './RouteFlow'
+import { QuotaRow, destinationQuota, ruleQuota, useQuotaStatuses } from '../quota/TrafficLimit'
 
 /**
  * Where a rule sends traffic, one line per destination.
@@ -59,6 +61,7 @@ export function RouteDestinationsPanel({
 
   // The same query the connections tab uses, so opening both costs one read of
   // a table that is expensive to read on a busy host.
+  const quotaQuery = useQuotaStatuses()
   const query = useQuery({
     queryKey: ['routes', route.route_rule_id, 'connections'],
     queryFn: () => api.get<RouteConnectionList>(`/routes/${route.route_rule_id}/connections`),
@@ -126,6 +129,11 @@ export function RouteDestinationsPanel({
               : ''}
           </p>
         </div>
+        {/* The rule's own traffic limit, beside the traffic it limits. */}
+        <QuotaRow
+          subject={{ scope: 'rule', route_rule_id: route.route_rule_id }}
+          status={ruleQuota(quotaQuery.data, route.route_rule_id)}
+        />
       </CardHeader>
       <CardContent>
         {balanced ? (
@@ -160,6 +168,7 @@ export function RouteDestinationsPanel({
                   totalConnections={totalConnections}
                   digits={digits}
                   units={units}
+                  quota={destinationQuota(quotaQuery.data, route.route_rule_id, row.address, row.port)}
                 />
               ))}
             </ul>
@@ -245,6 +254,7 @@ function DestinationRow({
   totalConnections,
   digits,
   units,
+  quota,
 }: {
   row: DestinationRowModel
   index: number
@@ -260,6 +270,7 @@ function DestinationRow({
   totalConnections: number
   digits: 'latin' | 'persian'
   units: UnitPreferences
+  quota?: QuotaStatus
 }) {
   const { t } = useTranslation()
   const probe = useDestinationProbe(route, row.address, row.port)
@@ -315,6 +326,18 @@ function DestinationRow({
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-muted-foreground">
+        {row.configured ? (
+          <QuotaRow
+            compact
+            subject={{
+              scope: 'destination',
+              route_rule_id: route.route_rule_id,
+              address: row.address,
+              port: row.port,
+            }}
+            status={quota}
+          />
+        ) : null}
         {row.weight !== null ? (
           <span>{t('routeDetail.destinations.weight', { weight: row.weight })}</span>
         ) : null}

@@ -25,6 +25,7 @@ import (
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
 	"github.com/drs/gre-panel/internal/persist"
+	"github.com/drs/gre-panel/internal/quota"
 	"github.com/drs/gre-panel/internal/reconcile"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/rules"
@@ -78,6 +79,8 @@ type Deps struct {
 	SourceLists *sourcelist.Repo
 	// Tuning reads and applies the kernel parameters a relay depends on.
 	Tuning *tuning.Manager
+	// Quota watches traffic limits and acts on the enforcing ones.
+	Quota *quota.Checker
 	// RouteMonitor probes the destinations of the rules that ask for it.
 	// Without it a rule reports its destinations as unmonitored rather than
 	// as healthy, which is the difference between no answer and a good one.
@@ -141,6 +144,7 @@ type Server struct {
 	routeMonitor *route.Monitor
 	sourceLists  *sourcelist.Repo
 	tuning       *tuning.Manager
+	quota        *quota.Checker
 	monitor      *monitor.Supervisor
 	metrics      *metrics.Sampler
 	diag         *diag.Service
@@ -217,6 +221,7 @@ func New(d Deps) (*Server, error) {
 		routeMonitor: d.RouteMonitor,
 		sourceLists:  d.SourceLists,
 		tuning:       d.Tuning,
+		quota:        d.Quota,
 		monitor:      d.Monitor,
 		metrics:      d.Metrics,
 		diag:         d.Diag,
@@ -516,6 +521,15 @@ func (s *Server) buildRouter() http.Handler {
 						r.Get("/system/tuning", s.handleTuning)
 						r.Post("/system/tuning/apply", s.handleApplyTuning)
 						r.Post("/system/tuning/set", s.handleSetTuning)
+					})
+
+					// Traffic limits (quotas) on tunnels, rules and their
+					// destinations.
+					r.Group(func(r chi.Router) {
+						r.Use(s.requireQuota)
+						r.Get("/quota", s.handleQuotaStatuses)
+						r.Put("/quota", s.handleSetQuota)
+						r.Post("/quota/reset", s.handleResetQuota)
 						r.Post("/system/tuning/revert", s.handleRevertTuning)
 					})
 
