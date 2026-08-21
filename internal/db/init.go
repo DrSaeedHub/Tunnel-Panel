@@ -206,6 +206,10 @@ var columnAdditions = []columnAddition{
 	// NOT NULL with a default is safe to add to an existing table: SQLite
 	// fills the existing rows with it.
 	{"RouteDestination", "IsSuppressed", "INTEGER NOT NULL DEFAULT 0"},
+
+	// Which direction a traffic limit counts. Both is 10, which is what every
+	// limit created before the column meant.
+	{"TrafficQuota", "DirectionID", "INTEGER NOT NULL DEFAULT 10"},
 }
 
 // applyColumnAdditions adds every column in columnAdditions that is missing

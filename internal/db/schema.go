@@ -448,6 +448,7 @@ var entityDDL = []string{
 		LimitBytes        INTEGER NOT NULL,
 		ModeID            INTEGER NOT NULL DEFAULT 10,
 		PeriodID          INTEGER NOT NULL DEFAULT 40,
+		DirectionID       INTEGER NOT NULL DEFAULT 10,
 
 		BaselineRxBytes   INTEGER NOT NULL DEFAULT 0,
 		BaselineTxBytes   INTEGER NOT NULL DEFAULT 0,

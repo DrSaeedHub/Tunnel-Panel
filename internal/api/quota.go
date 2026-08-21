@@ -48,6 +48,8 @@ type quotaRequest struct {
 	LimitBytes int64 `json:"limit_bytes"`
 	ModeID     int64 `json:"mode_id"`
 	PeriodID   int64 `json:"period_id"`
+	// DirectionID: 10 both together, 20 received only, 30 sent only.
+	DirectionID int64 `json:"direction_id"`
 }
 
 func (s *Server) quotaSubject(w http.ResponseWriter, req quotaRequest) (quota.Subject, bool) {
@@ -97,7 +99,8 @@ func (s *Server) handleSetQuota(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err := s.quota.Set(r.Context(), subject,
-		quota.Limit{LimitBytes: req.LimitBytes, ModeID: req.ModeID, PeriodID: req.PeriodID})
+		quota.Limit{LimitBytes: req.LimitBytes, ModeID: req.ModeID,
+			PeriodID: req.PeriodID, DirectionID: req.DirectionID})
 	s.auditRoute(r, model.AuditActionSettingUpdate, "traffic-limit", req, nil, err, start)
 	if err != nil {
 		s.writeRouteError(w, r, err)

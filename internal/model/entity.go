@@ -50,7 +50,15 @@ type QuotaStatus struct {
 	LimitBytes int64 `json:"limit_bytes"`
 	ModeID     int64 `json:"mode_id"`
 	PeriodID   int64 `json:"period_id"`
-	UsedBytes  int64 `json:"used_bytes"`
+	// DirectionID says which direction counts: both together, received only,
+	// or sent only.
+	DirectionID int64 `json:"direction_id"`
+	// UsedBytes is what has counted so far — the selected direction only.
+	UsedBytes int64 `json:"used_bytes"`
+	// UsedRxBytes and UsedTxBytes are the window's two directions separately,
+	// so the interface can show the split whatever the limit counts.
+	UsedRxBytes int64 `json:"used_rx_bytes"`
+	UsedTxBytes int64 `json:"used_tx_bytes"`
 	// PeriodStart is when the current counting window began.
 	PeriodStart string `json:"period_start,omitempty"`
 	// Exhausted reports that usage has reached the limit.

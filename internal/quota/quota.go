@@ -52,6 +52,10 @@ type Limit struct {
 	LimitBytes int64
 	ModeID     int64
 	PeriodID   int64
+	// DirectionID says which direction counts against the limit: both
+	// together, received only, or sent only. A relay whose plan meters only
+	// what it serves out can say so instead of halving its allowance.
+	DirectionID int64
 }
 
 // row is one quota as stored, config and window state together.
@@ -217,6 +221,11 @@ func (c *Checker) Set(ctx context.Context, subject Subject, limit Limit) error {
 	default:
 		limit.PeriodID = model.TrafficPeriodMonthly
 	}
+	switch limit.DirectionID {
+	case model.TrafficDirectionRx, model.TrafficDirectionTx:
+	default:
+		limit.DirectionID = model.TrafficDirectionBoth
+	}
 
 	now := c.deps.Now().UTC()
 	rx, tx, _ := c.volume(ctx, subject)
@@ -381,21 +390,37 @@ func (c *Checker) check(ctx context.Context, stored row, now time.Time) (model.Q
 }
 
 func (c *Checker) status(stored row, rx, tx uint64) model.QuotaStatus {
-	used := (int64(rx) - stored.baselineRx) + (int64(tx) - stored.baselineTx)
-	if used < 0 {
-		// A counter below its baseline means the counter itself was lost and
-		// began again. Zero is the only honest reading.
-		used = 0
+	// A counter below its baseline means the counter itself was lost and
+	// began again. Zero is the only honest reading.
+	usedRx := max64(int64(rx)-stored.baselineRx, 0)
+	usedTx := max64(int64(tx)-stored.baselineTx, 0)
+
+	used := usedRx + usedTx
+	switch stored.limit.DirectionID {
+	case model.TrafficDirectionRx:
+		used = usedRx
+	case model.TrafficDirectionTx:
+		used = usedTx
 	}
 	return model.QuotaStatus{
 		LimitBytes:  stored.limit.LimitBytes,
 		ModeID:      stored.limit.ModeID,
 		PeriodID:    stored.limit.PeriodID,
+		DirectionID: stored.limit.DirectionID,
 		UsedBytes:   used,
+		UsedRxBytes: usedRx,
+		UsedTxBytes: usedTx,
 		PeriodStart: stored.periodStart,
 		Exhausted:   used >= stored.limit.LimitBytes,
 		Stopped:     stored.quotaDisabled != "",
 	}
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // windowStart is when the current window began, in UTC. Days end at midnight,
@@ -470,7 +495,7 @@ func (c *Checker) start(ctx context.Context, stored row) error {
 func (c *Checker) loadAll(ctx context.Context) ([]row, error) {
 	rows, err := c.deps.DB.Read.QueryContext(ctx, `
 		SELECT TrafficQuotaID, ScopeTypeID, TunnelID, RouteRuleID, Address, Port,
-		       LimitBytes, ModeID, PeriodID,
+		       LimitBytes, ModeID, PeriodID, DirectionID,
 		       BaselineRxBytes, BaselineTxBytes, PeriodStartDate, QuotaDisabledDate
 		FROM TrafficQuota WHERE IsDeleted = 0`)
 	if err != nil {
@@ -493,7 +518,7 @@ func (c *Checker) load(ctx context.Context, subject Subject) (*row, error) {
 	where, args := subjectWhere(subject)
 	stored, err := scanRow(c.deps.DB.Read.QueryRowContext(ctx, `
 		SELECT TrafficQuotaID, ScopeTypeID, TunnelID, RouteRuleID, Address, Port,
-		       LimitBytes, ModeID, PeriodID,
+		       LimitBytes, ModeID, PeriodID, DirectionID,
 		       BaselineRxBytes, BaselineTxBytes, PeriodStartDate, QuotaDisabledDate
 		FROM TrafficQuota WHERE IsDeleted = 0 AND `+where, args...).Scan)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -511,6 +536,7 @@ func scanRow(scan func(...any) error) (row, error) {
 	var address, periodStart, quotaDisabled sql.NullString
 	if err := scan(&stored.id, &stored.subject.ScopeID, &tunnelID, &ruleID, &address, &port,
 		&stored.limit.LimitBytes, &stored.limit.ModeID, &stored.limit.PeriodID,
+		&stored.limit.DirectionID,
 		&stored.baselineRx, &stored.baselineTx, &periodStart, &quotaDisabled); err != nil {
 		return stored, fmt.Errorf("reading a traffic limit: %w", err)
 	}
@@ -552,12 +578,12 @@ func (c *Checker) insert(ctx context.Context, subject Subject, limit Limit,
 	_, err := c.deps.DB.Write.ExecContext(ctx, `
 		INSERT INTO TrafficQuota
 			(ScopeTypeID, TunnelID, RouteRuleID, Address, Port,
-			 LimitBytes, ModeID, PeriodID,
+			 LimitBytes, ModeID, PeriodID, DirectionID,
 			 BaselineRxBytes, BaselineTxBytes, PeriodStartDate,
 			 CreatedDate, UpdatedDate, IsDeleted)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
 		subject.ScopeID, tunnelID, ruleID, address, port,
-		limit.LimitBytes, limit.ModeID, limit.PeriodID,
+		limit.LimitBytes, limit.ModeID, limit.PeriodID, limit.DirectionID,
 		baselineRx, baselineTx, periodStart, now, now)
 	if err != nil {
 		return fmt.Errorf("storing a traffic limit: %w", err)
@@ -574,11 +600,11 @@ func (c *Checker) update(ctx context.Context, id int64, limit Limit,
 	}
 	_, err := c.deps.DB.Write.ExecContext(ctx, `
 		UPDATE TrafficQuota
-		SET LimitBytes = ?, ModeID = ?, PeriodID = ?,
+		SET LimitBytes = ?, ModeID = ?, PeriodID = ?, DirectionID = ?,
 		    BaselineRxBytes = ?, BaselineTxBytes = ?, PeriodStartDate = ?,
 		    QuotaDisabledDate = ?, UpdatedDate = ?
 		WHERE TrafficQuotaID = ? AND IsDeleted = 0`,
-		limit.LimitBytes, limit.ModeID, limit.PeriodID,
+		limit.LimitBytes, limit.ModeID, limit.PeriodID, limit.DirectionID,
 		baselineRx, baselineTx, periodStart, disabled, model.NowUTC(), id)
 	if err != nil {
 		return fmt.Errorf("updating a traffic limit: %w", err)

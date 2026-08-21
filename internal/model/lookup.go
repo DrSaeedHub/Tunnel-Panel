@@ -149,6 +149,14 @@ func TrafficPeriodName(id int64) string {
 	return "monthly"
 }
 
+// TrafficDirection identifiers: which direction a traffic limit counts.
+// Both is the default, because traffic is bought both directions together.
+const (
+	TrafficDirectionBoth int64 = 10
+	TrafficDirectionRx   int64 = 20
+	TrafficDirectionTx   int64 = 30
+)
+
 // QuotaScope identifiers: what a traffic limit is attached to.
 const (
 	QuotaScopeTunnel      int64 = 10

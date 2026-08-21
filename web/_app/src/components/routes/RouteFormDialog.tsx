@@ -23,6 +23,16 @@ import {
   type TunnelRoutesResponse,
 } from '@/lib/types'
 import { useToast } from '@/providers/ToastProvider'
+import {
+  QuotaDraftFields,
+  applyQuotaDrafts,
+  draftFromStatus,
+  emptyQuotaDraft,
+  destinationQuota,
+  ruleQuota,
+  useQuotaStatuses,
+  type QuotaDraft,
+} from '../quota/TrafficLimit'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { formatMs, hasDisplayName, tunnelLabel } from '@/lib/format'
 import { describeError } from '../ui/feedback'
@@ -166,6 +176,12 @@ export function RouteFormDialog({
   const errorRef = useRef<HTMLDivElement | null>(null)
   const [force, setForce] = useState(false)
   const [allowlistDraft, setAllowlistDraft] = useState('')
+  // Traffic limits ride beside the rule rather than inside it: they are saved
+  // through their own endpoint after the rule itself lands, which is what lets
+  // the create dialog carry a limit for a rule that does not exist yet.
+  // Keyed 'rule' or 'address:port'.
+  const [quotaDrafts, setQuotaDrafts] = useState<Record<string, QuotaDraft>>({})
+  const quotaStatuses = useQuotaStatuses(open)
 
   // Seeded once per opening, from the rule being edited or from the routes.*
   // settings the backend already resolves defaults from.
@@ -188,6 +204,26 @@ export function RouteFormDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, route, settingsQuery.isSuccess])
+
+  // The drafts start from what is already set, once per opening.
+  useEffect(() => {
+    if (!open) {
+      setQuotaDrafts({})
+      return
+    }
+    if (!route || !quotaStatuses.data) return
+    const seeded: Record<string, QuotaDraft> = {
+      rule: draftFromStatus(ruleQuota(quotaStatuses.data, route.route_rule_id)),
+    }
+    for (const destination of route.destinations ?? []) {
+      const key = `${destination.address}:${destination.port}`
+      seeded[key] = draftFromStatus(
+        destinationQuota(quotaStatuses.data, route.route_rule_id, destination.address, destination.port),
+      )
+    }
+    setQuotaDrafts((current) => (Object.keys(current).length ? current : seeded))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, route?.route_rule_id, quotaStatuses.data])
 
   const patch = useMemo(() => (form ? toPatch(form) : null), [form])
   // Debounced so typing a port does not fire a preview per keystroke.
@@ -239,6 +275,18 @@ export function RouteFormDialog({
         return
       }
 
+      // The rule is in; now its traffic limits. A failure here must not read
+      // as the rule failing — the rule saved — so it gets its own message.
+      try {
+        await saveQuotaDrafts(result.route)
+      } catch (quotaError) {
+        toast({
+          tone: 'error',
+          title: t('quota.title'),
+          description: describeError(quotaError, t).message,
+        })
+      }
+
       toast({
         tone: 'success',
         title: route ? t('routeForm.updatedTitle') : t('routeForm.createdTitle'),
@@ -258,6 +306,31 @@ export function RouteFormDialog({
       setSubmitError(describeError(error, t).message)
     },
   })
+
+  // Every non-empty draft is written, and an emptied one removes the limit it
+  // replaced. Keys are address:port, which is also how the backend stores
+  // destination limits — so a renamed destination simply starts unlimited.
+  async function saveQuotaDrafts(saved: RouteRule) {
+    const entries = Object.entries(quotaDrafts).map(([key, draft]) => {
+      if (key === 'rule') {
+        return {
+          subject: { scope: 'rule' as const, route_rule_id: saved.route_rule_id },
+          draft,
+          existing: ruleQuota(quotaStatuses.data, saved.route_rule_id),
+        }
+      }
+      const at = key.lastIndexOf(':')
+      const address = key.slice(0, at)
+      const port = Number(key.slice(at + 1))
+      return {
+        subject: { scope: 'destination' as const, route_rule_id: saved.route_rule_id, address, port },
+        draft,
+        existing: destinationQuota(quotaStatuses.data, saved.route_rule_id, address, port),
+      }
+    })
+    await applyQuotaDrafts(entries)
+    await queryClient.invalidateQueries({ queryKey: ['quota'] })
+  }
 
   // Bring the failure into view and put the cursor on the first field the
   // backend objected to, so the answer finds the operator rather than waiting
@@ -339,22 +412,35 @@ export function RouteFormDialog({
             <h3 className="display text-xs font-bold text-muted-foreground">
               {t('routeForm.sectionName')}
             </h3>
-            <Field
-              label={t('routeForm.fields.title')}
-              description={t('routeForm.help.title')}
-              error={fieldErrors['route_rule_title']}
-              required
-            >
-              {(props) => (
-                <Input
-                  {...props}
-                  autoFocus
-                  value={form.route_rule_title}
-                  onChange={(event) => set('route_rule_title', event.target.value)}
-                  placeholder={t('routeForm.fields.title')}
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-64 flex-1">
+                <Field
+                  label={t('routeForm.fields.title')}
+                  description={t('routeForm.help.title')}
+                  error={fieldErrors['route_rule_title']}
+                  required
+                >
+                  {(props) => (
+                    <Input
+                      {...props}
+                      autoFocus
+                      value={form.route_rule_title}
+                      onChange={(event) => set('route_rule_title', event.target.value)}
+                      placeholder={t('routeForm.fields.title')}
+                    />
+                  )}
+                </Field>
+              </div>
+              {/* On/off is a status, not an advanced option, so it stands with
+                  the name rather than at the bottom of a collapsed panel. */}
+              <div className="pb-5">
+                <SwitchField
+                  label={t('routeForm.fields.enabled')}
+                  checked={form.is_enabled}
+                  onCheckedChange={(value) => set('is_enabled', value)}
                 />
-              )}
-            </Field>
+              </div>
+            </div>
           </section>
 
           {/* 2 — Source */}
@@ -752,36 +838,48 @@ export function RouteFormDialog({
                 checked={form.is_logging_enabled}
                 onCheckedChange={(value) => set('is_logging_enabled', value)}
               />
-              <SwitchField
-                label={t('routeForm.fields.enabled')}
-                description={t('routeForm.help.enabled')}
-                checked={form.is_enabled}
-                onCheckedChange={(value) => set('is_enabled', value)}
-              />
             </div>
 
-            <SourceListPicker
-              selected={form.source_list_ids}
-              onChange={(ids) => set('source_list_ids', ids)}
-            />
-
-            <AllowlistEditor
-              entries={form.allowed_sources}
+            <SourcesField
+              lists={form.source_list_ids}
+              onListsChange={(ids) => set('source_list_ids', ids)}
+              addresses={form.allowed_sources}
+              onAddressesChange={(entries) => set('allowed_sources', entries)}
               draft={allowlistDraft}
               onDraftChange={setAllowlistDraft}
-              onAdd={(cidr) => {
-                set('allowed_sources', [...form.allowed_sources, cidr])
-                setAllowlistDraft('')
-              }}
-              onRemove={(cidr) =>
-                set(
-                  'allowed_sources',
-                  form.allowed_sources.filter((entry) => entry !== cidr),
-                )
-              }
               error={fieldErrors['allowed_sources']}
             />
+          </DisclosurePanel>
 
+          {/* Traffic limits, for the whole rule and for each destination.
+              They save through their own endpoint after the rule does, so the
+              same section works in the create dialog. */}
+          <DisclosurePanel title={t('routeForm.sectionTraffic')} contentClassName="space-y-3">
+            <p className="text-2xs text-muted-foreground">{t('routeForm.help.traffic')}</p>
+            <QuotaDraftFields
+              label={t('routeForm.quota.rule')}
+              draft={quotaDrafts.rule ?? emptyQuotaDraft()}
+              onChange={(draft) => setQuotaDrafts((current) => ({ ...current, rule: draft }))}
+            />
+            {[
+              { address: form.destination_address, port: form.destination_port },
+              ...form.destinations.map((destination) => ({
+                address: destination.address,
+                port: destination.port,
+              })),
+            ]
+              .filter((destination) => destination.address && destination.port)
+              .map((destination) => {
+                const key = `${destination.address}:${destination.port}`
+                return (
+                  <QuotaDraftFields
+                    key={key}
+                    label={key}
+                    draft={quotaDrafts[key] ?? emptyQuotaDraft()}
+                    onChange={(draft) => setQuotaDrafts((current) => ({ ...current, [key]: draft }))}
+                  />
+                )
+              })}
           </DisclosurePanel>
 
           {/* 6 — Preview: the exact ruleset, before anything is applied */}
@@ -909,85 +1007,7 @@ function TunnelDestination({
   )
 }
 
-function AllowlistEditor({
-  entries,
-  draft,
-  onDraftChange,
-  onAdd,
-  onRemove,
-  error,
-}: {
-  entries: string[]
-  draft: string
-  onDraftChange: (value: string) => void
-  onAdd: (cidr: string) => void
-  onRemove: (cidr: string) => void
-  error?: string
-}) {
-  const { t } = useTranslation()
 
-  return (
-    <Field
-      label={t('routeForm.fields.allowedSources')}
-      description={t('routeForm.help.allowedSources')}
-      error={error}
-    >
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <TechnicalInput
-            value={draft}
-            onChange={(event) => onDraftChange(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && draft.trim()) {
-                event.preventDefault()
-                onAdd(draft.trim())
-              }
-            }}
-            placeholder={t('routeForm.allowlist.placeholder')}
-            // Field labels its child by id, and this input is two elements down
-            // inside a layout wrapper rather than being that child, so the
-            // association never reaches it. It was the only control in this
-            // dialog with no accessible name: a screen reader announced nothing
-            // but the placeholder, which disappears as soon as anything is
-            // typed. Naming it explicitly is independent of how Field wires up.
-            aria-label={t('routeForm.fields.allowedSources')}
-          />
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={!draft.trim()}
-            onClick={() => onAdd(draft.trim())}
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            {t('routeForm.allowlist.add')}
-          </Button>
-        </div>
-        {entries.length ? (
-          <div className="flex flex-wrap gap-2">
-            {entries.map((cidr) => (
-              <span
-                key={cidr}
-                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-2xs"
-              >
-                <Technical className="text-2xs">{cidr}</Technical>
-                <button
-                  type="button"
-                  onClick={() => onRemove(cidr)}
-                  aria-label={t('routeForm.allowlist.remove', { cidr })}
-                  className="text-muted-foreground hover:text-danger"
-                >
-                  <X className="size-3" aria-hidden="true" />
-                </button>
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-2xs text-muted-foreground">{t('routeForm.allowlist.empty')}</p>
-        )}
-      </div>
-    </Field>
-  )
-}
 
 /**
  * Every destination of a rule, as one list.
@@ -1697,70 +1717,161 @@ export function toPatch(form: FormState): Record<string, unknown> {
 }
 
 /**
- * The shared address lists a rule allows, as chips.
+ * Everything a rule allows traffic from, in one field: the shared address
+ * lists as chips, and one-off addresses as tokens beside them. Typing an
+ * address and pressing space, comma or Enter makes it a token; there is no Add
+ * button because the space bar is the add button. Backspace on an empty input
+ * takes the last token back.
  *
- * A list is picked rather than typed because the whole point of it is that the
- * ranges live somewhere else: what belongs on the rule is which lists, and the
- * several hundred addresses behind them belong in one place an operator edits
- * once. Several can be chosen, and a rule allows traffic from any of them --
- * they are alternatives, not conditions that all have to hold.
+ * With nothing here at all, every source that can reach the bind address is
+ * allowed — the field says so instead of sitting silently empty.
  */
-function SourceListPicker({
-  selected,
-  onChange,
+export function SourcesField({
+  lists,
+  onListsChange,
+  addresses,
+  onAddressesChange,
+  draft,
+  onDraftChange,
+  error,
 }: {
-  selected: number[]
-  onChange: (ids: number[]) => void
+  lists: number[]
+  onListsChange: (ids: number[]) => void
+  addresses: string[]
+  onAddressesChange: (entries: string[]) => void
+  draft: string
+  onDraftChange: (value: string) => void
+  error?: string
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
+  const [rejected, setRejected] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   const query = useQuery({
     queryKey: ['source-lists'],
     queryFn: () => api.get<SourceListsResponse>('/source-lists'),
     staleTime: 60_000,
   })
-  const lists = query.data?.source_lists ?? []
-  const byId = new Map(lists.map((list) => [list.source_list_id, list]))
+  const allLists = query.data?.source_lists ?? []
+  const byId = new Map(allLists.map((list) => [list.source_list_id, list]))
 
   const toggle = (id: number) =>
-    onChange(selected.includes(id) ? selected.filter((one) => one !== id) : [...selected, id])
+    onListsChange(lists.includes(id) ? lists.filter((one) => one !== id) : [...lists, id])
+
+  /** Turns whatever is typed into tokens, and says why when it cannot. */
+  const commit = (raw: string): boolean => {
+    const parts = raw.split(/[\s,]+/).filter(Boolean)
+    if (!parts.length) return true
+    const bad = parts.find((part) => !looksLikeAddressOrCidr(part))
+    if (bad) {
+      setRejected(bad)
+      return false
+    }
+    const fresh = parts.filter((part) => !addresses.includes(part))
+    if (fresh.length) onAddressesChange([...addresses, ...fresh])
+    setRejected(null)
+    return true
+  }
 
   return (
-    <Field label={t('routeForm.fields.sourceLists')} description={t('routeForm.help.sourceLists')}>
+    <Field
+      label={t('routeForm.fields.sourceLists')}
+      description={t('routeForm.help.sources')}
+      error={rejected ? t('routeForm.allowlist.invalid', { value: rejected }) : error}
+    >
       {() => (
         <div className="space-y-2">
-          <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border border-border bg-surface-sunken px-2 py-1.5">
-            {selected.length === 0 ? (
-              <span className="px-1 text-xs text-muted-foreground">
-                {t('routeForm.help.sourceListsEmpty')}
-              </span>
-            ) : null}
-            {selected.map((id) => {
+          {/* One container for all three kinds of content: list chips,
+              address tokens, and the input that makes more of them. Clicking
+              anywhere in it focuses the input, the way one field should. */}
+          <div
+            className={cn(
+              'flex min-h-10 flex-wrap items-center gap-1.5 rounded-md border bg-surface-sunken px-2 py-1.5',
+              rejected || error ? 'border-danger' : 'border-border',
+            )}
+            onClick={() => inputRef.current?.focus()}
+          >
+            {lists.map((id) => {
               const list = byId.get(id)
               return (
                 <span
-                  key={id}
-                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-2xs font-medium"
+                  key={`list-${id}`}
+                  className="inline-flex items-center gap-1 rounded-full bg-accent-muted px-2 py-0.5 text-2xs font-medium text-accent"
                 >
                   {list?.name ?? String(id)}
                   <button
                     type="button"
                     onClick={() => toggle(id)}
-                    aria-label={t('routeForm.destination.remove')}
-                    className="text-muted-foreground hover:text-foreground"
+                    aria-label={t('routeForm.allowlist.remove', { cidr: list?.name ?? String(id) })}
+                    className="hover:text-foreground"
                   >
                     <X className="size-3" aria-hidden="true" />
                   </button>
                 </span>
               )
             })}
+            {addresses.map((cidr) => (
+              <span
+                key={cidr}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-2xs"
+              >
+                <Technical className="text-2xs">{cidr}</Technical>
+                <button
+                  type="button"
+                  onClick={() => onAddressesChange(addresses.filter((entry) => entry !== cidr))}
+                  aria-label={t('routeForm.allowlist.remove', { cidr })}
+                  className="text-muted-foreground hover:text-danger"
+                >
+                  <X className="size-3" aria-hidden="true" />
+                </button>
+              </span>
+            ))}
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(event) => {
+                setRejected(null)
+                const value = event.target.value
+                // Space and comma are the add button.
+                if (/[\s,]$/.test(value)) {
+                  if (commit(value)) onDraftChange('')
+                  else onDraftChange(value.replace(/[\s,]+$/, ''))
+                  return
+                }
+                onDraftChange(value)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  if (draft.trim() && commit(draft)) onDraftChange('')
+                }
+                if (event.key === 'Backspace' && !draft) {
+                  if (addresses.length) {
+                    onAddressesChange(addresses.slice(0, -1))
+                  } else if (lists.length) {
+                    onListsChange(lists.slice(0, -1))
+                  }
+                }
+              }}
+              onBlur={() => {
+                if (draft.trim() && commit(draft)) onDraftChange('')
+              }}
+              placeholder={
+                lists.length || addresses.length ? '' : t('routeForm.allowlist.placeholder')
+              }
+              aria-label={t('routeForm.fields.sourceLists')}
+              className="min-w-28 flex-1 bg-transparent py-0.5 font-mono text-xs outline-none placeholder:text-muted-foreground"
+            />
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="ms-auto"
-              onClick={() => setOpen((v) => !v)}
+              onClick={(event) => {
+                event.stopPropagation()
+                setOpen((value) => !value)
+              }}
             >
               <Plus className="size-3.5" aria-hidden="true" />
               {t('routeForm.fields.addSourceList')}
@@ -1769,13 +1880,13 @@ function SourceListPicker({
 
           {open ? (
             <ul className="max-h-56 overflow-auto rounded-md border border-border bg-surface-raised p-1 scrollbar-thin">
-              {lists.length === 0 ? (
+              {allLists.length === 0 ? (
                 <li className="px-2 py-2 text-2xs text-muted-foreground">
                   {t('routeForm.help.noSourceLists')}
                 </li>
               ) : null}
-              {lists.map((list) => {
-                const picked = selected.includes(list.source_list_id)
+              {allLists.map((list) => {
+                const picked = lists.includes(list.source_list_id)
                 return (
                   <li key={list.source_list_id}>
                     <button
@@ -1798,8 +1909,42 @@ function SourceListPicker({
               })}
             </ul>
           ) : null}
+
+          {!lists.length && !addresses.length ? (
+            <p className="text-2xs text-muted-foreground">{t('routeForm.allowlist.empty')}</p>
+          ) : null}
         </div>
       )}
     </Field>
   )
+}
+
+/**
+ * Whether a typed token could be an address or a CIDR. The check is shaped
+ * like the kernel's: four octets in range with an optional /0-32, or something
+ * colon-separated with an optional /0-128. The backend has the final word; this
+ * only keeps obvious typos from becoming tokens that fail later.
+ */
+export function looksLikeAddressOrCidr(value: string): boolean {
+  const [address, prefix, extra] = value.split('/')
+  if (extra !== undefined) return false
+
+  if (address.includes(':')) {
+    if (!/^[0-9a-fA-F:]{2,45}$/.test(address)) return false
+    if (address.includes(':::')) return false
+    if (!address.includes('::') && address.split(':').length !== 8) return false
+    if (address.split(':').some((group) => group.length > 4)) return false
+    if (prefix === undefined) return true
+    const bits = Number(prefix)
+    return /^\d{1,3}$/.test(prefix) && bits >= 0 && bits <= 128
+  }
+
+  const octets = address.split('.')
+  if (octets.length !== 4) return false
+  for (const octet of octets) {
+    if (!/^\d{1,3}$/.test(octet) || Number(octet) > 255) return false
+  }
+  if (prefix === undefined) return true
+  const bits = Number(prefix)
+  return /^\d{1,2}$/.test(prefix) && bits >= 0 && bits <= 32
 }

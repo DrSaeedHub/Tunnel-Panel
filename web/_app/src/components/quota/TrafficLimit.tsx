@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Gauge, OctagonX, Pencil } from 'lucide-react'
 
 import { api } from '@/lib/api'
-import { TrafficLimitMode, TrafficPeriod, type QuotaStatus, type QuotaStatuses } from '@/lib/types'
+import { TrafficDirection, TrafficLimitMode, TrafficPeriod, type QuotaStatus, type QuotaStatuses } from '@/lib/types'
 import { formatVolume } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useToast } from '@/providers/ToastProvider'
@@ -144,6 +144,9 @@ export function QuotaRow({
         })}
         {' · '}
         {t(`quota.period.${status.period_id}`)}
+        {status.direction_id !== TrafficDirection.Both
+          ? ` · ${t(`quota.direction.${status.direction_id}`)}`
+          : ''}
       </span>
       <QuotaBadge status={status} />
       <Popover open={open} onOpenChange={setOpen}>
@@ -164,8 +167,160 @@ export function QuotaRow({
   )
 }
 
-const GB = 1_000_000_000
-const TB = 1_000_000_000_000
+export const GB = 1_000_000_000
+export const TB = 1_000_000_000_000
+
+/**
+ * One limit as a form holds it: not yet saved, not yet validated, owned by the
+ * dialog it sits in. The popover editor commits immediately; a form commits on
+ * its own save button, after the rule or tunnel itself has been written — so
+ * the create dialog can carry a limit for a thing that does not exist yet.
+ */
+export type QuotaDraft = {
+  amount: string
+  unit: number
+  direction_id: number
+  mode_id: number
+  period_id: number
+}
+
+export function emptyQuotaDraft(): QuotaDraft {
+  return {
+    amount: '',
+    unit: GB,
+    direction_id: TrafficDirection.Both,
+    mode_id: TrafficLimitMode.Warn,
+    period_id: TrafficPeriod.Monthly,
+  }
+}
+
+export function draftFromStatus(status?: QuotaStatus): QuotaDraft {
+  if (!status) return emptyQuotaDraft()
+  const unit = status.limit_bytes >= TB && status.limit_bytes % TB === 0 ? TB : GB
+  return {
+    amount: String(Math.round((status.limit_bytes / unit) * 100) / 100),
+    unit,
+    direction_id: status.direction_id,
+    mode_id: status.mode_id,
+    period_id: status.period_id,
+  }
+}
+
+/** The limit in bytes a draft asks for. Zero means none. */
+export function draftBytes(draft: QuotaDraft): number {
+  const parsed = Number(draft.amount)
+  if (draft.amount.trim() === '' || !Number.isFinite(parsed) || parsed <= 0) return 0
+  return Math.round(parsed * draft.unit)
+}
+
+/**
+ * Writes a set of drafts through the quota endpoint, called by the dialogs
+ * after their own save has succeeded. A draft left empty removes the limit it
+ * replaced and is silent when there was none.
+ */
+export async function applyQuotaDrafts(
+  entries: { subject: QuotaSubject; draft: QuotaDraft; existing?: QuotaStatus }[],
+): Promise<void> {
+  for (const { subject, draft, existing } of entries) {
+    const bytes = draftBytes(draft)
+    if (bytes === 0 && !existing) continue
+    await api.put('/quota', {
+      ...subject,
+      limit_bytes: bytes,
+      mode_id: draft.mode_id,
+      period_id: draft.period_id,
+      direction_id: draft.direction_id,
+    })
+  }
+}
+
+/**
+ * The draft as one wrapping row of controls: allowance, direction, window,
+ * and what happens at the end. Everything after the amount only appears once
+ * an amount is typed, so an unlimited row is one quiet field.
+ */
+export function QuotaDraftFields({
+  label,
+  draft,
+  onChange,
+}: {
+  label: string
+  draft: QuotaDraft
+  onChange: (draft: QuotaDraft) => void
+}) {
+  const { t } = useTranslation()
+  const patch = (part: Partial<QuotaDraft>) => onChange({ ...draft, ...part })
+  const active = draft.amount.trim() !== ''
+
+  return (
+    <div className="flex flex-wrap items-end gap-2">
+      <div className="w-40 min-w-0 flex-none">
+        <Field label={label}>
+          {(props) => (
+            <TechnicalInput
+              {...props}
+              inputMode="decimal"
+              value={draft.amount}
+              onChange={(event) => patch({ amount: event.target.value })}
+              placeholder={t('quota.none')}
+            />
+          )}
+        </Field>
+      </div>
+      <div className="w-20">
+        <Select
+          value={String(draft.unit)}
+          onValueChange={(value) => patch({ unit: Number(value) })}
+          aria-label={t('quota.unit')}
+          options={[
+            { value: String(GB), label: 'GB' },
+            { value: String(TB), label: 'TB' },
+          ]}
+        />
+      </div>
+      {active ? (
+        <>
+          <div className="w-40">
+            <Select
+              value={String(draft.direction_id)}
+              onValueChange={(value) => patch({ direction_id: Number(value) })}
+              aria-label={t('quota.directionLabel')}
+              options={[
+                { value: String(TrafficDirection.Both), label: t('quota.direction.10') },
+                { value: String(TrafficDirection.Rx), label: t('quota.direction.20') },
+                { value: String(TrafficDirection.Tx), label: t('quota.direction.30') },
+              ]}
+            />
+          </div>
+          <div className="w-32">
+            <Select
+              value={String(draft.period_id)}
+              onValueChange={(value) => patch({ period_id: Number(value) })}
+              aria-label={t('quota.window')}
+              options={[
+                { value: String(TrafficPeriod.Monthly), label: t('quota.period.40') },
+                { value: String(TrafficPeriod.Weekly), label: t('quota.period.30') },
+                { value: String(TrafficPeriod.Daily), label: t('quota.period.20') },
+                { value: String(TrafficPeriod.Total), label: t('quota.period.10') },
+              ]}
+            />
+          </div>
+          <div className="w-36">
+            <Select
+              value={String(draft.mode_id)}
+              onValueChange={(value) => patch({ mode_id: Number(value) })}
+              aria-label={t('quota.onReached')}
+              options={[
+                { value: String(TrafficLimitMode.Warn), label: t('quota.mode.10') },
+                { value: String(TrafficLimitMode.Enforce), label: t('quota.mode.20') },
+              ]}
+            />
+          </div>
+        </>
+      ) : null}
+    </div>
+  )
+}
 
 /** The editor behind the pencil: amount, window, and what happens at the end. */
 function QuotaEditor({
@@ -189,6 +344,7 @@ function QuotaEditor({
   )
   const [periodId, setPeriodId] = useState(status?.period_id ?? TrafficPeriod.Monthly)
   const [modeId, setModeId] = useState(status?.mode_id ?? TrafficLimitMode.Warn)
+  const [directionId, setDirectionId] = useState(status?.direction_id ?? TrafficDirection.Both)
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['quota'] })
   const fail = (error: unknown) =>
@@ -196,7 +352,13 @@ function QuotaEditor({
 
   const save = useMutation({
     mutationFn: (limitBytes: number) =>
-      api.put('/quota', { ...subject, limit_bytes: limitBytes, mode_id: modeId, period_id: periodId }),
+      api.put('/quota', {
+        ...subject,
+        limit_bytes: limitBytes,
+        mode_id: modeId,
+        period_id: periodId,
+        direction_id: directionId,
+      }),
     onSuccess: async (_result, limitBytes) => {
       toast({ tone: 'success', title: limitBytes > 0 ? t('quota.saved') : t('quota.removed') })
       await invalidate()
@@ -249,6 +411,21 @@ function QuotaEditor({
           />
         </div>
       </div>
+
+      <Field label={t('quota.directionLabel')}>
+        {(props) => (
+          <Select
+            id={props.id}
+            value={String(directionId)}
+            onValueChange={(value) => setDirectionId(Number(value))}
+            options={[
+              { value: String(TrafficDirection.Both), label: t('quota.direction.10') },
+              { value: String(TrafficDirection.Rx), label: t('quota.direction.20') },
+              { value: String(TrafficDirection.Tx), label: t('quota.direction.30') },
+            ]}
+          />
+        )}
+      </Field>
 
       <Field label={t('quota.window')}>
         {(props) => (

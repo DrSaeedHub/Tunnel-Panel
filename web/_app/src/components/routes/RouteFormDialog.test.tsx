@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formFromRoute, toPatch } from './RouteFormDialog'
+import { formFromRoute, looksLikeAddressOrCidr, toPatch } from './RouteFormDialog'
 import { LoadBalanceMode, type RouteRule } from '@/lib/types'
 
 // Opening a rule for editing seeds the form from the rule. Both child lists
@@ -183,5 +183,35 @@ describe('the parts of a destination this dialog does not edit', () => {
     const sent = patch.destinations as Record<string, unknown>[]
     expect(sent[1]).toMatchObject({ address: '198.51.100.30', is_enabled: true })
     expect(sent[1].is_monitor_enabled).toBeNull()
+  })
+})
+
+/**
+ * The gate between typed text and a token. It only has to keep obvious typos
+ * from becoming tokens that fail on the backend later — the backend keeps the
+ * final word.
+ */
+describe('what may become a source token', () => {
+  it.each([
+    '192.168.1.1',
+    '10.0.0.0/8',
+    '203.0.113.7/32',
+    '2001:db8::1',
+    '2001:db8::/32',
+    'fe80::1/128',
+  ])('accepts %s', (value) => {
+    expect(looksLikeAddressOrCidr(value)).toBe(true)
+  })
+
+  it.each([
+    'not-an-ip',
+    '192.168.1',
+    '192.168.1.256',
+    '10.0.0.0/33',
+    '2001:db8::/129',
+    '1.2.3.4/8/8',
+    '12345::z',
+  ])('refuses %s', (value) => {
+    expect(looksLikeAddressOrCidr(value)).toBe(false)
   })
 })

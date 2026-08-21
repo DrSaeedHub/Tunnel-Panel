@@ -41,7 +41,10 @@ function status(overrides: Partial<QuotaStatus> = {}): QuotaStatus {
     limit_bytes: 100 * GB,
     mode_id: 10,
     period_id: 40,
+    direction_id: 10,
     used_bytes: 34 * GB,
+    used_rx_bytes: 20 * GB,
+    used_tx_bytes: 14 * GB,
     exhausted: false,
     stopped: false,
     ...overrides,
@@ -103,6 +106,7 @@ describe('the traffic limit row', () => {
         limit_bytes: 50 * GB,
         mode_id: 10,
         period_id: 40,
+        direction_id: 10,
       }),
     )
   })

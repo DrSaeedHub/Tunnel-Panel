@@ -398,3 +398,39 @@ func TestWindowStarts(t *testing.T) {
 		}
 	}
 }
+
+// A limit that counts one direction ignores the other. The plan being paid for
+// decides which bytes are the metered ones, and a limit on what the relay
+// serves out must not be eaten by what it happens to receive.
+func TestADirectionalLimitCountsOnlyItsDirection(t *testing.T) {
+	h := newHarness(t)
+	h.tunnelBytes["gre-b-1"] = [2]uint64{0, 0}
+	if err := h.checker.Set(h.ctx, Subject{ScopeID: model.QuotaScopeTunnel, TunnelID: 1},
+		Limit{LimitBytes: 2 * gigabyte, ModeID: model.TrafficLimitModeEnforce,
+			DirectionID: model.TrafficDirectionRx}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ten gigabytes sent, one received: an rx-only limit of two is not touched.
+	h.tunnelBytes["gre-b-1"] = [2]uint64{1 * uint64(gigabyte), 10 * uint64(gigabyte)}
+	h.checker.Sweep(h.ctx)
+
+	status := h.checker.TunnelStatus(1)
+	if status.Exhausted || len(h.stops) != 0 {
+		t.Fatalf("sent traffic counted against a received-only limit: %+v", status)
+	}
+	if status.UsedBytes != gigabyte {
+		t.Errorf("used %d, want the 1 GB received", status.UsedBytes)
+	}
+	// Both directions are still reported, so the interface can show the split.
+	if status.UsedRxBytes != gigabyte || status.UsedTxBytes != 10*gigabyte {
+		t.Errorf("the split is wrong: rx %d, tx %d", status.UsedRxBytes, status.UsedTxBytes)
+	}
+
+	// The received side crossing it is what trips it.
+	h.tunnelBytes["gre-b-1"] = [2]uint64{3 * uint64(gigabyte), 10 * uint64(gigabyte)}
+	h.checker.Sweep(h.ctx)
+	if len(h.stops) != 1 {
+		t.Errorf("the received direction crossing the limit did not stop the tunnel")
+	}
+}

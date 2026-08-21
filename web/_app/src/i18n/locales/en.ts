@@ -35,6 +35,13 @@ export default {
       10: 'Traffic keeps flowing; the panel marks it as over its limit.',
       20: 'The panel stops it, and starts it again when the window rolls over or you reset the usage.',
     },
+    directionLabel: 'Counted traffic',
+    direction: {
+      10: 'both directions',
+      20: 'download only',
+      30: 'upload only',
+    },
+    none: 'No limit',
     stopped: 'Stopped at limit',
     overLimit: 'Over limit',
     reset: 'Reset usage',
@@ -520,6 +527,9 @@ export default {
     keyInUse: '{{name}} already uses this key. The kernel tells two tunnels apart by their endpoints and their keys together, so this is allowed — but if these two share endpoints as well, only one of them will work.',
     sectionEndpoints: 'Endpoints and addressing',
     sectionAdvanced: 'Advanced',
+    sectionTraffic: 'Traffic limit',
+    helpTraffic:
+      'How much this tunnel may carry before the panel warns or stops it. Empty means unlimited. Saved with the tunnel.',
     sectionMonitoring: 'Monitoring',
     sectionPreview: 'Preview',
     addressing: {
@@ -1307,6 +1317,8 @@ export default {
     sectionDestination: 'Destination — where it goes',
     sectionNat: 'Source address',
     sectionAdvanced: 'Advanced',
+    sectionTraffic: 'Traffic limits',
+    quota: { rule: 'Whole rule' },
 
     fields: {
       title: 'Name',
@@ -1344,6 +1356,10 @@ export default {
     },
 
     help: {
+      traffic:
+        'How much may be carried before the panel warns or stops it — for the rule as a whole, and for each destination on its own. Empty means unlimited. Saved with the rule.',
+      sources:
+        'Who may use this rule: pick shared address lists, or type an address or CIDR and press space to add it. With nothing here, every source that can reach the bind address is allowed.',
       enabled:
         'Off takes the rule out of the installed ruleset without deleting it: nothing is forwarded until it is turned back on.',
       title: 'How you will recognise this rule later. Any name you like.',
@@ -1420,6 +1436,7 @@ export default {
     },
 
     allowlist: {
+      invalid: '{{value}} is not an address or a CIDR.',
       add: 'Add',
       placeholder: '192.0.2.0/24',
       empty: 'Open to any source that can reach the bind address.',

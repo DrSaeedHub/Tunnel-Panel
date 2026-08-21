@@ -1610,7 +1610,11 @@ export interface QuotaStatus {
   mode_id: number
   /** 10 = total, 20 = daily, 30 = weekly, 40 = monthly. */
   period_id: number
+  /** 10 = both together, 20 = received only, 30 = sent only. */
+  direction_id: number
   used_bytes: number
+  used_rx_bytes: number
+  used_tx_bytes: number
   period_start?: string
   /** Usage has reached the limit. */
   exhausted: boolean
@@ -1628,6 +1632,7 @@ export interface QuotaStatuses {
 
 export const TrafficLimitMode = { Warn: 10, Enforce: 20 } as const
 export const TrafficPeriod = { Total: 10, Daily: 20, Weekly: 30, Monthly: 40 } as const
+export const TrafficDirection = { Both: 10, Rx: 20, Tx: 30 } as const
 
 export interface ForwardingStatus {
   ipv4_forwarding: boolean

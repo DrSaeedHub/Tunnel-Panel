@@ -40,6 +40,15 @@ import { Technical } from '../ui/technical'
 import { tunnelLabel } from '@/lib/format'
 import { SideSelector } from './SideSelector'
 import { PreviewPanel } from './PreviewPanel'
+import {
+  QuotaDraftFields,
+  applyQuotaDrafts,
+  draftFromStatus,
+  emptyQuotaDraft,
+  tunnelQuota,
+  useQuotaStatuses,
+  type QuotaDraft,
+} from '../quota/TrafficLimit'
 import { InheritedNumberField } from './InheritedField'
 
 /**
@@ -134,6 +143,11 @@ export function TunnelFormDialog({
   const [force, setForce] = useState(false)
   const [confirmRecreate, setConfirmRecreate] = useState(false)
   const [askingToRecreate, setAskingToRecreate] = useState(false)
+  // The traffic limit rides beside the tunnel: saved through its own endpoint
+  // after the tunnel lands, which is what lets the create dialog carry a limit
+  // for a tunnel that does not exist yet.
+  const [quotaDraft, setQuotaDraft] = useState<QuotaDraft | null>(null)
+  const quotaStatuses = useQuotaStatuses(open)
 
   // The form is seeded once per opening, from the tunnel being edited, from a
   // pairing code, or from the panel's configured defaults.
@@ -145,6 +159,7 @@ export function TunnelFormDialog({
       setForce(false)
       setConfirmRecreate(false)
       setAskingToRecreate(false)
+      setQuotaDraft(null)
       return
     }
     if (form) return
@@ -221,6 +236,26 @@ export function TunnelFormDialog({
         })
         setSubmitError(verificationFailures(result.verification).join(' · '))
         return
+      }
+
+      // The tunnel is in; now its traffic limit. A failure here must not
+      // read as the tunnel failing — the tunnel saved — so it gets its own
+      // message.
+      if (quotaDraft) {
+        try {
+          await applyQuotaDrafts([{
+            subject: { scope: 'tunnel', tunnel_id: result.tunnel.tunnel_id },
+            draft: quotaDraft,
+            existing: tunnelQuota(quotaStatuses.data, result.tunnel.tunnel_id),
+          }])
+          await queryClient.invalidateQueries({ queryKey: ['quota'] })
+        } catch (quotaError) {
+          toast({
+            tone: 'error',
+            title: t('quota.title'),
+            description: describeError(quotaError, t).message,
+          })
+        }
       }
 
       toast({
@@ -738,6 +773,20 @@ export function TunnelFormDialog({
                 onChange={(value) => set('monitor_degraded_rtt_ms', value)}
               />
             </div>
+          </DisclosurePanel>
+
+          {/* Traffic limit. Saved through its own endpoint after the tunnel
+              does, so the same section works in the create dialog. */}
+          <DisclosurePanel title={t('tunnelForm.sectionTraffic')} contentClassName="space-y-3">
+            <p className="text-2xs text-muted-foreground">{t('tunnelForm.helpTraffic')}</p>
+            <QuotaDraftFields
+              label={t('quota.limit')}
+              draft={
+                quotaDraft ??
+                (tunnel ? draftFromStatus(tunnelQuota(quotaStatuses.data, tunnel.tunnel_id)) : emptyQuotaDraft())
+              }
+              onChange={setQuotaDraft}
+            />
           </DisclosurePanel>
 
           {/* 5 — Preview */}
