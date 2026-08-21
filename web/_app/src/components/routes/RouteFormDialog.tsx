@@ -754,6 +754,7 @@ export function RouteFormDialog({
               />
               <SwitchField
                 label={t('routeForm.fields.enabled')}
+                description={t('routeForm.help.enabled')}
                 checked={form.is_enabled}
                 onCheckedChange={(value) => set('is_enabled', value)}
               />

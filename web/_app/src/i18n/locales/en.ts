@@ -1339,11 +1339,13 @@ export default {
       connectionRateLimit: 'New connections per minute, per client',
       allowedSources: 'Individual addresses',
       destinations: 'Destinations',
-      enabled: 'Enabled',
+      enabled: 'Rule is active',
       weight: 'Weight',
     },
 
     help: {
+      enabled:
+        'Off takes the rule out of the installed ruleset without deleting it: nothing is forwarded until it is turned back on.',
       title: 'How you will recognise this rule later. Any name you like.',
       bindAddress:
         'The address on this server that traffic arrives on. Left at the default it is this server’s own primary address.',
