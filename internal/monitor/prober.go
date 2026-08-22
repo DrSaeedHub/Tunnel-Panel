@@ -61,11 +61,9 @@ type prober struct {
 
 	identifier int
 	isIPv6     bool
-	// traffic answers whether the interface moved anything since the last
-	// sample, which is what keeps a filtered path from reading as a dead one.
-	traffic *trafficWatch
-	// peer knocks on the far end over TCP when the two cheaper signals have
-	// both come up empty.
+	// peer knocks on the far end over TCP when the probes have gone
+	// unanswered, which is what keeps a filtered path from reading as a dead
+	// one.
 	peer *peerWatch
 
 	mu        sync.Mutex
@@ -80,7 +78,7 @@ type prober struct {
 // the tunnel identifier so that replies can never be miscounted across tunnels
 // sharing a raw socket's view of the network (§10.1).
 func newProber(cfg Config, dialer Dialer, publisher Publisher, transitions TransitionSink,
-	agg *aggregator, traffic TrafficReader, peer PeerChecker) *prober {
+	agg *aggregator, peer PeerChecker) *prober {
 	p := &prober{
 		dialer:      dialer,
 		window:      NewWindow(cfg.WindowSize),
@@ -91,7 +89,6 @@ func newProber(cfg Config, dialer Dialer, publisher Publisher, transitions Trans
 		identifier:  identifierFor(cfg.TunnelID),
 		since:       time.Now(),
 		lastState:   model.MonitorStateUnknown,
-		traffic:     &trafficWatch{reader: traffic},
 		peer:        &peerWatch{checker: peer},
 	}
 	p.cfg.Store(&cfg)
@@ -339,11 +336,10 @@ func (p *prober) evaluate(ctx context.Context) error {
 func (p *prober) sample(ctx context.Context, now time.Time) {
 	cfg := p.Config()
 	stats := p.window.Stats(now)
-	stats.CarryingTraffic = p.traffic.moved(cfg.InterfaceName)
-	// Only asked when the two free signals have both come up empty: a TCP
-	// connection costs a round trip and a socket, and there is no reason to
-	// spend either on a tunnel whose probes are being answered.
-	if !stats.CarryingTraffic && stats.Sent >= cfg.StateChangeSamples &&
+	// Only asked when the probes have come up empty: a TCP connection costs a
+	// round trip and a socket, and there is no reason to spend either on a
+	// tunnel whose probes are being answered.
+	if stats.Sent >= cfg.StateChangeSamples &&
 		stats.LossPercent >= cfg.DownLossPercent {
 		stats.PeerAnswered = p.peer.answered(ctx, cfg)
 	}

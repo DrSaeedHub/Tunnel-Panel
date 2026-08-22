@@ -40,7 +40,6 @@ type Supervisor struct {
 	hub      *Hub
 	log      *slog.Logger
 	dialer   Dialer
-	traffic  TrafficReader
 	peer     PeerChecker
 
 	aggregator *aggregator
@@ -87,11 +86,8 @@ type Deps struct {
 	Log      *slog.Logger
 	// Dialer opens probe sockets. Nil means real ones.
 	Dialer Dialer
-	// Traffic reads the interface counters that tell a filtered path from a
-	// dead one. Nil means the kernel's own, under /sys.
-	Traffic TrafficReader
-	// Peer knocks on the far end over TCP when a tunnel is idle and its
-	// probes are unanswered. Nil means a real connection.
+	// Peer knocks on the far end over TCP when a tunnel's probes are
+	// unanswered. Nil means a real connection.
 	Peer PeerChecker
 	// PanelPort is the port this panel serves on, which is what the knock
 	// goes to: the far end of a tunnel this panel manages is usually running
@@ -109,10 +105,6 @@ func New(d Deps) *Supervisor {
 	if dialer == nil {
 		dialer = SystemDialer{}
 	}
-	traffic := d.Traffic
-	if traffic == nil {
-		traffic = SysfsTraffic{}
-	}
 	peer := d.Peer
 	if peer == nil {
 		peer = TCPPeerChecker{Port: d.PanelPort}
@@ -125,7 +117,6 @@ func New(d Deps) *Supervisor {
 		hub:        NewHub(),
 		log:        log,
 		dialer:     dialer,
-		traffic:    traffic,
 		peer:       peer,
 		aggregator: newAggregator(d.Store, log),
 		running:    map[int64]*worker{},
@@ -341,7 +332,7 @@ func needsRestart(current, next Config) bool {
 // (§10.3).
 func (s *Supervisor) startProber(ctx context.Context, cfg Config) {
 	probeCtx, cancel := context.WithCancel(ctx)
-	p := newProber(cfg, s.dialer, s.hub, s, s.aggregator, s.traffic, s.peer)
+	p := newProber(cfg, s.dialer, s.hub, s, s.aggregator, s.peer)
 	w := &worker{prober: p, cancel: cancel, done: make(chan struct{}), wake: make(chan struct{}, 1)}
 
 	s.mu.Lock()

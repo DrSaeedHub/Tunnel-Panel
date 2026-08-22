@@ -61,7 +61,7 @@ func TestAReadFaultStopsTheProberInsteadOfHangingIt(t *testing.T) {
 	t.Parallel()
 
 	fault := errors.New("the socket broke")
-	p := newProber(probeConfig(), faultyDialer{err: fault}, nil, nil, nil, nil, nil)
+	p := newProber(probeConfig(), faultyDialer{err: fault}, nil, nil, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -87,7 +87,7 @@ func TestCancellingAProberStopsEveryGoroutine(t *testing.T) {
 	dialer.OnWrite = func(c *fakeConn, id, sequence int, payload []byte) {
 		c.deliver(replyTo(id, sequence, payload), &net.IPAddr{IP: net.ParseIP("10.0.0.2")})
 	}
-	p := newProber(probeConfig(), dialer, nil, nil, nil, nil, nil)
+	p := newProber(probeConfig(), dialer, nil, nil, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -156,7 +156,7 @@ func TestTheLoopbackDialerKeepsAProberProbing(t *testing.T) {
 	cfg.Timeout = 100 * time.Millisecond
 
 	recorder := &snapshotRecorder{}
-	p := newProber(cfg, LoopbackDialer{Latency: time.Millisecond}, recorder, nil, nil, nil, nil)
+	p := newProber(cfg, LoopbackDialer{Latency: time.Millisecond}, recorder, nil, nil, nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

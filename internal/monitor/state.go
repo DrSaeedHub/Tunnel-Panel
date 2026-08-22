@@ -32,31 +32,21 @@ func Classify(stats Stats, cfg Config) (int64, string) {
 			"only %d of the %d probes needed for a verdict have finished", stats.Sent, cfg.StateChangeSamples)
 	}
 	if stats.LossPercent >= cfg.DownLossPercent {
-		// A link carrying traffic is not down, whatever the probes say.
+		// Unanswered probes on a path that filters ICMP are not a dead tunnel,
+		// so the far end is asked over TCP before the verdict is Down. Its
+		// stack answering -- by accepting or by refusing -- is proof that the
+		// tunnel carried a packet there and carried the answer back, which is
+		// the whole question.
 		//
-		// On a path where ICMP is filtered -- which is the ordinary condition
-		// on a good many of the routes this panel is used across -- a tunnel
-		// running at full speed answers no probes at all. Calling that down is
-		// not merely a wrong label: it is the input to everything that acts on
-		// a tunnel being down, so a working link gets torn up and rebuilt on a
-		// schedule. The interface's own counters settle it, and they are the
-		// stronger evidence: a probe is a question the far end may decline to
-		// answer, and a byte count is packets that actually crossed.
-		if stats.CarryingTraffic {
-			return model.MonitorStateUp, fmt.Sprintf(
-				"%.1f%% of probes are unanswered, but the interface is carrying traffic: the "+
-					"path is up and something along it is filtering ICMP rather than dropping packets",
-				stats.LossPercent)
-		}
-		// An idle tunnel carries nothing, so the counters say nothing either.
-		// Knocking on the far end over TCP is what separates a tunnel nobody
-		// is using from one that does not work, and the far end's stack
-		// answering -- by accepting or by refusing -- is proof that the tunnel
-		// carried a packet there and carried the answer back.
+		// Nothing weaker counts. The interface's own byte counters were once
+		// read as evidence here, and they cannot be: a GRE interface with no
+		// far end at all still counts every probe this monitor sends out of
+		// it, so the counters called a tunnel that was never built at the
+		// other end up and carrying traffic.
 		if stats.PeerAnswered {
 			return model.MonitorStateUp, fmt.Sprintf(
-				"%.1f%% of probes are unanswered and the tunnel is idle, but the far end "+
-					"answered a TCP connection across it: the path is up and ICMP is being filtered",
+				"%.1f%% of probes are unanswered, but the far end answered a TCP connection "+
+					"across the tunnel: the path is up and ICMP is being filtered",
 				stats.LossPercent)
 		}
 		return model.MonitorStateDown, fmt.Sprintf(
@@ -64,8 +54,8 @@ func Classify(stats Stats, cfg Config) (int64, string) {
 			stats.LossPercent, stats.Sent, cfg.DownLossPercent)
 	}
 	if stats.LossPercent >= cfg.DegradedLossPercent {
-		// Partial loss with traffic moving is still degraded: some probes did
-		// come back, so the far end is answering and the loss is real.
+		// Partial loss is real loss: some probes did come back, so the far end
+		// is answering ICMP and the ones that did not were dropped.
 		return model.MonitorStateDegraded, fmt.Sprintf(
 			"%.1f%% of probes over the last %d are unanswered, at or above the degraded threshold of %.1f%%",
 			stats.LossPercent, stats.Sent, cfg.DegradedLossPercent)
