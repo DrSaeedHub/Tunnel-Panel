@@ -379,3 +379,150 @@ describe('the address pool a new tunnel starts on', () => {
     expect(select).not.toHaveTextContent('172.17.0.0/16')
   })
 })
+
+/**
+ * Importing a pairing code whose pool this server does not have.
+ *
+ * Pool ids are rows in one server's database. A code from a host whose pool was
+ * its row 41 filled the form in with "address pool 41" and stopped there, on a
+ * value the operator never chose and could not correct from the form. The
+ * addresses were in the code all along.
+ */
+describe('a pairing code naming a pool this server does not have', () => {
+  const prefill = {
+    tunnel_type_id: 1,
+    tunnel_side_id: TunnelSide.B,
+    persistence_type_id: 1,
+    interface_name: 'gre-b-2',
+    local_endpoint: '139.162.153.171',
+    remote_endpoint: '85.9.105.13',
+    ttl: 255,
+    tos: 'inherit',
+    mtu: 1472,
+    ikey: 4242,
+    okey: 4242,
+    is_enabled: true,
+    address_pool_id: null,
+    addresses: [
+      { address: '10.250.250.2', prefix_length: 30, peer_address: '10.250.250.1', is_primary: true },
+    ],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+
+  const hint = {
+    cidr: '10.250.250.0/25',
+    address_pool_title: 'Free private range',
+    prefix_length: 30,
+    status: 'missing' as const,
+  }
+
+  async function openImported(hintOverride?: Record<string, unknown>, pools: unknown[] = []) {
+    const { api } = await import('@/lib/api')
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/settings') return { settings: {} }
+      if (path === '/system/capabilities') {
+        return { tunnel_types: [{ id: 1, name: 'gre', supported: true }], persistence: [] }
+      }
+      if (path === '/pools') return { pools }
+      if (path === '/tunnels') return { tunnels: [] }
+      if (path === '/system/interfaces') return { interfaces: [] }
+      if (path === '/tunnels/side-info') {
+        return {
+          summary: 'One end is A and the other is B.',
+          sides: [
+            { tunnel_side_id: TunnelSide.A, title: 'Side A', description: '' },
+            { tunnel_side_id: TunnelSide.B, title: 'Side B', description: '' },
+          ],
+          identical_on_both_ends: [],
+          tunnel_side_ids: { a: TunnelSide.A, b: TunnelSide.B },
+        }
+      }
+      return undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any
+    render(
+      wrapDialog(
+        <TunnelFormDialog
+          open
+          onOpenChange={() => {}}
+          initial={prefill}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          initialPool={{ ...hint, ...hintOverride } as any}
+        />,
+      ),
+    )
+    return api
+  }
+
+  it('keeps the addresses the code carried instead of blocking on the pool', async () => {
+    await openImported()
+
+    // The addresses are in the form, ready to be created as they are.
+    expect(await screen.findByDisplayValue('10.250.250.2')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('10.250.250.1')).toBeInTheDocument()
+    expect(screen.getByText(/no pool for/i)).toBeInTheDocument()
+  })
+
+  it('offers to create the same pool here, and moves the tunnel onto it', async () => {
+    const api = await openImported()
+    vi.mocked(api.post).mockImplementation(async (path: string) => {
+      if (path === '/pools') return { address_pool_id: 77 }
+      return { plan: { steps: [], rollback: [], files: [] }, mtu: {}, warnings: [], diffs: [] }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any
+
+    fireEvent.click(await screen.findByRole('button', { name: /create this pool here/i }))
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith('/pools', {
+        address_pool_title: 'Free private range',
+        cidr: '10.250.250.0/25',
+        prefix_length: 30,
+        is_enabled: true,
+      }),
+    )
+  })
+
+  it('offers to enable the pool when this server has the range, switched off', async () => {
+    const api = await openImported({ status: 'disabled', address_pool_id: 9 }, [
+      {
+        address_pool_id: 9,
+        address_pool_title: 'Free private range',
+        cidr: '10.250.250.0/25',
+        prefix_length: 30,
+        description: '',
+        is_public_range: false,
+        is_enabled: false,
+        in_use: 0,
+        capacity: { capacity: 32 },
+      },
+    ])
+    vi.mocked(api.put).mockResolvedValue({ address_pool_id: 9 } as never)
+
+    fireEvent.click(await screen.findByRole('button', { name: /enable this pool/i }))
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/pools/9', expect.objectContaining({
+      cidr: '10.250.250.0/25', is_enabled: true,
+    })))
+  })
+
+  it('says nothing when this server already has the pool enabled', async () => {
+    await openImported({ status: 'matched', address_pool_id: 9 }, [
+      {
+        address_pool_id: 9,
+        address_pool_title: 'Free private range',
+        cidr: '10.250.250.0/25',
+        prefix_length: 30,
+        description: '',
+        is_public_range: false,
+        is_enabled: true,
+        in_use: 0,
+        capacity: { capacity: 32 },
+      },
+    ])
+
+    await screen.findByRole('button', { name: /create tunnel/i })
+    expect(screen.queryByRole('button', { name: /create this pool here/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/no pool for/i)).not.toBeInTheDocument()
+  })
+})

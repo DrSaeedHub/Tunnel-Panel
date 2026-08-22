@@ -3,7 +3,12 @@ import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import type { FromPairingCodeResponse, PairingCodeResponse, TunnelInput } from '@/lib/types'
+import type {
+  FromPairingCodeResponse,
+  PairedPoolHint,
+  PairingCodeResponse,
+  TunnelInput,
+} from '@/lib/types'
 import { TunnelSide } from '@/lib/types'
 import { Button } from '../ui/button'
 import { Field, Textarea } from '../ui/form'
@@ -134,7 +139,7 @@ export function ImportPairingCodeDialog({
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onDecoded: (input: TunnelInput) => void
+  onDecoded: (input: TunnelInput, pool?: PairedPoolHint | null) => void
 }) {
   const { t } = useTranslation()
   const [code, setCode] = useState('')
@@ -216,7 +221,7 @@ export function ImportPairingCodeDialog({
             <Button
               variant="primary"
               onClick={() => {
-                onDecoded(decoded.tunnel)
+                onDecoded(decoded.tunnel, decoded.address_pool)
                 onOpenChange(false)
               }}
             >

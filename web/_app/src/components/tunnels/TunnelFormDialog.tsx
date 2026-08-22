@@ -15,6 +15,7 @@ import {
   type PreviewResponse,
   type HostInterface,
   type InterfacesResponse,
+  type PairedPoolHint,
   type SettingsResponse,
   type TunnelListResponse,
   type Tunnel,
@@ -88,6 +89,7 @@ export function TunnelFormDialog({
   onOpenChange,
   tunnel,
   initial,
+  initialPool,
   onCreated,
 }: {
   open: boolean
@@ -96,6 +98,12 @@ export function TunnelFormDialog({
   tunnel?: Tunnel
   /** A prefilled payload, as the pairing-code import produces. */
   initial?: TunnelInput
+  /**
+   * What the same import found out about the pool the other end allocated
+   * from: whether this server has that range, and what to create if it does
+   * not.
+   */
+  initialPool?: PairedPoolHint
   onCreated?: (created: Tunnel) => void
 }) {
   const { t } = useTranslation()
@@ -443,6 +451,7 @@ export function TunnelFormDialog({
               manual={manualAddressing}
               onManualChange={setManualAddressing}
               pools={pools}
+              pairedPool={initialPool}
               errors={fieldErrors}
             />
           </section>
@@ -1048,6 +1057,7 @@ function AddressingSection({
   manual,
   onManualChange,
   pools,
+  pairedPool,
   errors,
 }: {
   form: FormState
@@ -1055,6 +1065,7 @@ function AddressingSection({
   manual: boolean
   onManualChange: (value: boolean) => void
   pools: PoolResponse[]
+  pairedPool?: PairedPoolHint
   errors: Record<string, string>
 }) {
   const { t } = useTranslation()
@@ -1188,6 +1199,18 @@ function AddressingSection({
         <p className="text-xs text-muted-foreground">{t('tunnelForm.addressing.noPools')}</p>
       )}
 
+      {/* The pool the other end allocated from, when this server does not have
+          it. The id it carried belongs to the other host, so the tunnel keeps
+          the addresses from the code and the range itself is offered here. */}
+      <PairedPoolOffer
+        hint={pairedPool}
+        pools={pools}
+        onAdopted={(poolId) => {
+          onManualChange(false)
+          set('address_pool_id', poolId)
+        }}
+      />
+
       {/* A pairing code brings the addresses the other end already committed
           to. They are kept even in automatic mode — the far end cannot be
           re-allocated — so they are shown rather than silently applied. */}
@@ -1205,6 +1228,88 @@ function AddressingSection({
           ) : null}
         </p>
       ) : null}
+    </div>
+  )
+}
+
+/**
+ * The address pool a pairing code came from, offered on this server.
+ *
+ * Pool ids are rows in one server's database. A code from a host whose pool was
+ * its row 41 used to fill this form in with "address pool 41" and fail on it,
+ * because nothing here was ever numbered 41. The backend now matches the range
+ * instead and leaves the tunnel on the addresses the code carried when it finds
+ * no match -- those addresses are already committed at the far end, so nothing
+ * has to be allocated for the tunnel to be correct.
+ *
+ * What is still worth having is the pool itself: the ranges are meant to be the
+ * same on both ends, and an operator who wanted this range tracked here would
+ * otherwise have to leave the form, create it in Settings, and come back. So
+ * the range is offered where the problem is visible -- create it, or enable the
+ * one this server already has, and the tunnel moves onto it.
+ */
+function PairedPoolOffer({
+  hint,
+  pools,
+  onAdopted,
+}: {
+  hint?: PairedPoolHint
+  pools: PoolResponse[]
+  onAdopted: (poolId: number) => void
+}) {
+  const { t } = useTranslation()
+  const { toast } = useToast()
+  const queryClient = useQueryClient()
+
+  // The hint is a snapshot from the moment the code was decoded. Once the pool
+  // exists and is enabled here, the offer has been taken and is gone.
+  const local = pools.find((pool) => pool.cidr === hint?.cidr)
+
+  const adoptMutation = useMutation({
+    mutationFn: async () => {
+      const body = {
+        address_pool_title: hint?.address_pool_title || hint?.cidr || '',
+        cidr: hint?.cidr ?? '',
+        prefix_length: hint?.prefix_length || undefined,
+        is_enabled: true,
+      }
+      return local
+        ? api.put<PoolResponse>(`/pools/${local.address_pool_id}`, {
+            ...body,
+            address_pool_title: local.address_pool_title,
+            prefix_length: local.prefix_length,
+            description: local.description,
+          })
+        : api.post<PoolResponse>('/pools', body)
+    },
+    onSuccess: async (pool) => {
+      await queryClient.invalidateQueries({ queryKey: ['pools'] })
+      onAdopted(pool.address_pool_id)
+    },
+    onError: (error) => {
+      const described = describeError(error, t)
+      toast({ tone: 'error', title: t('tunnelForm.addressing.pairedPoolAction'), description: described.message })
+    },
+  })
+
+  if (!hint || hint.status === 'matched' || local?.is_enabled) return null
+
+  return (
+    <div className="space-y-2 rounded-md border border-warn/40 bg-warn/5 p-3">
+      <p className="text-xs">
+        {t(local ? 'tunnelForm.addressing.pairedPoolDisabled' : 'tunnelForm.addressing.pairedPoolMissing')}{' '}
+        <Technical>{hint.cidr}</Technical>
+      </p>
+      <p className="text-2xs text-muted-foreground">{t('tunnelForm.addressing.pairedPoolFallback')}</p>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        loading={adoptMutation.isPending}
+        onClick={() => adoptMutation.mutate()}
+      >
+        {t(local ? 'tunnelForm.addressing.pairedPoolEnable' : 'tunnelForm.addressing.pairedPoolCreate')}
+      </Button>
     </div>
   )
 }

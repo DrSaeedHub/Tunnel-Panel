@@ -541,6 +541,13 @@ export default {
       allocated: 'This tunnel will use {{subnet}}',
       noPools: 'No address pools are configured.',
       pinned: 'Addresses carried by the pairing code, kept as they are:',
+      pairedPoolMissing: 'The other end allocated from a range this server has no pool for:',
+      pairedPoolDisabled: 'The other end allocated from a range whose pool is disabled here:',
+      pairedPoolFallback:
+        'Nothing is blocked: the tunnel uses the addresses the pairing code carried, which the other end has already committed to. Adding the pool here is what lets this server allocate from the same range later.',
+      pairedPoolCreate: 'Create this pool here',
+      pairedPoolEnable: 'Enable this pool',
+      pairedPoolAction: 'Address pool',
       addAddress: 'Add address',
       removeAddress: 'Remove address',
       primary: 'Primary',

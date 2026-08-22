@@ -10,6 +10,7 @@ import (
 
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
+	"github.com/drs/gre-panel/internal/pairing"
 	"github.com/drs/gre-panel/internal/rules"
 )
 
@@ -421,6 +422,156 @@ func TestCorruptPairingCodeIsRejected(t *testing.T) {
 	if env.Error.Field != "pairing_code" {
 		t.Fatalf("the error must name the field: %+v", env.Error)
 	}
+}
+
+/*
+The address pool a pairing code names.
+
+A pool id is a row in one server's database. The code used to carry the id and
+the far end used to take it at face value, so importing a code from a server
+whose pool happened to be number 41 filled the form in with "address pool 41",
+which on this host was nothing at all -- and the create failed on a value the
+operator never chose and could not correct from the form.
+
+The code now carries the pool's range. A pool here with the same range is used;
+otherwise the tunnel keeps the addresses the code carried, which the far end has
+already committed to, and the response says what the missing pool would be so
+the panel can offer to create it.
+*/
+
+func TestAPairingCodePoolIsMatchedByRangeNotById(t *testing.T) {
+	h := newHarness(t, testWebPath)
+	c, api := session(t, h)
+	id := tunnelID(t, createTunnel(t, c, api, nil))
+
+	_, body := c.request(http.MethodGet, api+"/tunnels/"+id+"/pairing-code", nil)
+	var produced struct {
+		PairingCode string `json:"pairing_code"`
+	}
+	_ = json.Unmarshal(body, &produced)
+
+	payload, err := pairing.Decode(produced.PairingCode)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.AddressPoolCidr != "172.17.0.0/16" {
+		t.Fatalf("the code carries pool cidr %q, want the range the tunnel was allocated from",
+			payload.AddressPoolCidr)
+	}
+
+	decoded := decodePairingCode(t, c, api, produced.PairingCode)
+	if decoded.Pool == nil || decoded.Pool.Status != "matched" {
+		t.Fatalf("pool hint = %+v, want the local pool with the same range", decoded.Pool)
+	}
+	if decoded.Tunnel.AddressPoolID == nil || *decoded.Tunnel.AddressPoolID != *decoded.Pool.AddressPoolID {
+		t.Fatalf("the tunnel was not put on this server's matching pool: %+v", decoded.Tunnel)
+	}
+}
+
+func TestAPairingCodePoolThisServerDoesNotHaveIsReportedNotImposed(t *testing.T) {
+	h := newHarness(t, testWebPath)
+	c, api := session(t, h)
+
+	// A code from a server whose pool is its row 41 and whose range this host
+	// has never heard of.
+	poolID := int64(41)
+	code, err := pairing.Encode(pairing.Payload{
+		TunnelTypeID:            model.TunnelTypeGRE,
+		TunnelSideID:            model.TunnelSideA,
+		LocalEndpoint:           "203.0.113.10",
+		RemoteEndpoint:          "198.51.100.20",
+		Ttl:                     255,
+		Mtu:                     1472,
+		AddressPoolID:           &poolID,
+		AddressPoolCidr:         "10.250.250.0/25",
+		AddressPoolTitle:        "Free private range",
+		AddressPoolPrefixLength: 30,
+		Addresses: []pairing.PairAddress{
+			{AddressA: "10.250.250.1", AddressB: "10.250.250.2", PrefixLength: 30, IsPrimary: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoded := decodePairingCode(t, c, api, code)
+	// The far end's id is not imposed on this server: the form opens on the
+	// addresses the code carried instead of on a pool that does not exist.
+	if decoded.Tunnel.AddressPoolID != nil {
+		t.Fatalf("address_pool_id = %d, want none: this server has no such pool",
+			*decoded.Tunnel.AddressPoolID)
+	}
+	if len(decoded.Tunnel.Addresses) != 1 || decoded.Tunnel.Addresses[0].Address != "10.250.250.2" {
+		t.Fatalf("the carried addresses were lost: %+v", decoded.Tunnel.Addresses)
+	}
+	// And the panel is told what to offer to create.
+	if decoded.Pool == nil || decoded.Pool.Status != "missing" {
+		t.Fatalf("pool hint = %+v, want the missing range described", decoded.Pool)
+	}
+	if decoded.Pool.Cidr != "10.250.250.0/25" || decoded.Pool.PrefixLength != 30 {
+		t.Fatalf("pool hint = %+v, want the range and subnet size to create", decoded.Pool)
+	}
+}
+
+func TestAPairingCodePoolThatIsDisabledHereIsNotSelected(t *testing.T) {
+	h := newHarness(t, testWebPath)
+	c, api := session(t, h)
+
+	resp, body := c.request(http.MethodPost, api+"/pools", map[string]any{
+		"address_pool_title": "Free private range", "cidr": "10.250.250.0/25",
+		"prefix_length": 30, "is_enabled": false,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /pools = %d\nbody: %s", resp.StatusCode, body)
+	}
+
+	code, err := pairing.Encode(pairing.Payload{
+		TunnelTypeID: model.TunnelTypeGRE, TunnelSideID: model.TunnelSideA,
+		LocalEndpoint: "203.0.113.10", RemoteEndpoint: "198.51.100.20",
+		Ttl: 255, Mtu: 1472,
+		AddressPoolCidr: "10.250.250.0/25", AddressPoolPrefixLength: 30,
+		Addresses: []pairing.PairAddress{
+			{AddressA: "10.250.250.1", AddressB: "10.250.250.2", PrefixLength: 30, IsPrimary: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	decoded := decodePairingCode(t, c, api, code)
+	// A disabled pool allocates nothing, so it is reported rather than chosen.
+	if decoded.Tunnel.AddressPoolID != nil {
+		t.Fatalf("address_pool_id = %d, want none: the matching pool is disabled",
+			*decoded.Tunnel.AddressPoolID)
+	}
+	if decoded.Pool == nil || decoded.Pool.Status != "disabled" || decoded.Pool.AddressPoolID == nil {
+		t.Fatalf("pool hint = %+v, want the disabled local pool named", decoded.Pool)
+	}
+}
+
+type decodedPairingCode struct {
+	Tunnel struct {
+		AddressPoolID *int64 `json:"address_pool_id"`
+		Addresses     []struct {
+			Address     string `json:"address"`
+			PeerAddress string `json:"peer_address"`
+		} `json:"addresses"`
+	} `json:"tunnel"`
+	Pool *pairedPoolHint `json:"address_pool"`
+}
+
+func decodePairingCode(t *testing.T, c *client, api, code string) decodedPairingCode {
+	t.Helper()
+	resp, body := c.request(http.MethodPost, api+"/tunnels/from-pairing-code",
+		map[string]any{"pairing_code": code})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST from-pairing-code = %d\nbody: %s", resp.StatusCode, body)
+	}
+	var decoded decodedPairingCode
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	return decoded
 }
 
 // ---------------------------------------------------------------- side info

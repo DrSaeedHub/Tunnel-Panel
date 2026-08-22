@@ -500,8 +500,25 @@ export interface AddressInput {
   is_primary: boolean
 }
 
+/**
+ * The pool a pairing code named, as this server sees it.
+ *
+ * Pool ids are rows in one server's database, so the id on the code means
+ * nothing here. The backend matches the range instead and says what it found:
+ * `matched` (the tunnel is on this server's pool), `disabled` (the range exists
+ * here but cannot be allocated from), or `missing` (nothing here holds it).
+ */
+export interface PairedPoolHint {
+  cidr: string
+  address_pool_title?: string
+  prefix_length?: number
+  status: 'matched' | 'disabled' | 'missing'
+  address_pool_id?: number
+}
+
 export interface FromPairingCodeResponse {
   tunnel: TunnelInput
+  address_pool?: PairedPoolHint | null
   summary: Record<string, unknown>
   note: string
 }

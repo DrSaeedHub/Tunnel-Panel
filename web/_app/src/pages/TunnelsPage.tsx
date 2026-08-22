@@ -20,6 +20,7 @@ import {
   PersistenceType,
   TunnelSide,
   type MonitorSnapshot,
+  type PairedPoolHint,
   type Tunnel,
   type TunnelInput,
   type TunnelListResponse,
@@ -73,6 +74,10 @@ export default function TunnelsPage() {
   const [formOpen, setFormOpen] = useState(params.get('create') === '1')
   const [editing, setEditing] = useState<Tunnel | null>(null)
   const [prefill, setPrefill] = useState<TunnelInput | null>(null)
+  // What the pairing code said about the pool it allocated from, which is a
+  // range this server may not have. The form offers it rather than failing on
+  // a pool id that belongs to the other host.
+  const [prefillPool, setPrefillPool] = useState<PairedPoolHint | null>(null)
   const [deleting, setDeleting] = useState<Tunnel | null>(null)
   const [pairingFor, setPairingFor] = useState<number | null>(null)
   const [importOpen, setImportOpen] = useState(false)
@@ -339,11 +344,13 @@ export default function TunnelsPage() {
           if (!open) {
             setEditing(null)
             setPrefill(null)
+            setPrefillPool(null)
             setParam('create', '')
           }
         }}
         tunnel={editing ?? undefined}
         initial={prefill ?? undefined}
+        initialPool={prefillPool ?? undefined}
         onCreated={(created) => setPairingFor(created.tunnel_id)}
       />
 
@@ -366,9 +373,10 @@ export default function TunnelsPage() {
       <ImportPairingCodeDialog
         open={importOpen}
         onOpenChange={setImportOpen}
-        onDecoded={(input) => {
+        onDecoded={(input, pool) => {
           setEditing(null)
           setPrefill(input)
+          setPrefillPool(pool ?? null)
           setFormOpen(true)
         }}
       />

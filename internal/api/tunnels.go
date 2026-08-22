@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -487,6 +488,16 @@ func (s *Server) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 		EncapLimit:         rec.EncapLimit,
 		AddressPoolID:      rec.AddressPoolID,
 	}
+	// The pool travels as its range, not as its id: the id is a row in this
+	// server's database, and the far end has its own numbering. The range is
+	// what identifies the same pool there, or describes the one to create.
+	if rec.AddressPoolID != nil {
+		if pool, err := s.tunnels.Repo().PoolByID(r.Context(), *rec.AddressPoolID); err == nil {
+			payload.AddressPoolCidr = pool.Cidr
+			payload.AddressPoolTitle = pool.Title
+			payload.AddressPoolPrefixLength = pool.PrefixLength
+		}
+	}
 	for _, a := range rec.Addresses {
 		peer := ""
 		if a.PeerAddress != nil {
@@ -545,12 +556,74 @@ func (s *Server) handleFromPairingCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The pool the other end allocated from is matched against this server's
+	// own pools by range. A match is used; anything else leaves the tunnel on
+	// the addresses the code carried -- they are already committed at the far
+	// end, so nothing has to be allocated -- and the hint says why, so the
+	// panel can offer to create the same pool here.
+	hint := s.resolvePairedPool(r.Context(), payload, &in)
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"tunnel":  in,
-		"summary": payload.Summarise(),
+		"tunnel":       in,
+		"address_pool": hint,
+		"summary":      payload.Summarise(),
 		"note": "Nothing has been created. Review these values and submit them to create the tunnel on " +
 			"this server.",
 	})
+}
+
+// pairedPoolHint describes the far end's address pool as this server sees it:
+// whether a pool with the same range exists here, whether it can be allocated
+// from, and what to create if it does not. The panel uses it to offer the pool
+// rather than making the operator work out that "pool 41" was never a pool on
+// this host.
+type pairedPoolHint struct {
+	Cidr         string `json:"cidr"`
+	Title        string `json:"address_pool_title,omitempty"`
+	PrefixLength int    `json:"prefix_length,omitempty"`
+	// Status is one of "matched" (this server has it and it is enabled),
+	// "disabled" (it has it, switched off), or "missing".
+	Status        string `json:"status"`
+	AddressPoolID *int64 `json:"address_pool_id,omitempty"`
+}
+
+// resolvePairedPool matches the code's pool against this server's pools and
+// sets the tunnel's pool when the match can actually be used.
+func (s *Server) resolvePairedPool(ctx context.Context, payload pairing.Payload, in *validate.TunnelInput) *pairedPoolHint {
+	if payload.AddressPoolCidr == "" {
+		return nil
+	}
+	prefix, err := netip.ParsePrefix(payload.AddressPoolCidr)
+	if err != nil {
+		return nil
+	}
+	hint := &pairedPoolHint{
+		Cidr:         prefix.Masked().String(),
+		Title:        payload.AddressPoolTitle,
+		PrefixLength: payload.AddressPoolPrefixLength,
+		Status:       "missing",
+	}
+
+	pools, err := s.tunnels.Repo().Pools(ctx)
+	if err != nil {
+		return hint
+	}
+	for _, pool := range pools {
+		local, err := netip.ParsePrefix(pool.Cidr)
+		if err != nil || local.Masked() != prefix.Masked() {
+			continue
+		}
+		id := pool.AddressPoolID
+		hint.AddressPoolID = &id
+		if pool.IsEnabled {
+			hint.Status = "matched"
+			in.AddressPoolID = &id
+		} else {
+			hint.Status = "disabled"
+		}
+		return hint
+	}
+	return hint
 }
 
 // ---------------------------------------------------------------- side info
