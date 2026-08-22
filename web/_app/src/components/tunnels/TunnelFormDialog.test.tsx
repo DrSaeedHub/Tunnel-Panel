@@ -303,3 +303,79 @@ describe('changing something that needs the tunnel rebuilt', () => {
     expect(screen.queryByText(/rebuilds the tunnel/i)).not.toBeInTheDocument()
   })
 })
+
+/**
+ * Which pool a new tunnel starts on.
+ *
+ * A disabled pool allocates nothing -- the backend refuses it -- but the form
+ * used to preselect whichever pool came first, and to trust a configured
+ * default that had since been disabled. The operator was shown a greyed-out
+ * pool as their selection and a create that failed for a reason the form had
+ * already displayed as chosen.
+ */
+describe('the address pool a new tunnel starts on', () => {
+  const pools = [
+    {
+      address_pool_id: 10,
+      address_pool_title: 'Private 172.17.0.0/16',
+      cidr: '172.17.0.0/16',
+      prefix_length: 30,
+      is_public_range: false,
+      is_enabled: false,
+      in_use: 10,
+      capacity: { capacity: 256 },
+    },
+    {
+      address_pool_id: 20,
+      address_pool_title: 'Free private range',
+      cidr: '10.250.250.0/25',
+      prefix_length: 30,
+      is_public_range: false,
+      is_enabled: true,
+      in_use: 0,
+      capacity: { capacity: 32 },
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ] as any[]
+
+  async function openCreate(settings: Record<string, unknown>) {
+    const { api } = await import('@/lib/api')
+    vi.mocked(api.get).mockImplementation(async (path: string) => {
+      if (path === '/settings') return { settings }
+      if (path === '/system/capabilities') {
+        return { tunnel_types: [{ id: 1, name: 'gre', supported: true }], persistence: [] }
+      }
+      if (path === '/pools') return { pools }
+      if (path === '/tunnels') return { tunnels: [] }
+      if (path === '/system/interfaces') return { interfaces: [] }
+      if (path === '/tunnels/side-info') {
+        return {
+          summary: 'One end is A and the other is B.',
+          sides: [
+            { tunnel_side_id: TunnelSide.A, title: 'Side A', description: '' },
+            { tunnel_side_id: TunnelSide.B, title: 'Side B', description: '' },
+          ],
+          identical_on_both_ends: [],
+          tunnel_side_ids: { a: TunnelSide.A, b: TunnelSide.B },
+        }
+      }
+      return undefined
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any
+    vi.mocked(api.post).mockResolvedValue(undefined as never)
+    render(wrapDialog(<TunnelFormDialog open onOpenChange={() => {}} />))
+    return screen.findByRole('combobox', { name: /address pool/i })
+  }
+
+  it('is the first enabled pool, not the first pool', async () => {
+    const select = await openCreate({})
+    await waitFor(() => expect(select).toHaveTextContent('10.250.250.0/25'))
+    expect(select).not.toHaveTextContent('172.17.0.0/16')
+  })
+
+  it('is not a configured default that has since been disabled', async () => {
+    const select = await openCreate({ 'addressing.default_pool_id': 10 })
+    await waitFor(() => expect(select).toHaveTextContent('10.250.250.0/25'))
+    expect(select).not.toHaveTextContent('172.17.0.0/16')
+  })
+})

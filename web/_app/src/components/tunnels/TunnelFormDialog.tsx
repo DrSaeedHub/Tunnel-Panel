@@ -176,6 +176,22 @@ export function TunnelFormDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tunnel, initial, settingsQuery.isSuccess])
 
+  // The form is seeded before the pools have loaded, from a configured default
+  // that may since have been disabled. A disabled pool cannot allocate, so once
+  // the pools are known a new tunnel is moved onto the first enabled one. An
+  // edited tunnel and a pairing code keep the pool they came with.
+  useEffect(() => {
+    if (!open || tunnel || initial || manualAddressing) return
+    if (!form || !poolsQuery.isSuccess) return
+    const pools = poolsQuery.data?.pools ?? []
+    const chosen = pools.find((pool) => pool.address_pool_id === form.address_pool_id)
+    if (chosen?.is_enabled) return
+    const next = pools.find((pool) => pool.is_enabled)?.address_pool_id ?? null
+    if (next === form.address_pool_id) return
+    setForm((current) => (current ? { ...current, address_pool_id: next } : current))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, tunnel, initial, manualAddressing, form?.address_pool_id, poolsQuery.isSuccess])
+
   const patch = useMemo(() => (form ? toPatch(form, manualAddressing) : null), [form, manualAddressing])
 
   // The preview is refreshed as the form changes, so what it shows is always
@@ -1043,6 +1059,9 @@ function AddressingSection({
 }) {
   const { t } = useTranslation()
   const primary = form.addresses[0]
+  // A disabled pool allocates nothing, so it is never what automatic
+  // addressing should land on: the default is the first pool that is enabled.
+  const defaultPoolId = pools.find((pool) => pool.is_enabled)?.address_pool_id ?? null
 
   return (
     <div className="space-y-3 rounded-md border border-border p-3">
@@ -1065,7 +1084,7 @@ function AddressingSection({
                   set('address_pool_id', null)
                 } else {
                   set('addresses', [])
-                  set('address_pool_id', pools[0]?.address_pool_id ?? null)
+                  set('address_pool_id', defaultPoolId)
                 }
               }}
               className={
@@ -1140,12 +1159,12 @@ function AddressingSection({
             )}
           </Field>
         </div>
-      ) : pools.length ? (
+      ) : pools.some((pool) => pool.is_enabled) || form.address_pool_id !== null ? (
         <Field label={t('tunnelForm.addressing.pool')} error={errors['address_pool_id']}>
           {(props) => (
             <Select
               id={props.id}
-              value={String(form.address_pool_id ?? pools[0]?.address_pool_id ?? '')}
+              value={String(form.address_pool_id ?? defaultPoolId ?? '')}
               onValueChange={(value) => set('address_pool_id', Number(value))}
               options={pools.map((pool) => ({
                 value: String(pool.address_pool_id),
