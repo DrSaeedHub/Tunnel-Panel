@@ -184,7 +184,7 @@ func (s *Server) writeRouteError(w http.ResponseWriter, r *http.Request, err err
 func warningsOf(list []validate.Warning) []Warning {
 	out := make([]Warning, 0, len(list))
 	for _, w := range list {
-		out = append(out, Warning{Code: w.Code, Message: w.Message, Field: w.Field})
+		out = append(out, Warning{Code: w.Code, Message: w.Message, Field: w.Field, Details: w.Details})
 	}
 	return out
 }

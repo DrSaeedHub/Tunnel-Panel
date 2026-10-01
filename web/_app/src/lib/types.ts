@@ -404,6 +404,8 @@ export interface Warning {
   code: string
   message: string
   field?: string
+  /** The figures the message is built from, so it can be said in the operator's language. */
+  details?: Record<string, unknown>
 }
 
 export interface CreateResponse {

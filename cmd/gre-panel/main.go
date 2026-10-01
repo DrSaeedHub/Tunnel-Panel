@@ -282,6 +282,7 @@ func run() error {
 	sockets := rules.NewSocketReader()
 	routeGuard := safety.NewRouteGuard(cfg.BindPort, sockets, filepath.Join(cfg.DataDir, "rules"))
 	routeForwarding := route.NewForwarding(persistStore, renderer, routeGuard)
+	routeForwarding.ConntrackManaged = func() bool { return store.Bool("routes.manage_conntrack") }
 	kernelTuning := tuning.New(persistStore, renderer, routeGuard, log)
 	routeAccounting := route.NewAccounting(route.AccountingDeps{
 		Repo:     route.NewCounterRepo(database),

@@ -35,6 +35,7 @@ import {
 } from '../quota/TrafficLimit'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { formatMs, hasDisplayName, tunnelLabel } from '@/lib/format'
+import { FORCEABLE_ROUTE_CODES, describeRouteWarning } from '@/lib/routeWarnings'
 import { describeError } from '../ui/feedback'
 import { routeVerificationFailures, routeVerificationPassed } from '@/hooks/useRouteActions'
 import { Button } from '../ui/button'
@@ -141,7 +142,7 @@ export function RouteFormDialog({
 }) {
   const { t } = useTranslation()
   const { toast } = useToast()
-  const { digits } = usePreferences()
+  const { digits, language } = usePreferences()
   const queryClient = useQueryClient()
 
   const settingsQuery = useQuery({
@@ -233,12 +234,15 @@ export function RouteFormDialog({
     form?.route_rule_title && form?.bind_port && form?.destination_address && form?.destination_port,
   )
 
+  // The preview carries the override too, so with it ticked the preview shows
+  // what would really be applied instead of repeating the refusal.
   const previewQuery = useQuery({
-    queryKey: ['routes', 'preview', debouncedPatch],
+    queryKey: ['routes', 'preview', debouncedPatch, force],
     queryFn: () =>
       api.post<RoutePreviewResponse>('/routes/preview', {
         ...debouncedPatch,
         ...(route ? { route_rule_id: route.route_rule_id } : {}),
+        force: force || undefined,
       }),
     enabled: open && Boolean(debouncedPatch) && ready,
     retry: false,
@@ -287,10 +291,18 @@ export function RouteFormDialog({
         })
       }
 
+      // What the read-back found that does not fail the apply -- a rule
+      // installed on a host that is not forwarding, say -- is still what the
+      // operator most needs to hear at this moment, so it rides on the toast.
+      const after = (result.warnings ?? []).filter((warning) => warning.code.startsWith('VERIFICATION_'))
       toast({
-        tone: 'success',
+        tone: after.length ? 'info' : 'success',
         title: route ? t('routeForm.updatedTitle') : t('routeForm.createdTitle'),
-        description: t('routeForm.createdBody', { name: result.route.route_rule_title }),
+        description: [
+          t('routeForm.createdBody', { name: result.route.route_rule_title }),
+          ...after.map((warning) => describeRouteWarning(warning, t, { digits, language })),
+        ].join(' '),
+        persistent: after.length > 0,
       })
       onOpenChange(false)
       if (!route) onCreated?.(result.route)
@@ -369,6 +381,19 @@ export function RouteFormDialog({
     (iface: HostInterface) => !iface.name.startsWith('lo'),
   )
   const warnings = previewQuery.data?.warnings ?? []
+  // The only refusals "Apply anyway" can lift. Warnings never block, so the
+  // override is offered for these and nothing else: offered under every
+  // warning, it read as if each one had to be overridden, and it was missing
+  // exactly when a refusal made it the only way forward.
+  // A submit refused before the box was ticked is history once it is.
+  const refusals = [
+    ...new Map(
+      (force ? [previewQuery.error] : [previewQuery.error, submitMutation.error])
+        .flatMap((error) => (error instanceof ApiError ? error.fieldEntries : []))
+        .filter((entry) => (FORCEABLE_ROUTE_CODES as readonly string[]).includes(entry.code))
+        .map((entry) => [entry.code, entry] as const),
+    ).values(),
+  ]
   const bindsAny = isAny(form.bind_address)
 
   // The backend's own conflict rules, mirrored here so the answer arrives as
@@ -892,12 +917,21 @@ export function RouteFormDialog({
             ready={ready}
           />
 
-          {warnings.length ? (
-            <div className="space-y-2 rounded-md border border-warn/40 bg-warn-muted p-3">
-              {warnings.map((warning) => (
-                <p key={warning.code} className="flex items-start gap-2 text-xs">
-                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
-                  {warning.message}
+          {refusals.length || force ? (
+            <div
+              data-testid="route-form-force"
+              className="space-y-2 rounded-md border border-danger/30 bg-danger-muted p-3"
+            >
+              {refusals.map((refusal) => (
+                <p key={refusal.code} className="flex items-start gap-2 text-xs">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-danger" aria-hidden="true" />
+                  <span dir="auto">
+                    {describeRouteWarning(
+                      { code: refusal.code, message: refusal.message, details: refusal.details },
+                      t,
+                      { digits, language },
+                    )}
+                  </span>
                 </p>
               ))}
               <label className="flex items-center gap-2 pt-1 text-xs font-medium">
@@ -905,6 +939,18 @@ export function RouteFormDialog({
                 {t('routeForm.force')}
               </label>
               <p className="text-2xs text-muted-foreground">{t('routeForm.forceHint')}</p>
+            </div>
+          ) : null}
+
+          {warnings.length ? (
+            <div data-testid="route-form-warnings" className="space-y-2 rounded-md border border-warn/40 bg-warn-muted p-3">
+              {warnings.map((warning) => (
+                <p key={warning.code + (warning.field ?? '')} className="flex items-start gap-2 text-xs">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
+                  <span dir="auto">{describeRouteWarning(warning, t, { digits, language })}</span>
+                </p>
+              ))}
+              <p className="text-2xs text-muted-foreground">{t('routeForm.warningsHint')}</p>
             </div>
           ) : null}
         </DialogBody>

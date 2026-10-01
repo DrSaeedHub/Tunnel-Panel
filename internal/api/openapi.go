@@ -264,6 +264,10 @@ func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
 						"code":    map[string]any{"type": "string"},
 						"message": map[string]any{"type": "string"},
 						"field":   map[string]any{"type": "string"},
+						"details": map[string]any{
+							"type": "object", "additionalProperties": true,
+							"description": "The figures the message is built from, keyed by name.",
+						},
 					},
 				},
 			},

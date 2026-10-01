@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import type { ForwardingResponse } from '@/lib/types'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { formatCount, formatPercent } from '@/lib/format'
+import { describeRouteWarning } from '@/lib/routeWarnings'
 import { useToast } from '@/providers/ToastProvider'
 import { describeError } from '../ui/feedback'
 import { Button } from '../ui/button'
@@ -74,9 +75,9 @@ export function ForwardingBanner({
   return (
     <div className="space-y-1 rounded-md border border-warn/40 bg-warn-muted p-3">
       {warnings.map((warning) => (
-        <p key={warning.code} className="flex items-start gap-2 text-xs">
+        <p key={warning.code + (warning.field ?? '')} className="flex items-start gap-2 text-xs">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
-          {warning.message}
+          <span dir="auto">{describeRouteWarning(warning, t, { digits, language })}</span>
         </p>
       ))}
       {status.conntrack_max > 0 ? (

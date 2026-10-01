@@ -26,32 +26,25 @@ table inet gre_panel {
 	}
 	counter route_1_tx {
 	}
-
-	# Dynamic sets backing the per-source connection and rate limits.
-	set route_1_conn {
-		type ipv4_addr
-		size 65535
-		flags dynamic
+	counter route_2_rx {
 	}
-	set route_1_rate {
-		type ipv4_addr
-		size 65535
-		flags dynamic, timeout
-		timeout 1m
+	counter route_2_tx {
 	}
 
 	chain prerouting {
 		type nat hook prerouting priority dstnat; policy accept;
 		# Destination NAT: traffic arriving for a rule is redirected to its destination.
-		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat masquerade]
-		ip daddr 203.0.113.10 tcp dport 2044 dnat ip to 198.51.100.20:2044 comment "grep:1"
+		# route 1 "Masqueraded": tcp 203.0.113.10:8443 -> 198.51.100.20:443 [nat masquerade]
+		ip daddr 203.0.113.10 tcp dport 8443 dnat ip to 198.51.100.20:443 comment "grep:1"
+		# route 2 "Client kept": tcp any:9443 -> 198.51.100.20:443 [nat none]
+		tcp dport 9443 dnat ip to 198.51.100.20:443 comment "grep:2"
 	}
 	chain postrouting {
 		type nat hook postrouting priority srcnat; policy accept;
 		# Source NAT. Absent for a rule whose NAT mode is None, which preserves the
 		# client address and needs the return path to come back through this server.
-		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat masquerade]
-		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 masquerade comment "grep:1"
+		# route 1 "Masqueraded": tcp 203.0.113.10:8443 -> 198.51.100.20:443 [nat masquerade]
+		ip daddr 198.51.100.20 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 masquerade comment "grep:1"
 	}
 	chain forward {
 		type filter hook forward priority filter; policy accept;
@@ -60,25 +53,30 @@ table inet gre_panel {
 		# intent exactly, and matching on the far end's source port would accept traffic
 		# that belongs to no flow this server ever started.
 		ct state established,related accept comment "gre-panel:structural"
-		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat masquerade]
-		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_conn { ip saddr ct count over 10 } drop comment "grep:1"
-		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_rate { ip saddr limit rate over 60/minute } drop comment "grep:1"
-		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
-		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 accept comment "grep:1"
+		# route 1 "Masqueraded": tcp 203.0.113.10:8443 -> 198.51.100.20:443 [nat masquerade]
+		ip daddr 198.51.100.20 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 accept comment "grep:1"
+		# route 2 "Client kept": tcp any:9443 -> 198.51.100.20:443 [nat none]
+		ip daddr 198.51.100.20 tcp dport 443 ct original proto-dst 9443 accept comment "grep:2"
 	}
 	chain accounting {
 		type filter hook forward priority filter - 10; policy accept;
 		# Accounting. These rules carry no verdict, so they count and fall through
 		# without influencing policy, and they sit at their own priority so they see
 		# traffic whatever the forward chain decides.
-		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat masquerade]
-		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 198.51.100.20 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		# route 1 "Masqueraded": tcp 203.0.113.10:8443 -> 198.51.100.20:443 [nat masquerade]
+		ip daddr 198.51.100.20 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 counter name "route_1_tx" comment "grep:1"
+		ip saddr 198.51.100.20 tcp sport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 counter name "route_1_rx" comment "grep:1"
+		# route 2 "Client kept": tcp any:9443 -> 198.51.100.20:443 [nat none]
+		ip daddr 198.51.100.20 tcp dport 443 ct original proto-dst 9443 counter name "route_2_tx" comment "grep:2"
+		ip saddr 198.51.100.20 tcp sport 443 ct original proto-dst 9443 counter name "route_2_rx" comment "grep:2"
 	}
-	chain marking {
-		type filter hook prerouting priority mangle; policy accept;
-		# Firewall marks, for integration with policy routing.
-		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat masquerade]
-		ip daddr 203.0.113.10 tcp dport 2044 meta mark set 0x64 comment "grep:1"
+	chain mss_clamp {
+		type filter hook forward priority mangle; policy accept;
+		# MSS clamping. A relay whose destination is reached across a tunnel hands the
+		# client an MSS the path cannot carry; connections then establish and stall on
+		# the first large transfer. The mask form matches a SYN without RST, so a
+		# reset is not rewritten.
+		# route 1 "Masqueraded": tcp 203.0.113.10:8443 -> 198.51.100.20:443 [nat masquerade]
+		ip daddr 198.51.100.20 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:1"
 	}
 }

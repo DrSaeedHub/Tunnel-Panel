@@ -50,9 +50,9 @@ table inet gre_panel {
 		# Source NAT. Absent for a rule whose NAT mode is None, which preserves the
 		# client address and needs the return path to come back through this server.
 		# route 3 "First": udp 203.0.113.10:51820 -> 172.31.7.2:51820 [nat masquerade]
-		ip daddr 172.31.7.2 udp dport 51820 masquerade comment "grep:3"
+		ip daddr 172.31.7.2 udp dport 51820 ct original ip daddr 203.0.113.10 ct original proto-dst 51820 masquerade comment "grep:3"
 		# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
-		ip6 daddr 2001:db8:1::20 tcp dport 993 masquerade comment "grep:9"
+		ip6 daddr 2001:db8:1::20 tcp dport 993 ct original ip6 daddr 2001:db8::10 ct original proto-dst 993 masquerade comment "grep:9"
 	}
 	chain forward {
 		type filter hook forward priority filter; policy accept;
@@ -62,11 +62,11 @@ table inet gre_panel {
 		# that belongs to no flow this server ever started.
 		ct state established,related accept comment "gre-panel:structural"
 		# route 3 "First": udp 203.0.113.10:51820 -> 172.31.7.2:51820 [nat masquerade]
-		ip daddr 172.31.7.2 udp dport 51820 accept comment "grep:3"
+		ip daddr 172.31.7.2 udp dport 51820 ct original ip daddr 203.0.113.10 ct original proto-dst 51820 accept comment "grep:3"
 		# route 7 "Second": tcp 203.0.113.10:8443 -> 172.31.7.2:443 [nat none]
-		ip daddr 172.31.7.2 tcp dport 443 accept comment "grep:7"
+		ip daddr 172.31.7.2 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 accept comment "grep:7"
 		# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
-		ip6 daddr 2001:db8:1::20 tcp dport 993 accept comment "grep:9"
+		ip6 daddr 2001:db8:1::20 tcp dport 993 ct original ip6 daddr 2001:db8::10 ct original proto-dst 993 accept comment "grep:9"
 	}
 	chain accounting {
 		type filter hook forward priority filter - 10; policy accept;
@@ -74,14 +74,14 @@ table inet gre_panel {
 		# without influencing policy, and they sit at their own priority so they see
 		# traffic whatever the forward chain decides.
 		# route 3 "First": udp 203.0.113.10:51820 -> 172.31.7.2:51820 [nat masquerade]
-		ip daddr 172.31.7.2 udp dport 51820 counter name "route_3_tx" comment "grep:3"
-		ip saddr 172.31.7.2 udp sport 51820 counter name "route_3_rx" comment "grep:3"
+		ip daddr 172.31.7.2 udp dport 51820 ct original ip daddr 203.0.113.10 ct original proto-dst 51820 counter name "route_3_tx" comment "grep:3"
+		ip saddr 172.31.7.2 udp sport 51820 ct original ip daddr 203.0.113.10 ct original proto-dst 51820 counter name "route_3_rx" comment "grep:3"
 		# route 7 "Second": tcp 203.0.113.10:8443 -> 172.31.7.2:443 [nat none]
-		ip daddr 172.31.7.2 tcp dport 443 counter name "route_7_tx" comment "grep:7"
-		ip saddr 172.31.7.2 tcp sport 443 counter name "route_7_rx" comment "grep:7"
+		ip daddr 172.31.7.2 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 counter name "route_7_tx" comment "grep:7"
+		ip saddr 172.31.7.2 tcp sport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 counter name "route_7_rx" comment "grep:7"
 		# route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
-		ip6 daddr 2001:db8:1::20 tcp dport 993 counter name "route_9_tx" comment "grep:9"
-		ip6 saddr 2001:db8:1::20 tcp sport 993 counter name "route_9_rx" comment "grep:9"
+		ip6 daddr 2001:db8:1::20 tcp dport 993 ct original ip6 daddr 2001:db8::10 ct original proto-dst 993 counter name "route_9_tx" comment "grep:9"
+		ip6 saddr 2001:db8:1::20 tcp sport 993 ct original ip6 daddr 2001:db8::10 ct original proto-dst 993 counter name "route_9_rx" comment "grep:9"
 	}
 	chain mss_clamp {
 		type filter hook forward priority mangle; policy accept;
@@ -90,6 +90,6 @@ table inet gre_panel {
 		# the first large transfer. The mask form matches a SYN without RST, so a
 		# reset is not rewritten.
 		# route 7 "Second": tcp 203.0.113.10:8443 -> 172.31.7.2:443 [nat none]
-		ip daddr 172.31.7.2 tcp dport 443 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:7"
+		ip daddr 172.31.7.2 tcp dport 443 ct original ip daddr 203.0.113.10 ct original proto-dst 8443 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:7"
 	}
 }

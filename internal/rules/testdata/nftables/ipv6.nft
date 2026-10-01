@@ -38,7 +38,7 @@ table inet gre_panel {
 		# Source NAT. Absent for a rule whose NAT mode is None, which preserves the
 		# client address and needs the return path to come back through this server.
 		# route 1 "Web relay": tcp 2001:db8::10:2044 -> 2001:db8:1::20:2044 [nat masquerade]
-		ip6 daddr 2001:db8:1::20 tcp dport 2044 masquerade comment "grep:1"
+		ip6 daddr 2001:db8:1::20 tcp dport 2044 ct original ip6 daddr 2001:db8::10 ct original proto-dst 2044 masquerade comment "grep:1"
 	}
 	chain forward {
 		type filter hook forward priority filter; policy accept;
@@ -48,7 +48,7 @@ table inet gre_panel {
 		# that belongs to no flow this server ever started.
 		ct state established,related accept comment "gre-panel:structural"
 		# route 1 "Web relay": tcp 2001:db8::10:2044 -> 2001:db8:1::20:2044 [nat masquerade]
-		ip6 daddr 2001:db8:1::20 tcp dport 2044 ip6 saddr { 2001:db8:2::/64 } accept comment "grep:1"
+		ip6 daddr 2001:db8:1::20 tcp dport 2044 ct original ip6 daddr 2001:db8::10 ct original proto-dst 2044 ip6 saddr { 2001:db8:2::/64 } accept comment "grep:1"
 	}
 	chain accounting {
 		type filter hook forward priority filter - 10; policy accept;
@@ -56,7 +56,7 @@ table inet gre_panel {
 		# without influencing policy, and they sit at their own priority so they see
 		# traffic whatever the forward chain decides.
 		# route 1 "Web relay": tcp 2001:db8::10:2044 -> 2001:db8:1::20:2044 [nat masquerade]
-		ip6 daddr 2001:db8:1::20 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip6 saddr 2001:db8:1::20 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip6 daddr 2001:db8:1::20 tcp dport 2044 ct original ip6 daddr 2001:db8::10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip6 saddr 2001:db8:1::20 tcp sport 2044 ct original ip6 daddr 2001:db8::10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
 	}
 }

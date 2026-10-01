@@ -126,7 +126,12 @@ func (p *Plan) Summary() []string {
 
 // planner turns a desired set of rules into the plan that installs it.
 type planner struct {
-	backend      rules.Backend
+	backend rules.Backend
+	// backendName overrides the backend's own name in what the plan says and
+	// writes. The preview plans against a stand-in that renders for the real
+	// backend and changes nothing; the plan it shows has to name the real one,
+	// and the restore unit it shows has to be the one the apply writes.
+	backendName  string
 	renderer     *persist.Renderer
 	store        *persist.Store
 	systemctlBin string
@@ -165,7 +170,20 @@ type planInput struct {
 	// forwarding was already on would otherwise never be given it.
 	byteAccountingOn bool
 	countBytes       bool
+	// manualForwarding reports that the panel is set not to turn forwarding on
+	// (routes.auto_enable_ip_forward off). The step is then left out, because
+	// it would not run, and a plan that lists it tells the operator the panel
+	// is about to do something it will not do.
+	manualForwarding bool
 	warnings         []validate.Warning
+}
+
+// name is the backend the plan installs into, as the operator should read it.
+func (p *planner) name() string {
+	if p.backendName != "" {
+		return p.backendName
+	}
+	return p.backend.Name()
 }
 
 // Plan renders the complete payload for the desired state and the steps that
@@ -192,7 +210,7 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 
 	plan := Plan{
 		Operation: in.operation,
-		Backend:   p.backend.Name(),
+		Backend:   p.name(),
 		Warnings:  in.warnings,
 	}
 	if in.subject != nil {
@@ -216,7 +234,7 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 	needIPv6 := desired.HasIPv6()
 	needsForwarding := !in.forwardingOn || (needIPv6 && !in.ipv6ForwardingOn)
 	needsCounting := in.countBytes && !in.byteAccountingOn
-	if len(desired.Routes) > 0 && (needsForwarding || needsCounting) {
+	if len(desired.Routes) > 0 && !in.manualForwarding && (needsForwarding || needsCounting) {
 		description := "turn on kernel packet forwarding and record it in the panel's own sysctl " +
 			"file at " + p.sysctlFilePath()
 		if !needsForwarding {
@@ -234,7 +252,7 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 	copied := payload
 	applyDescription := fmt.Sprintf(
 		"replace the panel's %s ruleset with the %d enabled rule(s), in one transaction",
-		p.backend.Name(), len(desired.Routes))
+		p.name(), len(desired.Routes))
 	if len(payload.RemovesChains) > 0 {
 		applyDescription += fmt.Sprintf(", and remove the chain(s) it no longer declares: %s",
 			strings.Join(payload.RemovesChains, ", "))
@@ -250,7 +268,7 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 
 	// 4. The restore unit, so the ruleset comes back after a reboot without the
 	// panel having to be running.
-	unit := p.renderer.RulesUnit(unitOptions(p.backend.Name(), payload))
+	unit := p.renderer.RulesUnit(unitOptions(p.name(), payload))
 	plan.Add(Step{
 		Kind:        StepWriteUnit,
 		Description: "write the boot-time restore unit for the panel's own rules",

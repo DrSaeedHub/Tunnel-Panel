@@ -316,13 +316,14 @@ func (s *Service) previewOf(ctx context.Context, operation string, desired, prev
 
 	status := s.forwardingStatus(ctx, desired)
 	previewPlanner := &planner{
-		backend: s.preview, renderer: s.planner.renderer, store: s.planner.store,
-		systemctlBin: s.planner.systemctlBin, sysctlPath: s.planner.sysctlPath,
+		backend: s.preview, backendName: s.backend.Name(), renderer: s.planner.renderer,
+		store: s.planner.store, systemctlBin: s.planner.systemctlBin, sysctlPath: s.planner.sysctlPath,
 	}
 	plan, err := previewPlanner.Plan(planInput{
 		operation: operation, desired: desired, previous: previous, subject: subject,
 		forwardingOn: status.IPv4Forwarding, ipv6ForwardingOn: status.IPv6Forwarding,
 		byteAccountingOn: status.ByteAccounting, countBytes: s.countsConnectionBytes(),
+		manualForwarding: !s.autoEnablesForwarding(),
 		// The preview is the payload that would be submitted, so it carries the
 		// counter cleanup too rather than showing a file the apply would not use,
 		// and it names the rollback the apply would actually perform. The live
@@ -337,7 +338,7 @@ func (s *Service) previewOf(ctx context.Context, operation string, desired, prev
 		return Preview{}, err
 	}
 
-	out := Preview{Plan: plan, Warnings: append(warnings, status.Warnings...)}
+	out := Preview{Plan: plan, Warnings: append(warnings, s.previewForwardingWarnings(status, desired)...)}
 	if subject != nil {
 		out.Route = *subject
 	}
@@ -786,10 +787,11 @@ func (s *Service) applyRecords(ctx context.Context, operation string, subject *R
 		operation: operation, desired: desired, previous: previous, subject: subject,
 		forwardingOn: status.IPv4Forwarding, ipv6ForwardingOn: status.IPv6Forwarding,
 		byteAccountingOn: status.ByteAccounting, countBytes: s.countsConnectionBytes(),
-		retired:     s.retiredCounters(ctx, desired),
-		liveChains:  s.liveChains(ctx),
-		lastApplied: s.appliedPayload(),
-		warnings:    warnings,
+		manualForwarding: !s.autoEnablesForwarding(),
+		retired:          s.retiredCounters(ctx, desired),
+		liveChains:       s.liveChains(ctx),
+		lastApplied:      s.appliedPayload(),
+		warnings:         warnings,
 	})
 	if err != nil {
 		return Result{}, err
@@ -944,7 +946,7 @@ func (s *Service) runStep(ctx context.Context, step Step) error {
 		if s.forwarding == nil {
 			return nil
 		}
-		if s.settings != nil && !s.settings.Bool("routes.auto_enable_ip_forward") {
+		if !s.autoEnablesForwarding() {
 			s.log.Warn("kernel forwarding is off and routes.auto_enable_ip_forward is disabled, " +
 				"so the rules will be installed and carry nothing")
 			return nil
@@ -1008,6 +1010,55 @@ func (s *Service) recordStatus(ctx context.Context, ids []int64, statusID int64,
 	if err := s.repo.SetApplyStatusAll(ctx, ids, statusID, cause); err != nil {
 		s.log.Error("recording the apply status failed", "error", err)
 	}
+}
+
+// autoEnablesForwarding reports whether an apply turns kernel forwarding on
+// when it is off, which is what routes.auto_enable_ip_forward decides.
+func (s *Service) autoEnablesForwarding() bool {
+	return s.settings == nil || s.settings.Bool("routes.auto_enable_ip_forward")
+}
+
+// previewForwardingWarnings is what a preview says about kernel forwarding.
+//
+// The status warning describes the host as it is now -- rules installed and
+// carrying nothing -- which is right for the forwarding page and wrong for a
+// preview: nothing has been installed yet, and when the panel is set to turn
+// forwarding on, the plan beside the warning does exactly that before the
+// rules go in. A preview that warns about a problem its own plan fixes reads
+// as the panel refusing, and the operator who applies anyway finds everything
+// working and learns that the warnings can be ignored.
+//
+// So a preview warns only when forwarding will still be off after the apply,
+// which is when the panel is set to leave it alone.
+func (s *Service) previewForwardingWarnings(status ForwardingStatus, desired []Record) []validate.Warning {
+	out := make([]validate.Warning, 0, len(status.Warnings))
+	for _, w := range status.Warnings {
+		if w.Code != WarnForwardingDisabled {
+			out = append(out, w)
+		}
+	}
+	ruleset := DesiredOf(desired)
+	if s.autoEnablesForwarding() || len(ruleset.Routes) == 0 {
+		return out
+	}
+	switch {
+	case !status.IPv4Forwarding:
+		out = append(out, validate.Warning{
+			Code: WarnForwardingDisabled, Field: SysctlIPv4Forward,
+			Message: "IP forwarding is off on this server, and the panel is set not to turn it on. " +
+				"The rule will be installed, but it carries no traffic until forwarding is turned on.",
+			Details: map[string]any{"family": "ipv4", "stage": "preview"},
+		})
+	case ruleset.HasIPv6() && !status.IPv6Forwarding:
+		out = append(out, validate.Warning{
+			Code: WarnForwardingDisabled, Field: SysctlIPv6Forward,
+			Message: "IPv6 forwarding is off on this server, and the panel is set not to turn it on. " +
+				"The IPv6 rules will be installed, but they carry no traffic until IPv6 forwarding is " +
+				"turned on.",
+			Details: map[string]any{"family": "ipv6", "stage": "preview"},
+		})
+	}
+	return out
 }
 
 // forwardingStatus reads the kernel parameters, tolerating a host where they

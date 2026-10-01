@@ -171,6 +171,12 @@ func cases() []struct {
 		{"foreign_chain_left_alone", Ruleset{LiveChains: []string{
 			"prerouting", "somebody_elses_chain",
 		}}},
+		// Two ports on this server for the same far service, one rewriting
+		// the source and one keeping it. Each rule's NAT, accounting and
+		// forward rules have to be its own: keyed on the destination alone,
+		// the masquerade of the first rewrote the second's clients too, and
+		// each counter counted both rules' traffic.
+		{"shared_destination", Ruleset{Routes: sharedDestination()}},
 		{"several_rules", Ruleset{Routes: []RouteSpec{
 			// Deliberately out of order: emission order is the operator's sort
 			// order, because overlapping matches resolve first-match-wins.

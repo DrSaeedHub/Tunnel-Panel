@@ -346,8 +346,10 @@ func (t *Iptables) renderRoute(s RouteSpec, out *iptSections) error {
 			}
 		}
 
+		origin := iptOriginMatch(s)
 		for _, d := range s.Destinations {
-			dest := iptDestMatch(d, proto)
+			dest := append(iptDestMatch(d, proto), origin...)
+			reverse := append(iptReverseMatch(d, proto), origin...)
 
 			if s.MaxConnectionsPerSource > 0 {
 				out.fwd = append(out.fwd, iptRule(ChainFwd, dest, []string{
@@ -390,7 +392,7 @@ func (t *Iptables) renderRoute(s RouteSpec, out *iptSections) error {
 			// hook only sees the first packet of each connection.
 			out.acct = append(out.acct,
 				iptRule(ChainAcct, dest, nil, comment, nil),
-				iptRule(ChainAcct, iptReverseMatch(d, proto), nil, comment, nil))
+				iptRule(ChainAcct, reverse, nil, comment, nil))
 
 			if s.ClampMssToPmtu && proto == ProtocolTCP {
 				out.mss = append(out.mss, iptRule(ChainMss, dest,
@@ -429,6 +431,19 @@ func iptBindMatch(s RouteSpec, proto Protocol, source string) []string {
 // iptDestMatch renders the match for traffic on its way to one destination.
 func iptDestMatch(d Destination, proto Protocol) []string {
 	return []string{"-d", hostPrefix(d.Address), "-p", string(proto), "--dport", iptPorts(d.Ports)}
+}
+
+// iptOriginMatch ties a rule to the connections it created, by their original
+// destination: the rule's own address and port, which no other rule may claim.
+// Matched by destination alone, two rules relaying to the same place each ran
+// their NAT, accounting and limits on the other's traffic; nftOriginMatch says
+// more.
+func iptOriginMatch(s RouteSpec) []string {
+	parts := []string{"-m", "conntrack"}
+	if !s.BindsAnyAddress() {
+		parts = append(parts, "--ctorigdst", hostPrefix(s.BindAddress))
+	}
+	return append(parts, "--ctorigdstport", iptPorts(s.BindPorts))
 }
 
 // iptReverseMatch renders the return direction, used only for accounting.

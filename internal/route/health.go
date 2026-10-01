@@ -3,8 +3,10 @@ package route
 import (
 	"context"
 	"fmt"
+	"net/netip"
 
 	"github.com/drs/gre-panel/internal/model"
+	"github.com/drs/gre-panel/internal/rules"
 )
 
 // Health states. They are stable strings: the frontend renders a different
@@ -44,6 +46,7 @@ func (s *Service) Health(ctx context.Context, records []Record) map[int64]Health
 		installed = live.IDs()
 	}
 
+	host := s.hostPath(ctx)
 	tunnels := s.tunnelSource()
 	out := make(map[int64]Health, len(records))
 	for _, rec := range records {
@@ -56,14 +59,67 @@ func (s *Service) Health(ctx context.Context, records []Record) map[int64]Health
 				health.Tunnel = &state
 			}
 		}
-		health.State, health.Detail = healthOf(rec, health, readable)
+		health.State, health.Detail = healthOf(rec, health, readable, host)
 		out[rec.RouteRuleID] = health
 	}
 	return out
 }
 
+// hostPath is what the host itself contributes to whether an installed rule
+// can carry anything: the kernel has to forward, and a rule that relays to a
+// loopback address needs the kernel to route 127.0.0.0/8 off the wire.
+//
+// These used to be left out, so a rule on a host that had stopped forwarding
+// read as healthy -- "the path they use is up" -- beside a banner saying the
+// kernel was forwarding nothing. Both were shown on the same page.
+type hostPath struct {
+	known          bool
+	ipv4Forwarding bool
+	ipv6Forwarding bool
+	routeLocalnet  bool
+}
+
+func (s *Service) hostPath(ctx context.Context) hostPath {
+	if s.forwarding == nil {
+		return hostPath{}
+	}
+	status := s.forwarding.Status(ctx, false, 0, 0)
+	return hostPath{
+		known:          true,
+		ipv4Forwarding: status.IPv4Forwarding,
+		ipv6Forwarding: status.IPv6Forwarding,
+		routeLocalnet:  s.forwarding.RoutesLocalnet(),
+	}
+}
+
+// blocked returns why the host keeps an installed rule from carrying traffic,
+// or "" when nothing on the host stands in the way.
+func (h hostPath) blocked(spec rules.RouteSpec) string {
+	if !h.known {
+		return ""
+	}
+	if spec.IsIPv6() && !h.ipv6Forwarding {
+		return "the rules are installed correctly, but this kernel is not forwarding IPv6 packets, " +
+			"so nothing crosses them"
+	}
+	if !spec.IsIPv6() && !h.ipv4Forwarding {
+		return "the rules are installed correctly, but this kernel is not forwarding packets, so " +
+			"nothing crosses them"
+	}
+	if !h.routeLocalnet {
+		for _, d := range spec.Destinations {
+			if addr, err := netip.ParseAddr(d.Address); err == nil && addr.Is4() && addr.IsLoopback() {
+				return fmt.Sprintf("the rules are installed correctly, but %s is a loopback address and "+
+					"route_localnet is off on every interface, so the kernel drops what they send there",
+					d.Address)
+			}
+		}
+	}
+	return ""
+}
+
 // healthOf decides one rule's state, in the order the answers matter.
-func healthOf(rec Record, health Health, readable bool) (string, string) {
+func healthOf(rec Record, health Health, readable bool, host hostPath) (string, string) {
 	switch {
 	case !rec.IsEnabled:
 		return HealthDisabled, "the rule is switched off, so it installs nothing"
@@ -96,6 +152,9 @@ func healthOf(rec Record, health Health, readable bool) (string, string) {
 	case health.Tunnel != nil && !health.Tunnel.Healthy():
 		return HealthImpaired, fmt.Sprintf("the rules are installed correctly, and %s — the tunnel "+
 			"this rule relays over — is not up, so nothing crosses it", health.Tunnel.InterfaceName)
+	}
+	if reason := host.blocked(rec.Spec()); reason != "" {
+		return HealthImpaired, reason
 	}
 	return HealthHealthy, "the rules are installed and the path they use is up"
 }

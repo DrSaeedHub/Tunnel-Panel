@@ -48,7 +48,7 @@ table inet gre_panel {
 		# that belongs to no flow this server ever started.
 		ct state established,related accept comment "gre-panel:structural"
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat none]
-		ip daddr 198.51.100.20 tcp dport 2044 accept comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 accept comment "grep:1"
 	}
 	chain accounting {
 		type filter hook forward priority filter - 10; policy accept;
@@ -56,8 +56,8 @@ table inet gre_panel {
 		# without influencing policy, and they sit at their own priority so they see
 		# traffic whatever the forward chain decides.
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat none]
-		ip daddr 198.51.100.20 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 198.51.100.20 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 198.51.100.20 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
 	}
 	chain local_out_accounting {
 		type filter hook output priority filter - 10; policy accept;
@@ -65,7 +65,7 @@ table inet gre_panel {
 		# never sees. It references the same counters as the chain above, so a rule's
 		# total is its whole total rather than the forwarded half of it.
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat none]
-		ip daddr 198.51.100.20 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
 	}
 	chain local_in_accounting {
 		type filter hook input priority filter - 10; policy accept;
@@ -73,6 +73,6 @@ table inet gre_panel {
 		# connection are delivered to a socket on this host, so they arrive at input
 		# rather than being forwarded.
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044 [nat none]
-		ip saddr 198.51.100.20 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip saddr 198.51.100.20 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
 	}
 }

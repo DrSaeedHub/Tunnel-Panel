@@ -548,8 +548,10 @@ func (n *Nftables) renderRoute(s RouteSpec, out *nftSections) error {
 				join(bind, fmt.Sprintf("meta mark set 0x%x", *s.FwMark), comment))
 		}
 
+		origin := nftOriginMatch(s, fam)
 		for _, d := range s.Destinations {
-			dest := nftDestMatch(d, proto, fam)
+			dest := join(nftDestMatch(d, proto, fam), origin)
+			reverse := join(nftReverseMatch(d, proto, fam), origin)
 
 			if s.MaxConnectionsPerSource > 0 {
 				out.forward = append(out.forward, join(dest, fmt.Sprintf(
@@ -577,8 +579,7 @@ func (n *Nftables) renderRoute(s RouteSpec, out *nftSections) error {
 
 			out.accounting = append(out.accounting,
 				join(dest, fmt.Sprintf("counter name %q", counterName(id, "tx")), comment),
-				join(nftReverseMatch(d, proto, fam),
-					fmt.Sprintf("counter name %q", counterName(id, "rx")), comment))
+				join(reverse, fmt.Sprintf("counter name %q", counterName(id, "rx")), comment))
 
 			// The same two counter objects, on the two hooks locally-originated
 			// traffic actually takes, so a rule's total covers both paths
@@ -587,8 +588,7 @@ func (n *Nftables) renderRoute(s RouteSpec, out *nftSections) error {
 				out.localOut = append(out.localOut,
 					join(dest, fmt.Sprintf("counter name %q", counterName(id, "tx")), comment))
 				out.localIn = append(out.localIn,
-					join(nftReverseMatch(d, proto, fam),
-						fmt.Sprintf("counter name %q", counterName(id, "rx")), comment))
+					join(reverse, fmt.Sprintf("counter name %q", counterName(id, "rx")), comment))
 			}
 
 			// MSS clamping is a TCP option; there is nothing to clamp on UDP.
@@ -619,9 +619,31 @@ func nftBindMatch(s RouteSpec, proto Protocol, fam string) string {
 }
 
 // nftDestMatch renders the match for traffic on its way to one destination,
-// which is what the forward, postrouting, accounting and MSS rules key on.
+// which is what the forward, postrouting, accounting and MSS rules key on,
+// together with nftOriginMatch.
 func nftDestMatch(d Destination, proto Protocol, fam string) string {
 	return fmt.Sprintf("%s daddr %s %s dport %s", fam, d.Address, proto, d.Ports)
+}
+
+// nftOriginMatch ties a rule to the connections it created: the ones whose
+// original destination is the rule's own address and port, which no other
+// rule may claim.
+//
+// The destination alone does not identify a rule. Two rules may relay to the
+// same place -- two ports on this server for the same far server is common --
+// and keyed on the destination alone, each one's NAT, accounting, connection
+// limits and clamping ran on the other's traffic as well: a rule set to keep
+// the client address had it rewritten by its neighbour's masquerade, and each
+// rule's counters, which its traffic limit is enforced from, counted both.
+// Conntrack keeps the original tuple for the whole life of the connection, so
+// the match holds for the reply direction too.
+func nftOriginMatch(s RouteSpec, fam string) string {
+	var parts []string
+	if !s.BindsAnyAddress() {
+		parts = append(parts, "ct original", fam, "daddr", s.BindAddress)
+	}
+	parts = append(parts, "ct original proto-dst", s.BindPorts.String())
+	return strings.Join(parts, " ")
 }
 
 // nftReverseMatch renders the return direction, used only for accounting.

@@ -1481,7 +1481,46 @@ export default {
     },
 
     force: 'Apply anyway',
-    forceHint: 'Warnings can be overridden. Safety refusals — the panel’s own port, the live SSH port — cannot.',
+    forceHint:
+      'Lifts the refusal above and applies the rule as it is. Safety refusals — the panel’s own port, the live SSH port — cannot be lifted.',
+    warningsHint: 'These describe what the rule will do. None of them stops it from being applied.',
+  },
+
+  routeWarnings: {
+    NAT_HIDES_CLIENT_ADDRESS:
+      'The source address of relayed traffic is rewritten, so the destination sees this server rather than the client. Choose “The client’s own address” to keep it — but only if the destination’s replies come back through this server, typically the far end of a tunnel.',
+    NAT_PRESERVES_CLIENT_ADDRESS:
+      'The client address is kept, which only works when the destination sends its replies back through this server. If it does not, connections open and then hang.',
+    BIND_ANY_ADDRESS:
+      'This rule listens on every address this server has, including any it gains later. Name one address to limit it.',
+    BIND_ADDRESS_NOT_FOUND:
+      '{{address}} is not assigned to any interface on this server, so nothing will arrive on it. That is fine for a floating address that is assigned later.',
+    MSS_CLAMP_RECOMMENDED:
+      'This rule sends traffic through a tunnel, whose MTU is smaller than the client’s link. Without MSS clamping, connections open normally and then stall on the first large transfer.',
+    PORT_IN_USE:
+      '{{process}} is listening on port {{port}}. Forwarding this port sends that traffic to the destination instead, and the service stops receiving it with no error anywhere.',
+    PORT_IN_USE_FORCED:
+      '{{process}} is listening on port {{port}}. You chose to apply anyway: that service stops receiving traffic on this port as soon as the rule is applied.',
+    unknownProcess: 'A process this panel cannot identify',
+    LOOPBACK_DESTINATION:
+      '{{address}} is a loopback address. Forwarding to it needs route_localnet turned on for the incoming interface, which the panel will not do: it exposes every service bound to localhost on that interface.',
+    LOOPBACK_DESTINATION_FORCED:
+      '{{address}} is a loopback address. You chose to apply anyway: the rule carries nothing until you turn route_localnet on yourself.',
+    forwardingPreview:
+      'IP forwarding is off on this server, and the panel is set not to turn it on. The rule will be installed, but it carries no traffic until forwarding is turned on.',
+    forwardingPreviewIpv6:
+      'IPv6 forwarding is off on this server, and the panel is set not to turn it on. The IPv6 rules will be installed, but they carry no traffic until IPv6 forwarding is turned on.',
+    forwardingLive_one: 'This kernel is not forwarding packets, so the enabled rule carries no traffic.',
+    forwardingLive_other: 'This kernel is not forwarding packets, so none of the {{value}} enabled rules carries any traffic.',
+    forwardingLiveIpv6: 'An enabled rule forwards IPv6, but this kernel is not forwarding IPv6 packets.',
+    VERIFICATION_IP_FORWARDING:
+      'It carries no traffic yet: IP forwarding is off, and the panel is set not to turn it on.',
+    CONNTRACK_TABLE_FILLING:
+      'The connection tracking table is {{percent}}% full ({{used}} of {{max}}). When it fills, every new connection on this server is refused and nothing in the logs explains it.',
+    CONNTRACK_MAX_LOW:
+      'The connection tracking table holds {{max}} connections. A busy relay can exhaust it, and when it is full every new connection on this server is refused. Raise net.netfilter.nf_conntrack_max if this relay is expected to be busy.',
+    conntrackLowManaged:
+      'The connection tracking table holds {{max}} connections, which a busy relay can exhaust. The panel keeps it sized for the traffic these rules carry and will raise it within a minute.',
   },
 
   routeDetail: {

@@ -407,23 +407,39 @@ func (s *Service) forwardingCheck(ctx context.Context, ruleset rules.Ruleset) Ve
 			Detail: "the kernel parameters were not checked on this instance",
 		}
 	}
+	// Forwarding off after an apply is a failure only when the apply was meant
+	// to turn it on. With routes.auto_enable_ip_forward off the operator has
+	// said they manage it, the plan carried no step for it, and the rules are
+	// meant to go in and wait: failing the apply over it rolled back every rule
+	// the setting exists to let them install, while the setting, the log line
+	// and the preview all said the rules would be installed.
+	fatal := s.autoEnablesForwarding()
 	status := s.forwarding.Status(ctx, ruleset.HasIPv6(), len(ruleset.Routes), 0)
 	switch {
 	case !status.IPv4Forwarding:
+		detail := "the rules are installed but this kernel is not forwarding packets, so they carry nothing"
+		if !fatal {
+			detail = "the rules are installed and carry nothing until IP forwarding is turned on: it is " +
+				"off, and the panel is set not to turn it on"
+		}
 		return VerifyCheck{
-			Name: CheckForwarding, Fatal: true,
+			Name: CheckForwarding, Fatal: fatal,
 			Expected: "1", Actual: "0",
-			Detail: "the rules are installed but this kernel is not forwarding packets, so they " +
-				"carry nothing",
+			Detail: detail,
 		}
 	case ruleset.HasIPv6() && !status.IPv6Forwarding:
+		detail := "an enabled rule forwards IPv6 but this kernel is not forwarding IPv6 packets"
+		if !fatal {
+			detail = "the IPv6 rules are installed and carry nothing until IPv6 forwarding is turned " +
+				"on: it is off, and the panel is set not to turn it on"
+		}
 		return VerifyCheck{
-			Name: CheckForwarding, Fatal: true,
+			Name: CheckForwarding, Fatal: fatal,
 			Expected: "1", Actual: "0",
-			Detail: "an enabled rule forwards IPv6 but this kernel is not forwarding IPv6 packets",
+			Detail: detail,
 		}
 	}
-	return VerifyCheck{Name: CheckForwarding, Ok: true, Fatal: true, Detail: "this kernel forwards packets"}
+	return VerifyCheck{Name: CheckForwarding, Ok: true, Fatal: fatal, Detail: "this kernel forwards packets"}
 }
 
 // persistenceCheck confirms the rendered ruleset really is on disk and really

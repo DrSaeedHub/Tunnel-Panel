@@ -38,9 +38,9 @@ table inet gre_panel {
 		# Source NAT. Absent for a rule whose NAT mode is None, which preserves the
 		# client address and needs the return path to come back through this server.
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044, 198.51.100.21:2044, 198.51.100.22:2044 [nat masquerade]
-		ip daddr 198.51.100.20 tcp dport 2044 masquerade comment "grep:1"
-		ip daddr 198.51.100.21 tcp dport 2044 masquerade comment "grep:1"
-		ip daddr 198.51.100.22 tcp dport 2044 masquerade comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 masquerade comment "grep:1"
+		ip daddr 198.51.100.21 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 masquerade comment "grep:1"
+		ip daddr 198.51.100.22 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 masquerade comment "grep:1"
 	}
 	chain forward {
 		type filter hook forward priority filter; policy accept;
@@ -50,9 +50,9 @@ table inet gre_panel {
 		# that belongs to no flow this server ever started.
 		ct state established,related accept comment "gre-panel:structural"
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044, 198.51.100.21:2044, 198.51.100.22:2044 [nat masquerade]
-		ip daddr 198.51.100.20 tcp dport 2044 accept comment "grep:1"
-		ip daddr 198.51.100.21 tcp dport 2044 accept comment "grep:1"
-		ip daddr 198.51.100.22 tcp dport 2044 accept comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 accept comment "grep:1"
+		ip daddr 198.51.100.21 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 accept comment "grep:1"
+		ip daddr 198.51.100.22 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 accept comment "grep:1"
 	}
 	chain accounting {
 		type filter hook forward priority filter - 10; policy accept;
@@ -60,11 +60,11 @@ table inet gre_panel {
 		# without influencing policy, and they sit at their own priority so they see
 		# traffic whatever the forward chain decides.
 		# route 1 "Web relay": tcp 203.0.113.10:2044 -> 198.51.100.20:2044, 198.51.100.21:2044, 198.51.100.22:2044 [nat masquerade]
-		ip daddr 198.51.100.20 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 198.51.100.20 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip daddr 198.51.100.21 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 198.51.100.21 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip daddr 198.51.100.22 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 198.51.100.22 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 198.51.100.20 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 198.51.100.20 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 198.51.100.21 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 198.51.100.21 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 198.51.100.22 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 198.51.100.22 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
 	}
 }

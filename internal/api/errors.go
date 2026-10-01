@@ -60,6 +60,9 @@ type Warning struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
 	Field   string `json:"field,omitempty"`
+	// Details are the figures the message is built from, so the interface can
+	// say it in the operator's language instead of showing this English.
+	Details map[string]any `json:"details,omitempty"`
 }
 
 // writeJSON serialises v with the given status. It is the only place a response

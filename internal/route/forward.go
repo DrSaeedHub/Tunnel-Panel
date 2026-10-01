@@ -56,6 +56,12 @@ type Forwarding struct {
 	Renderer   *persist.Renderer
 	Guard      *safety.RouteGuard
 	Log        *slog.Logger
+	// ConntrackManaged reports whether the panel keeps the connection
+	// tracking table sized itself (routes.manage_conntrack). Nil means it does
+	// not. It changes what a small table is worth telling the operator: with
+	// it on, the panel raises the limit within a minute, and a warning telling
+	// them to raise it describes work that is already being done.
+	ConntrackManaged func() bool
 }
 
 // NewForwarding returns a forwarding manager rooted at the real filesystem.
@@ -140,19 +146,28 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 		status.ConntrackUsagePercent = float64(status.ConntrackCount) / float64(status.ConntrackMax) * 100
 	}
 
+	// The details carry every figure a message is built from, so the interface
+	// can say the same thing in the operator's language rather than in this
+	// one.
 	if enabledRules > 0 && !status.IPv4Forwarding {
 		status.Warnings = append(status.Warnings, validate.Warning{
 			Code: WarnForwardingDisabled, Field: SysctlIPv4Forward,
 			Message: fmt.Sprintf("%d forwarding rule(s) are enabled but this kernel is not forwarding "+
 				"packets, so none of them can carry traffic. The rules are installed and doing nothing.",
 				enabledRules),
+			Details: map[string]any{"family": "ipv4", "stage": "live", "enabled_rules": enabledRules},
 		})
 	}
 	if needIPv6 && !status.IPv6Forwarding {
 		status.Warnings = append(status.Warnings, validate.Warning{
 			Code: WarnForwardingDisabled, Field: SysctlIPv6Forward,
 			Message: "An enabled rule forwards IPv6, but this kernel is not forwarding IPv6 packets.",
+			Details: map[string]any{"family": "ipv6", "stage": "live", "enabled_rules": enabledRules},
 		})
+	}
+	usage := map[string]any{
+		"percent": int(status.ConntrackUsagePercent + 0.5),
+		"count":   status.ConntrackCount, "max": status.ConntrackMax,
 	}
 	if warnPercent > 0 && status.ConntrackMax > 0 && status.ConntrackUsagePercent >= warnPercent {
 		status.Warnings = append(status.Warnings, validate.Warning{
@@ -160,21 +175,50 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 			Message: fmt.Sprintf("The connection tracking table is %.0f%% full (%d of %d). When it "+
 				"fills, new connections are dropped and nothing in the logs explains it.",
 				status.ConntrackUsagePercent, status.ConntrackCount, status.ConntrackMax),
+			Details: usage,
 		})
 	}
 	// At or below, not below. 65536 is the stock default on the machines this
 	// panel runs on, and a strict comparison meant the one value most likely
 	// to be too small was the one value that never warned.
 	if enabledRules > 0 && status.ConntrackMax > 0 && status.ConntrackMax <= LowConntrackMax {
+		managed := f.ConntrackManaged != nil && f.ConntrackManaged()
+		message := fmt.Sprintf("The connection tracking table holds %d connections. A busy relay can "+
+			"exhaust it, and when it is full every new connection on this server is refused. Raise "+
+			"net.netfilter.nf_conntrack_max if this relay is expected to be busy.", status.ConntrackMax)
+		if managed {
+			message = fmt.Sprintf("The connection tracking table holds %d connections, which a busy "+
+				"relay can exhaust. The panel keeps it sized for the traffic these rules carry and will "+
+				"raise it within a minute.", status.ConntrackMax)
+		}
 		status.Warnings = append(status.Warnings, validate.Warning{
-			Code: WarnConntrackMaxLow,
-			Message: fmt.Sprintf("The connection tracking table holds %d connections. The kernel sizes "+
-				"it from this machine's memory, which has nothing to do with how many connections a "+
-				"relay carries; a busy one can exhaust it. Raise net.netfilter.nf_conntrack_max if this "+
-				"relay is expected to be busy.", status.ConntrackMax),
+			Code: WarnConntrackMaxLow, Message: message,
+			Details: map[string]any{"max": status.ConntrackMax, "managed": managed},
 		})
 	}
 	return status
+}
+
+// RoutesLocalnet reports whether the kernel routes 127.0.0.0/8 off the wire on
+// any interface, which a rule relaying to a loopback address cannot work
+// without. The per-interface setting and the "all" one combine with OR, so one
+// of them being on is enough for the interface it names.
+func (f *Forwarding) RoutesLocalnet() bool {
+	matches, _ := filepath.Glob(f.path("proc", "sys", "net", "ipv4", "conf", "*", "route_localnet"))
+	for _, match := range matches {
+		// "default" only seeds interfaces created later; it routes nothing.
+		if filepath.Base(filepath.Dir(match)) == "default" {
+			continue
+		}
+		raw, err := os.ReadFile(match)
+		if err != nil {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(string(raw))); err == nil && n > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // ByteAccounting reports whether the kernel counts bytes and packets per

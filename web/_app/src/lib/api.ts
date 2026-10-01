@@ -52,6 +52,25 @@ export class ApiError extends Error {
     if (!Object.keys(out).length && this.field) out[this.field] = this.message
     return out
   }
+
+  /** The per-field validation entries, with their codes and the figures behind them. */
+  get fieldEntries(): { field: string; code: string; message: string; details: Record<string, unknown> }[] {
+    const fields = this.details['fields']
+    if (!Array.isArray(fields)) return []
+    return fields.flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return []
+      const record = entry as Record<string, unknown>
+      return [
+        {
+          field: typeof record.field === 'string' ? record.field : '',
+          code: typeof record.code === 'string' ? record.code : '',
+          message: typeof record.message === 'string' ? record.message : '',
+          details:
+            record.details && typeof record.details === 'object' ? (record.details as Record<string, unknown>) : {},
+        },
+      ]
+    })
+  }
 }
 
 /** Thrown when the browser could not reach the panel at all. */

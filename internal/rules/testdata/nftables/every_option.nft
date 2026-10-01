@@ -60,10 +60,10 @@ table inet gre_panel {
 		# Source NAT. Absent for a rule whose NAT mode is None, which preserves the
 		# client address and needs the return path to come back through this server.
 		# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
-		ip daddr 172.31.7.2 tcp dport 2044 snat ip to 203.0.113.10 comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 snat ip to 203.0.113.10 comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 snat ip to 203.0.113.10 comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 snat ip to 203.0.113.10 comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 snat ip to 203.0.113.10 comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 snat ip to 203.0.113.10 comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 snat ip to 203.0.113.10 comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 snat ip to 203.0.113.10 comment "grep:1"
 	}
 	chain forward {
 		type filter hook forward priority filter; policy accept;
@@ -73,22 +73,22 @@ table inet gre_panel {
 		# that belongs to no flow this server ever started.
 		ct state established,related accept comment "gre-panel:structural"
 		# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
-		ip daddr 172.31.7.2 tcp dport 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
-		ip daddr 172.31.7.2 tcp dport 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
-		ip daddr 172.31.7.2 tcp dport 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
-		ip daddr 172.31.7.2 tcp dport 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_conn { ip saddr ct count over 25 } drop comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new add @route_1_rate { ip saddr limit rate over 120/minute } drop comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ct state new limit rate 5/minute log prefix "gre-panel route 1: " comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 ip saddr { 10.0.0.0/8 } accept comment "grep:1"
 	}
 	chain accounting {
 		type filter hook forward priority filter - 10; policy accept;
@@ -96,14 +96,14 @@ table inet gre_panel {
 		# without influencing policy, and they sit at their own priority so they see
 		# traffic whatever the forward chain decides.
 		# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
-		ip daddr 172.31.7.2 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 172.31.7.2 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 172.31.7.6 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 172.31.7.2 udp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip saddr 172.31.7.6 udp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 172.31.7.2 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 172.31.7.6 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 172.31.7.2 udp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip saddr 172.31.7.6 udp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
 	}
 	chain local_out_accounting {
 		type filter hook output priority filter - 10; policy accept;
@@ -111,10 +111,10 @@ table inet gre_panel {
 		# never sees. It references the same counters as the chain above, so a rule's
 		# total is its whole total rather than the forwarded half of it.
 		# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
-		ip daddr 172.31.7.2 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip daddr 172.31.7.2 udp dport 2044 counter name "route_1_tx" comment "grep:1"
-		ip daddr 172.31.7.6 udp dport 2044 counter name "route_1_tx" comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip daddr 172.31.7.2 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
+		ip daddr 172.31.7.6 udp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_tx" comment "grep:1"
 	}
 	chain local_in_accounting {
 		type filter hook input priority filter - 10; policy accept;
@@ -122,10 +122,10 @@ table inet gre_panel {
 		# connection are delivered to a socket on this host, so they arrive at input
 		# rather than being forwarded.
 		# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
-		ip saddr 172.31.7.2 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip saddr 172.31.7.6 tcp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip saddr 172.31.7.2 udp sport 2044 counter name "route_1_rx" comment "grep:1"
-		ip saddr 172.31.7.6 udp sport 2044 counter name "route_1_rx" comment "grep:1"
+		ip saddr 172.31.7.2 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip saddr 172.31.7.6 tcp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip saddr 172.31.7.2 udp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
+		ip saddr 172.31.7.6 udp sport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 counter name "route_1_rx" comment "grep:1"
 	}
 	chain mss_clamp {
 		type filter hook forward priority mangle; policy accept;
@@ -134,8 +134,8 @@ table inet gre_panel {
 		# the first large transfer. The mask form matches a SYN without RST, so a
 		# reset is not rewritten.
 		# route 1 "Everything at once": both 203.0.113.10:2044 -> 172.31.7.2:2044, 172.31.7.6:2044 [nat snat]
-		ip daddr 172.31.7.2 tcp dport 2044 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:1"
-		ip daddr 172.31.7.6 tcp dport 2044 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:1"
+		ip daddr 172.31.7.2 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:1"
+		ip daddr 172.31.7.6 tcp dport 2044 ct original ip daddr 203.0.113.10 ct original proto-dst 2044 tcp flags syn / syn,rst tcp option maxseg size set rt mtu comment "grep:1"
 	}
 	chain marking {
 		type filter hook prerouting priority mangle; policy accept;

@@ -64,16 +64,25 @@ func TestTheDocumentedExitCodesAreTheOnesTheInstallerCanProduce(t *testing.T) {
 		t.Fatalf("only %d exit constants were found; the pattern is not matching", len(declared))
 	}
 
-	// The codes the README's table documents.
+	// The codes the README's table documents. The table may set code/meaning
+	// pairs side by side to keep it short, so every cell that is a bare number
+	// is a code, not only the first cell of each row.
 	documented := map[int]bool{}
-	table := regexp.MustCompile(`(?m)^\|\s*(\d+)\s*\|`)
 	section := string(readme)
 	if at := strings.Index(section, "### Exit codes"); at >= 0 {
 		section = section[at:]
 	}
-	for _, match := range table.FindAllStringSubmatch(section, -1) {
-		code, _ := strconv.Atoi(match[1])
-		documented[code] = true
+	bare := regexp.MustCompile(`^\d+$`)
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "|") {
+			continue
+		}
+		for _, cell := range strings.Split(line, "|") {
+			if cell = strings.TrimSpace(cell); bare.MatchString(cell) {
+				code, _ := strconv.Atoi(cell)
+				documented[code] = true
+			}
+		}
 	}
 	if len(documented) < 5 {
 		t.Fatalf("only %d exit codes were found in the README", len(documented))

@@ -29,7 +29,7 @@ COMMIT
 # route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
 -A GRE_PANEL_PRE -d 2001:db8::10/128 -p tcp --dport 993 -m comment --comment "grep:9" -j DNAT --to-destination [2001:db8:1::20]:993
 # route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
--A GRE_PANEL_POST -d 2001:db8:1::20/128 -p tcp --dport 993 -m comment --comment "grep:9" -j MASQUERADE
+-A GRE_PANEL_POST -d 2001:db8:1::20/128 -p tcp --dport 993 -m conntrack --ctorigdst 2001:db8::10/128 --ctorigdstport 993 -m comment --comment "grep:9" -j MASQUERADE
 COMMIT
 *filter
 :GRE_PANEL_ACCT - [0:0]
@@ -37,9 +37,9 @@ COMMIT
 -F GRE_PANEL_ACCT
 -F GRE_PANEL_FWD
 # route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
--A GRE_PANEL_ACCT -d 2001:db8:1::20/128 -p tcp --dport 993 -m comment --comment "grep:9"
--A GRE_PANEL_ACCT -s 2001:db8:1::20/128 -p tcp --sport 993 -m comment --comment "grep:9"
+-A GRE_PANEL_ACCT -d 2001:db8:1::20/128 -p tcp --dport 993 -m conntrack --ctorigdst 2001:db8::10/128 --ctorigdstport 993 -m comment --comment "grep:9"
+-A GRE_PANEL_ACCT -s 2001:db8:1::20/128 -p tcp --sport 993 -m conntrack --ctorigdst 2001:db8::10/128 --ctorigdstport 993 -m comment --comment "grep:9"
 -A GRE_PANEL_FWD -m conntrack --ctstate ESTABLISHED,RELATED -m comment --comment "gre-panel:structural" -j ACCEPT
 # route 9 "IPv6 as well": tcp 2001:db8::10:993 -> 2001:db8:1::20:993 [nat masquerade]
--A GRE_PANEL_FWD -d 2001:db8:1::20/128 -p tcp --dport 993 -m comment --comment "grep:9" -j ACCEPT
+-A GRE_PANEL_FWD -d 2001:db8:1::20/128 -p tcp --dport 993 -m conntrack --ctorigdst 2001:db8::10/128 --ctorigdstport 993 -m comment --comment "grep:9" -j ACCEPT
 COMMIT

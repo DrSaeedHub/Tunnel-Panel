@@ -66,6 +66,8 @@ export function RoutePreviewPanel({
             </Section>
           ) : null}
 
+          {/* The plan is the backend's own English. In a right-to-left page each
+              line is isolated, or its closing punctuation jumps to the front. */}
           {(preview.plan.steps ?? []).length ? (
             <Section
               icon={<ListChecks className="size-3.5" aria-hidden="true" />}
@@ -74,7 +76,7 @@ export function RoutePreviewPanel({
               <ol className="space-y-1.5">
                 {(preview.plan.steps ?? []).map((step, index) => (
                   <li key={`${step.kind}-${index}`} className="space-y-0.5">
-                    <p className="text-2xs text-muted-foreground">{step.description}</p>
+                    <p dir="auto" className="text-2xs text-muted-foreground">{step.description}</p>
                     {step.argv?.length ? (
                       <Technical className="block overflow-x-auto text-2xs">{step.argv.join(' ')}</Technical>
                     ) : null}
@@ -103,7 +105,7 @@ export function RoutePreviewPanel({
             >
               <ul className="space-y-0.5 text-2xs text-muted-foreground">
                 {(preview.plan.rollback ?? []).map((step, index) => (
-                  <li key={`${step.kind}-rollback-${index}`}>• {step.description}</li>
+                  <li key={`${step.kind}-rollback-${index}`} dir="auto">• {step.description}</li>
                 ))}
               </ul>
             </Section>
@@ -116,13 +118,17 @@ export function RoutePreviewPanel({
             >
               <ul className="space-y-0.5 text-2xs text-muted-foreground">
                 {(preview.plan.verification ?? []).map((check) => (
-                  <li key={check}>• {check}</li>
+                  <li key={check} dir="auto">• {check}</li>
                 ))}
               </ul>
             </Section>
           ) : null}
 
-          {preview.note ? <p className="text-2xs text-muted-foreground">{preview.note}</p> : null}
+          {preview.note ? (
+            <p dir="auto" className="text-2xs text-muted-foreground">
+              {preview.note}
+            </p>
+          ) : null}
         </>
       )}
     </DisclosurePanel>
