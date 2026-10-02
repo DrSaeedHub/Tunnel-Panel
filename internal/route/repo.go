@@ -9,13 +9,35 @@ import (
 	"strings"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
 	"github.com/drs/gre-panel/internal/validate"
 )
 
-// ErrNotFound is returned when no live forwarding rule has that identifier.
-var ErrNotFound = errors.New("route: not found")
+// ErrNotFound is returned when no live forwarding rule has that identifier. Its
+// text is marked for translation and stays English in the error itself.
+var ErrNotFound = errors.New(i18n.N("route: not found"))
+
+// saidError is a sentinel with its particulars, said as one sentence in the
+// operator's language.
+//
+// Wrapping with fmt.Errorf("%w: ...") would print the sentinel's English in
+// front of a translated remainder. This says the whole sentence — sentinel
+// included, which is why the English keys repeat the sentinel's text — and
+// still unwraps to the sentinel, so errors.Is keeps working.
+type saidError struct {
+	text string
+	err  error
+}
+
+func (e *saidError) Error() string { return e.text }
+func (e *saidError) Unwrap() error { return e.err }
+
+// notFound is ErrNotFound for one rule.
+func notFound(ctx context.Context, id int64) error {
+	return &saidError{text: i18n.T(ctx, "route: not found: forwarding rule %d", id), err: ErrNotFound}
+}
 
 // routeColumns is the full column list, in the order rows are scanned. It is a
 // single constant so the SELECT list and the scan can never drift apart.
@@ -140,7 +162,7 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	rows, err := r.db.Read.QueryContext(ctx,
 		`SELECT `+routeColumns+` FROM RouteRule WHERE IsDeleted = 0 ORDER BY SortOrder, RouteRuleID`)
 	if err != nil {
-		return nil, fmt.Errorf("listing forwarding rules: %w", err)
+		return nil, i18n.Errorf(ctx, "listing forwarding rules: %w", err)
 	}
 	defer rows.Close()
 
@@ -148,12 +170,12 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	for rows.Next() {
 		rule, err := scanRoute(rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("reading a forwarding rule row: %w", err)
+			return nil, i18n.Errorf(ctx, "reading a forwarding rule row: %w", err)
 		}
 		out = append(out, Record{RouteRule: rule})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing forwarding rules: %w", err)
+		return nil, i18n.Errorf(ctx, "listing forwarding rules: %w", err)
 	}
 
 	destinations, err := r.allDestinations(ctx)
@@ -184,10 +206,10 @@ func (r *Repo) ByID(ctx context.Context, id int64) (Record, error) {
 		`SELECT `+routeColumns+` FROM RouteRule WHERE RouteRuleID = ? AND IsDeleted = 0`, id)
 	rule, err := scanRoute(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Record{}, fmt.Errorf("%w: forwarding rule %d", ErrNotFound, id)
+		return Record{}, notFound(ctx, id)
 	}
 	if err != nil {
-		return Record{}, fmt.Errorf("reading forwarding rule %d: %w", id, err)
+		return Record{}, i18n.Errorf(ctx, "reading forwarding rule %d: %w", id, err)
 	}
 
 	destinations, err := r.destinationsFor(ctx, id)
@@ -231,7 +253,7 @@ const destinationColumns = `
 	MonitorFailureThreshold, MonitorRecoveryThreshold, IsSuppressed,
 	CreatedDate, UpdatedDate, IsDeleted`
 
-func scanDestinations(rows *sql.Rows) ([]model.RouteDestination, error) {
+func scanDestinations(ctx context.Context, rows *sql.Rows) ([]model.RouteDestination, error) {
 	var out []model.RouteDestination
 	for rows.Next() {
 		var d model.RouteDestination
@@ -245,7 +267,7 @@ func scanDestinations(rows *sql.Rows) ([]model.RouteDestination, error) {
 			&isMonitorEnabled, &monitorPort, &monitorInterval, &monitorTimeout,
 			&failureThreshold, &recoveryThreshold, &isSuppressed,
 			&d.CreatedDate, &d.UpdatedDate, &isDeleted); err != nil {
-			return nil, fmt.Errorf("reading a destination row: %w", err)
+			return nil, i18n.Errorf(ctx, "reading a destination row: %w", err)
 		}
 		d.PortRangeEnd = nullInt(portRangeEnd)
 		d.IsEnabled = isEnabled != 0
@@ -267,10 +289,10 @@ func (r *Repo) destinationsFor(ctx context.Context, id int64) ([]model.RouteDest
 		FROM RouteDestination WHERE RouteRuleID = ? AND IsDeleted = 0
 		ORDER BY SortOrder, RouteDestinationID`, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading the destinations of rule %d: %w", id, err)
+		return nil, i18n.Errorf(ctx, "reading the destinations of rule %d: %w", id, err)
 	}
 	defer rows.Close()
-	return scanDestinations(rows)
+	return scanDestinations(ctx, rows)
 }
 
 // sourceListsFor returns the shared lists one rule allows, with every range
@@ -307,7 +329,7 @@ func (r *Repo) sourceLists(ctx context.Context, only *int64) (
 		WHERE `+where+`
 		ORDER BY l.RouteRuleID, l.SortOrder, l.RouteSourceListID`, args...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading the source lists of the forwarding rules: %w", err)
+		return nil, nil, i18n.Errorf(ctx, "reading the source lists of the forwarding rules: %w", err)
 	}
 	defer rows.Close()
 
@@ -319,7 +341,7 @@ func (r *Repo) sourceLists(ctx context.Context, only *int64) (
 		var isBuiltIn int64
 		if err := rows.Scan(&ruleID, &list.SourceListID, &list.Name, &list.Description,
 			&list.Slug, &isBuiltIn, &list.CreatedDate, &list.UpdatedDate); err != nil {
-			return nil, nil, fmt.Errorf("reading a source list link: %w", err)
+			return nil, nil, i18n.Errorf(ctx, "reading a source list link: %w", err)
 		}
 		list.IsBuiltIn = isBuiltIn != 0
 		lists[ruleID] = append(lists[ruleID], list)
@@ -365,7 +387,7 @@ func (r *Repo) sourceRanges(ctx context.Context, ids map[int64]bool) (map[int64]
 		WHERE IsDeleted = 0 AND SourceListID IN (`+strings.Join(placeholders, ", ")+`)
 		ORDER BY SourceListID, SourceListEntryID`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading the ranges of the source lists: %w", err)
+		return nil, i18n.Errorf(ctx, "reading the ranges of the source lists: %w", err)
 	}
 	defer rows.Close()
 
@@ -385,11 +407,11 @@ func (r *Repo) allDestinations(ctx context.Context) (map[int64][]model.RouteDest
 	rows, err := r.db.Read.QueryContext(ctx, `SELECT `+destinationColumns+`
 		FROM RouteDestination WHERE IsDeleted = 0 ORDER BY RouteRuleID, SortOrder, RouteDestinationID`)
 	if err != nil {
-		return nil, fmt.Errorf("reading destinations: %w", err)
+		return nil, i18n.Errorf(ctx, "reading destinations: %w", err)
 	}
 	defer rows.Close()
 
-	list, err := scanDestinations(rows)
+	list, err := scanDestinations(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -403,14 +425,14 @@ func (r *Repo) allDestinations(ctx context.Context) (map[int64][]model.RouteDest
 const allowedSourceColumns = `
 	RouteAllowedSourceID, RouteRuleID, Cidr, Description, CreatedDate, UpdatedDate, IsDeleted`
 
-func scanAllowedSources(rows *sql.Rows) ([]model.RouteAllowedSource, error) {
+func scanAllowedSources(ctx context.Context, rows *sql.Rows) ([]model.RouteAllowedSource, error) {
 	var out []model.RouteAllowedSource
 	for rows.Next() {
 		var s model.RouteAllowedSource
 		var isDeleted int64
 		if err := rows.Scan(&s.RouteAllowedSourceID, &s.RouteRuleID, &s.Cidr, &s.Description,
 			&s.CreatedDate, &s.UpdatedDate, &isDeleted); err != nil {
-			return nil, fmt.Errorf("reading an allowlist row: %w", err)
+			return nil, i18n.Errorf(ctx, "reading an allowlist row: %w", err)
 		}
 		s.IsDeleted = isDeleted != 0
 		out = append(out, s)
@@ -423,21 +445,21 @@ func (r *Repo) allowedSourcesFor(ctx context.Context, id int64) ([]model.RouteAl
 		FROM RouteAllowedSource WHERE RouteRuleID = ? AND IsDeleted = 0
 		ORDER BY RouteAllowedSourceID`, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading the allowlist of rule %d: %w", id, err)
+		return nil, i18n.Errorf(ctx, "reading the allowlist of rule %d: %w", id, err)
 	}
 	defer rows.Close()
-	return scanAllowedSources(rows)
+	return scanAllowedSources(ctx, rows)
 }
 
 func (r *Repo) allAllowedSources(ctx context.Context) (map[int64][]model.RouteAllowedSource, error) {
 	rows, err := r.db.Read.QueryContext(ctx, `SELECT `+allowedSourceColumns+`
 		FROM RouteAllowedSource WHERE IsDeleted = 0 ORDER BY RouteRuleID, RouteAllowedSourceID`)
 	if err != nil {
-		return nil, fmt.Errorf("reading allowlists: %w", err)
+		return nil, i18n.Errorf(ctx, "reading allowlists: %w", err)
 	}
 	defer rows.Close()
 
-	list, err := scanAllowedSources(rows)
+	list, err := scanAllowedSources(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -560,7 +582,7 @@ func (r *Repo) Insert(ctx context.Context, in validate.RouteInput) (int64, error
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("beginning the forwarding rule transaction: %w", err)
+		return 0, i18n.Errorf(ctx, "beginning the forwarding rule transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -591,18 +613,18 @@ func (r *Repo) Insert(ctx context.Context, in validate.RouteInput) (int64, error
 		boolToInt(rec.IsEnabled), model.ApplyStatusPending, nextSortOrder(ctx, tx, rec.SortOrder),
 		now, now)
 	if err != nil {
-		return 0, fmt.Errorf("storing the forwarding rule: %w", err)
+		return 0, i18n.Errorf(ctx, "storing the forwarding rule: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("reading the new forwarding rule identifier: %w", err)
+		return 0, i18n.Errorf(ctx, "reading the new forwarding rule identifier: %w", err)
 	}
 
 	if err := replaceChildren(ctx, tx, id, rec, now); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("committing the forwarding rule: %w", err)
+		return 0, i18n.Errorf(ctx, "committing the forwarding rule: %w", err)
 	}
 	return id, nil
 }
@@ -629,7 +651,7 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.RouteInput) err
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning the forwarding rule transaction: %w", err)
+		return i18n.Errorf(ctx, "beginning the forwarding rule transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -658,14 +680,14 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.RouteInput) err
 		rec.MonitorIntervalSeconds, rec.MonitorTimeoutSeconds,
 		rec.MonitorFailureThreshold, rec.MonitorRecoveryThreshold,
 		boolToInt(rec.IsEnabled), rec.SortOrder, now, id); err != nil {
-		return fmt.Errorf("updating forwarding rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "updating forwarding rule %d: %w", id, err)
 	}
 
 	if err := replaceChildren(ctx, tx, id, rec, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing forwarding rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "committing forwarding rule %d: %w", id, err)
 	}
 	return nil
 }
@@ -679,7 +701,7 @@ func replaceChildren(ctx context.Context, tx *sql.Tx, id int64, rec Record, now 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE RouteDestination SET IsDeleted = 1, UpdatedDate = ? WHERE RouteRuleID = ? AND IsDeleted = 0`,
 		now, id); err != nil {
-		return fmt.Errorf("replacing the destinations of rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "replacing the destinations of rule %d: %w", id, err)
 	}
 	for _, d := range rec.Destinations {
 		if _, err := tx.ExecContext(ctx, `
@@ -694,34 +716,34 @@ func replaceChildren(ctx context.Context, tx *sql.Tx, id int64, rec Record, now 
 			d.MonitorIntervalSeconds, d.MonitorTimeoutSeconds,
 			d.MonitorFailureThreshold, d.MonitorRecoveryThreshold,
 			now, now); err != nil {
-			return fmt.Errorf("storing a destination of rule %d: %w", id, err)
+			return i18n.Errorf(ctx, "storing a destination of rule %d: %w", id, err)
 		}
 	}
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE RouteSourceList SET IsDeleted = 1, UpdatedDate = ? WHERE RouteRuleID = ? AND IsDeleted = 0`,
 		now, id); err != nil {
-		return fmt.Errorf("replacing the source lists of rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "replacing the source lists of rule %d: %w", id, err)
 	}
 	for i, listID := range rec.SourceListIDs {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO RouteSourceList (RouteRuleID, SourceListID, SortOrder, CreatedDate, UpdatedDate, IsDeleted)
 			VALUES (?, ?, ?, ?, ?, 0)`, id, listID, i, now, now); err != nil {
-			return fmt.Errorf("allowing source list %d on rule %d: %w", listID, id, err)
+			return i18n.Errorf(ctx, "allowing source list %d on rule %d: %w", listID, id, err)
 		}
 	}
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE RouteAllowedSource SET IsDeleted = 1, UpdatedDate = ? WHERE RouteRuleID = ? AND IsDeleted = 0`,
 		now, id); err != nil {
-		return fmt.Errorf("replacing the allowlist of rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "replacing the allowlist of rule %d: %w", id, err)
 	}
 	for _, s := range rec.AllowedSources {
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO RouteAllowedSource (RouteRuleID, Cidr, Description, CreatedDate, UpdatedDate, IsDeleted)
 			VALUES (?, ?, ?, ?, ?, 0)`,
 			id, s.Cidr, s.Description, now, now); err != nil {
-			return fmt.Errorf("storing an allowlist entry of rule %d: %w", id, err)
+			return i18n.Errorf(ctx, "storing an allowlist entry of rule %d: %w", id, err)
 		}
 	}
 	return nil
@@ -757,7 +779,7 @@ func (r *Repo) SetDestinationEnabled(ctx context.Context, destinationID int64, e
 		WHERE RouteDestinationID = ? AND IsDeleted = 0`,
 		boolToInt(enabled), model.NowUTC(), destinationID)
 	if err != nil {
-		return fmt.Errorf("switching destination %d: %w", destinationID, err)
+		return i18n.Errorf(ctx, "switching destination %d: %w", destinationID, err)
 	}
 	return nil
 }
@@ -768,7 +790,7 @@ func (r *Repo) SoftDelete(ctx context.Context, id int64) error {
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning the delete transaction: %w", err)
+		return i18n.Errorf(ctx, "beginning the delete transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -778,11 +800,11 @@ func (r *Repo) SoftDelete(ctx context.Context, id int64) error {
 		`UPDATE RouteAllowedSource SET IsDeleted = 1, UpdatedDate = ? WHERE RouteRuleID = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt, now, id); err != nil {
-			return fmt.Errorf("deleting forwarding rule %d: %w", id, err)
+			return i18n.Errorf(ctx, "deleting forwarding rule %d: %w", id, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing the deletion of rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "committing the deletion of rule %d: %w", id, err)
 	}
 	return nil
 }
@@ -792,7 +814,7 @@ func (r *Repo) SetEnabled(ctx context.Context, id int64, enabled bool) error {
 	if _, err := r.db.Write.ExecContext(ctx,
 		`UPDATE RouteRule SET IsEnabled = ?, UpdatedDate = ? WHERE RouteRuleID = ? AND IsDeleted = 0`,
 		boolToInt(enabled), model.NowUTC(), id); err != nil {
-		return fmt.Errorf("changing the enabled state of rule %d: %w", id, err)
+		return i18n.Errorf(ctx, "changing the enabled state of rule %d: %w", id, err)
 	}
 	return nil
 }
@@ -836,7 +858,7 @@ func (r *Repo) Reorder(ctx context.Context, ids []int64) error {
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning the reorder transaction: %w", err)
+		return i18n.Errorf(ctx, "beginning the reorder transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -845,14 +867,14 @@ func (r *Repo) Reorder(ctx context.Context, ids []int64) error {
 			`UPDATE RouteRule SET SortOrder = ?, UpdatedDate = ? WHERE RouteRuleID = ? AND IsDeleted = 0`,
 			int64((i+1)*10), now, id)
 		if err != nil {
-			return fmt.Errorf("reordering forwarding rule %d: %w", id, err)
+			return i18n.Errorf(ctx, "reordering forwarding rule %d: %w", id, err)
 		}
 		if affected, err := res.RowsAffected(); err == nil && affected == 0 {
-			return fmt.Errorf("%w: forwarding rule %d", ErrNotFound, id)
+			return notFound(ctx, id)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing the new order: %w", err)
+		return i18n.Errorf(ctx, "committing the new order: %w", err)
 	}
 	return nil
 }
@@ -862,7 +884,7 @@ func (r *Repo) TunnelExists(ctx context.Context, tunnelID int64) (bool, error) {
 	var count int
 	if err := r.db.Read.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM Tunnel WHERE TunnelID = ? AND IsDeleted = 0`, tunnelID).Scan(&count); err != nil {
-		return false, fmt.Errorf("checking tunnel %d: %w", tunnelID, err)
+		return false, i18n.Errorf(ctx, "checking tunnel %d: %w", tunnelID, err)
 	}
 	return count > 0, nil
 }

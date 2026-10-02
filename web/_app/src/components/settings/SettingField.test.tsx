@@ -177,3 +177,75 @@ describe('SettingField', () => {
     expect(screen.getByText('Default: 99')).toBeTruthy()
   })
 })
+
+/**
+ * What a setting is called.
+ *
+ * Every label on the Settings page was built from the key, in English: a Farsi
+ * operator read "default mtu" above a Farsi description. The schema now carries
+ * the backend's own name for each setting, said in the language of the request.
+ */
+describe('the setting label', () => {
+  it('is the name the schema gives, when it gives one', () => {
+    renderField(
+      <SettingField
+        entry={entry({
+          key: 'tunnel.default_mtu',
+          label: 'MTU پیش‌فرض',
+          type: 'int',
+          default: 1472,
+          value: 1472,
+          constraints: { nullable: false },
+        })}
+        value={1472}
+        onChange={() => {}}
+        dirty={false}
+      />,
+    )
+
+    const label = screen.getByText('MTU پیش‌فرض')
+    // Laid out by its own direction: this one starts with a Latin word.
+    expect(label).toHaveAttribute('dir', 'auto')
+    expect(screen.getByLabelText('MTU پیش‌فرض')).toBeTruthy()
+    expect(screen.queryByText('default mtu')).toBeNull()
+  })
+
+  it('falls back to the key from a backend that sends no label', () => {
+    renderField(
+      <SettingField
+        entry={entry({
+          key: 'tunnel.default_mtu',
+          type: 'int',
+          default: 1472,
+          value: 1472,
+          constraints: { nullable: false },
+        })}
+        value={1472}
+        onChange={() => {}}
+        dirty={false}
+      />,
+    )
+
+    expect(screen.getByText('default mtu')).toBeTruthy()
+  })
+
+  it('says a switch default in words rather than as a JSON literal', () => {
+    renderField(
+      <SettingField
+        entry={entry({
+          key: 'tunnel.default_pmtudisc',
+          type: 'bool',
+          default: true,
+          value: false,
+          constraints: { nullable: false },
+        })}
+        value={false}
+        onChange={() => {}}
+        dirty={false}
+      />,
+    )
+
+    expect(screen.getByText('Default: On')).toBeTruthy()
+    expect(screen.queryByText('Default: true')).toBeNull()
+  })
+})

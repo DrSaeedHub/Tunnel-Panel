@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Stage is where an update has got to. It is deliberately coarse: the detail
@@ -170,6 +171,9 @@ var ErrUpdateRunning = errors.New("an update is already running")
 // Unavailable explains why this installation cannot update itself. It is an
 // error type rather than a bare string so a handler can answer 503 with the
 // reason rather than a generic failure.
+//
+// The reason is in English, marked for translation; the handler says it in the
+// language of the request.
 type Unavailable struct{ Reason string }
 
 func (e *Unavailable) Error() string { return e.Reason }
@@ -181,15 +185,15 @@ func (e *Unavailable) Error() string { return e.Reason }
 func (a *Applier) Available() error {
 	switch {
 	case !a.underSysd:
-		return &Unavailable{"This panel is not running under systemd, so it cannot restart itself into a new version. Update it the way it was installed."}
+		return &Unavailable{i18n.N("This panel is not running under systemd, so it cannot restart itself into a new version. Update it the way it was installed.")}
 	case a.runner == nil:
-		return &Unavailable{"This instance cannot run commands, so it cannot start an update."}
+		return &Unavailable{i18n.N("This instance cannot run commands, so it cannot start an update.")}
 	case a.systemdRun == "":
-		return &Unavailable{"systemd-run was not found on this host, and the update has to run outside the panel's own service to survive the restart in the middle of it."}
+		return &Unavailable{i18n.N("systemd-run was not found on this host, and the update has to run outside the panel's own service to survive the restart in the middle of it.")}
 	case a.cli == "" || !fileExists(a.cli):
-		return &Unavailable{"The tnp command-line tool is not installed, and it is what runs the installer. Reinstall it, or update the panel from a shell."}
+		return &Unavailable{i18n.N("The tnp command-line tool is not installed, and it is what runs the installer. Reinstall it, or update the panel from a shell.")}
 	case a.euid() != 0:
-		return &Unavailable{"The panel is not running as root, so it cannot install a new version."}
+		return &Unavailable{i18n.N("The panel is not running as root, so it cannot install a new version.")}
 	}
 	return nil
 }
@@ -216,7 +220,7 @@ func (a *Applier) Start(ctx context.Context, version, startedBy string) (State, 
 		target = "latest"
 	}
 	if !validTarget(target) {
-		return State{}, fmt.Errorf("%q is not a version this panel can install", version)
+		return State{}, i18n.Errorf(ctx, "%q is not a version this panel can install", version)
 	}
 
 	// A previous run left its unit loaded on purpose, so its result could be
@@ -274,7 +278,7 @@ func (a *Applier) launch(ctx context.Context, target string) error {
 	a.clearUnit(ctx)
 	argv = append(a.systemdRunArgs(false), a.installArgs(target)...)
 	if _, err := a.runner.Run(ctx, argv); err != nil {
-		return fmt.Errorf("the update could not be started: %w", err)
+		return i18n.Errorf(ctx, "the update could not be started: %w", err)
 	}
 	return nil
 }
@@ -312,7 +316,8 @@ func (a *Applier) State(ctx context.Context) State {
 	return a.withLog(ctx, a.resolve(ctx, a.read()))
 }
 
-// resolve decides what became of a run that was still marked running.
+// resolve decides what became of a run that was still marked running. The
+// reason a run failed is said in the language ctx carries, and kept.
 //
 // This is where the restart is accounted for. The process that started the
 // update is not the process that reports on it, so the outcome cannot be held
@@ -328,24 +333,24 @@ func (a *Applier) resolve(ctx context.Context, state State) State {
 	switch {
 	case unit.loaded && unit.active:
 		if a.startedLongAgo(state) {
-			return a.finish(state, StageFailed,
-				"The update has been running for longer than twenty minutes. Check the log below, and the panel's service.")
+			return a.finish(state, StageFailed, i18n.T(ctx, "The update has been running for longer than "+
+				"twenty minutes. Check the log below, and the panel's service."))
 		}
 		return state
 
 	case unit.loaded && unit.failed:
-		detail := unit.result
-		if detail == "" {
-			detail = "the installer exited non-zero"
+		if unit.result == "" {
+			return a.finish(state, StageFailed,
+				i18n.T(ctx, "The installer did not finish: the installer exited non-zero."))
 		}
-		return a.finish(state, StageFailed, "The installer did not finish: "+detail+".")
+		// The result is systemd's own word for how the unit ended.
+		return a.finish(state, StageFailed, i18n.T(ctx, "The installer did not finish: %s.", unit.result))
 
 	case unit.loaded && unit.exited:
 		if unit.status == 0 {
 			return a.finish(state, StageSucceeded, "")
 		}
-		return a.finish(state, StageFailed,
-			fmt.Sprintf("The installer exited with status %d.", unit.status))
+		return a.finish(state, StageFailed, i18n.T(ctx, "The installer exited with status %d.", unit.status))
 
 	default:
 		// The unit is not there at all. Either it never started, or the host
@@ -356,8 +361,8 @@ func (a *Applier) resolve(ctx context.Context, state State) State {
 			if a.current != state.FromVersion {
 				return a.finish(state, StageSucceeded, "")
 			}
-			return a.finish(state, StageFailed,
-				"The update service is no longer there and the panel is still on the same version.")
+			return a.finish(state, StageFailed, i18n.T(ctx, "The update service is no longer there and "+
+				"the panel is still on the same version."))
 		}
 		return state
 	}

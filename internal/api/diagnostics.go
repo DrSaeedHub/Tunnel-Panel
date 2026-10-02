@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/drs/gre-panel/internal/diag"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
 )
@@ -19,7 +20,7 @@ func (s *Server) requireDiag(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.diag == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Diagnostics are not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Diagnostics are not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -75,7 +76,7 @@ func (s *Server) handleDiagPing(w http.ResponseWriter, r *http.Request) {
 			sendHeartbeat()
 		})
 	if err != nil && !errors.Is(err, context.Canceled) {
-		_ = stream.Send("error", map[string]any{"message": err.Error()})
+		_ = stream.Send("error", map[string]any{"message": i18n.Tr(r.Context(), err.Error())})
 		return
 	}
 	_ = stream.Send("summary", run)
@@ -103,7 +104,7 @@ func (s *Server) handleDiagTcpCheck(w http.ResponseWriter, r *http.Request) {
 	result, err := s.diag.TCPCheck(r.Context(), rec.TunnelID, params)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			capitalise(err.Error())+".", "", nil)
+			sentence(r.Context(), err.Error()), "", nil)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -252,7 +253,7 @@ func (s *Server) handleDiagRun(w http.ResponseWriter, r *http.Request) {
 	run, err := s.diag.RunByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, diag.ErrNotFound) {
-			writeError(w, http.StatusNotFound, CodeNotFound, err.Error(), "id", nil)
+			writeError(w, http.StatusNotFound, CodeNotFound, i18n.Tr(r.Context(), err.Error()), "id", nil)
 			return
 		}
 		s.writeDomainError(w, r, err)
@@ -271,7 +272,7 @@ func (s *Server) handleDeleteDiagRun(w http.ResponseWriter, r *http.Request) {
 	cancelled, err := s.diag.DeleteRun(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, diag.ErrNotFound) {
-			writeError(w, http.StatusNotFound, CodeNotFound, err.Error(), "id", nil)
+			writeError(w, http.StatusNotFound, CodeNotFound, i18n.Tr(r.Context(), err.Error()), "id", nil)
 			return
 		}
 		s.writeDomainError(w, r, err)
@@ -289,7 +290,7 @@ func runIDFromPath(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"The run identifier in the path is not a number.", "id", nil)
+			i18n.T(r.Context(), "The run identifier in the path is not a number."), "id", nil)
 		return 0, false
 	}
 	return id, true

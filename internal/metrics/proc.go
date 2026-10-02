@@ -9,16 +9,22 @@ package metrics
 
 import (
 	"bufio"
-	"fmt"
+	"context"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Reader reads the kernel's files. Root is "/" in production and a fixture
 // directory in tests, which is what makes the parsers testable against
 // recorded output rather than against whatever machine happens to run them.
+//
+// What it cannot read is said in the panel's language: the sampler that calls
+// it has no request behind it, and every viewer shares the snapshot the
+// failure lands in.
 type Reader struct {
 	Root string
 }
@@ -81,7 +87,7 @@ type CPUUsage struct {
 func (r *Reader) CPU() ([]CPUTimes, error) {
 	file, err := os.Open(r.path("proc", "stat"))
 	if err != nil {
-		return nil, fmt.Errorf("reading CPU times: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading CPU times: %w", err)
 	}
 	defer file.Close()
 
@@ -114,10 +120,10 @@ func (r *Reader) CPU() ([]CPUTimes, error) {
 		out = append(out, times)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading CPU times: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading CPU times: %w", err)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no CPU lines in %s", r.path("proc", "stat"))
+		return nil, i18n.Errorf(context.Background(), "no CPU lines in %s", r.path("proc", "stat"))
 	}
 	return out, nil
 }
@@ -179,11 +185,11 @@ type LoadAverage struct {
 func (r *Reader) Load() (LoadAverage, error) {
 	raw, err := os.ReadFile(r.path("proc", "loadavg"))
 	if err != nil {
-		return LoadAverage{}, fmt.Errorf("reading the load average: %w", err)
+		return LoadAverage{}, i18n.Errorf(context.Background(), "reading the load average: %w", err)
 	}
 	fields := strings.Fields(string(raw))
 	if len(fields) < 3 {
-		return LoadAverage{}, fmt.Errorf("the load average file is not in the expected form")
+		return LoadAverage{}, i18n.Errorf(context.Background(), "the load average file is not in the expected form")
 	}
 
 	out := LoadAverage{}
@@ -272,7 +278,7 @@ func (r *Reader) MemoryInfo() (Memory, Swap, error) {
 func (r *Reader) parseMeminfo() (map[string]uint64, error) {
 	file, err := os.Open(r.path("proc", "meminfo"))
 	if err != nil {
-		return nil, fmt.Errorf("reading memory information: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading memory information: %w", err)
 	}
 	defer file.Close()
 
@@ -298,10 +304,10 @@ func (r *Reader) parseMeminfo() (map[string]uint64, error) {
 		out[key] = value
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading memory information: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading memory information: %w", err)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("no usable lines in %s", r.path("proc", "meminfo"))
+		return nil, i18n.Errorf(context.Background(), "no usable lines in %s", r.path("proc", "meminfo"))
 	}
 	return out, nil
 }

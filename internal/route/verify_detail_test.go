@@ -1,6 +1,7 @@
 package route
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -19,11 +20,12 @@ import (
 // people. So the guarantee has to be that the sentence is always there.
 
 func TestAFailingCheckAlwaysCarriesASentence(t *testing.T) {
+	ctx := context.Background()
 	var report VerifyReport
-	report.add(VerifyCheck{Name: CheckNoStaleChains, Fatal: true})
-	report.add(VerifyCheck{Name: CheckForwarding, Fatal: true, Expected: "1", Actual: "0"})
-	report.add(VerifyCheck{Name: CheckRulesPresent, Ok: true})
-	report.add(VerifyCheck{Name: CheckPersistence, Skipped: true})
+	report.add(ctx, VerifyCheck{Name: CheckNoStaleChains, Fatal: true})
+	report.add(ctx, VerifyCheck{Name: CheckForwarding, Fatal: true, Expected: "1", Actual: "0"})
+	report.add(ctx, VerifyCheck{Name: CheckRulesPresent, Ok: true})
+	report.add(ctx, VerifyCheck{Name: CheckPersistence, Skipped: true})
 
 	for _, check := range report.Checks {
 		if check.Ok || check.Skipped {
@@ -61,7 +63,7 @@ func TestTheStaleChainCheckNamesTheChainsItFound(t *testing.T) {
 		Chains: []string{"prerouting", "output", "postrouting", "forward", "accounting",
 			"mss", "marking"},
 	}
-	check := service.staleChainCheck(rules.Ruleset{}, live)
+	check := service.staleChainCheck(context.Background(), rules.Ruleset{}, live)
 
 	if check.Ok {
 		t.Fatal("a kernel holding seven chains for a ruleset that declares none is not in sync")
@@ -79,7 +81,7 @@ func TestTheStaleChainCheckNamesTheChainsItFound(t *testing.T) {
 	}
 
 	// And it passes once the kernel holds only what the ruleset declares.
-	clean := service.staleChainCheck(rules.Ruleset{}, rules.Live{
+	clean := service.staleChainCheck(context.Background(), rules.Ruleset{}, rules.Live{
 		Backend: rules.BackendFake, Chains: []string{},
 	})
 	if !clean.Skipped && !clean.Ok {

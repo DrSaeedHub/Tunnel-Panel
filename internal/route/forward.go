@@ -2,13 +2,13 @@ package route
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/persist"
 	"github.com/drs/gre-panel/internal/safety"
 	"github.com/drs/gre-panel/internal/validate"
@@ -152,7 +152,7 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 	if enabledRules > 0 && !status.IPv4Forwarding {
 		status.Warnings = append(status.Warnings, validate.Warning{
 			Code: WarnForwardingDisabled, Field: SysctlIPv4Forward,
-			Message: fmt.Sprintf("%d forwarding rule(s) are enabled but this kernel is not forwarding "+
+			Message: i18n.T(ctx, "%d forwarding rule(s) are enabled but this kernel is not forwarding "+
 				"packets, so none of them can carry traffic. The rules are installed and doing nothing.",
 				enabledRules),
 			Details: map[string]any{"family": "ipv4", "stage": "live", "enabled_rules": enabledRules},
@@ -161,7 +161,7 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 	if needIPv6 && !status.IPv6Forwarding {
 		status.Warnings = append(status.Warnings, validate.Warning{
 			Code: WarnForwardingDisabled, Field: SysctlIPv6Forward,
-			Message: "An enabled rule forwards IPv6, but this kernel is not forwarding IPv6 packets.",
+			Message: i18n.T(ctx, "An enabled rule forwards IPv6, but this kernel is not forwarding IPv6 packets."),
 			Details: map[string]any{"family": "ipv6", "stage": "live", "enabled_rules": enabledRules},
 		})
 	}
@@ -172,7 +172,7 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 	if warnPercent > 0 && status.ConntrackMax > 0 && status.ConntrackUsagePercent >= warnPercent {
 		status.Warnings = append(status.Warnings, validate.Warning{
 			Code: WarnConntrackUsage,
-			Message: fmt.Sprintf("The connection tracking table is %.0f%% full (%d of %d). When it "+
+			Message: i18n.T(ctx, "The connection tracking table is %.0f%% full (%d of %d). When it "+
 				"fills, new connections are dropped and nothing in the logs explains it.",
 				status.ConntrackUsagePercent, status.ConntrackCount, status.ConntrackMax),
 			Details: usage,
@@ -183,11 +183,11 @@ func (f *Forwarding) Status(ctx context.Context, needIPv6 bool, enabledRules int
 	// to be too small was the one value that never warned.
 	if enabledRules > 0 && status.ConntrackMax > 0 && status.ConntrackMax <= LowConntrackMax {
 		managed := f.ConntrackManaged != nil && f.ConntrackManaged()
-		message := fmt.Sprintf("The connection tracking table holds %d connections. A busy relay can "+
+		message := i18n.T(ctx, "The connection tracking table holds %d connections. A busy relay can "+
 			"exhaust it, and when it is full every new connection on this server is refused. Raise "+
 			"net.netfilter.nf_conntrack_max if this relay is expected to be busy.", status.ConntrackMax)
 		if managed {
-			message = fmt.Sprintf("The connection tracking table holds %d connections, which a busy "+
+			message = i18n.T(ctx, "The connection tracking table holds %d connections, which a busy "+
 				"relay can exhaust. The panel keeps it sized for the traffic these rules carry and will "+
 				"raise it within a minute.", status.ConntrackMax)
 		}
@@ -269,17 +269,17 @@ func (f *Forwarding) Enable(ctx context.Context, needIPv6, countBytes bool) erro
 	}
 	if f.Store != nil && f.Renderer != nil {
 		if _, err := f.Store.Write(ctx, path, f.Renderer.SysctlFile(values), false); err != nil {
-			return fmt.Errorf("writing %s: %w", path, err)
+			return i18n.Errorf(ctx, "writing %s: %w", path, err)
 		}
 	}
 
 	// The file makes it survive a reboot; this makes it true now. Writing the
 	// /proc file is exactly what sysctl -w does, without spawning a process.
-	if err := f.writeFlag(procIPv4Forward, "1"); err != nil {
+	if err := f.writeFlag(ctx, procIPv4Forward, "1"); err != nil {
 		return err
 	}
 	if needIPv6 {
-		if err := f.writeFlag(procIPv6Forward, "1"); err != nil {
+		if err := f.writeFlag(ctx, procIPv6Forward, "1"); err != nil {
 			return err
 		}
 	}
@@ -287,7 +287,7 @@ func (f *Forwarding) Enable(ctx context.Context, needIPv6, countBytes bool) erro
 	// turns it on watches the figures fill in as the table turns over. A
 	// kernel too old to have the parameter is not a failure to apply rules.
 	if countBytes {
-		if err := f.writeFlag(procConntrackAcct, "1"); err != nil {
+		if err := f.writeFlag(ctx, procConntrackAcct, "1"); err != nil {
 			f.logSkipped(err)
 		}
 	}
@@ -316,10 +316,10 @@ func (f *Forwarding) Revert(ctx context.Context) error {
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
+		return i18n.Errorf(ctx, "reading %s: %w", path, err)
 	}
 	if !strings.Contains(string(content), persist.OwnershipMarker) {
-		return fmt.Errorf("%s was not written by the panel, so the panel will not remove it", path)
+		return i18n.Errorf(ctx, "%s was not written by the panel, so the panel will not remove it", path)
 	}
 
 	for key, previous := range persist.ParsePreviousValues(string(content)) {
@@ -327,7 +327,7 @@ func (f *Forwarding) Revert(ctx context.Context) error {
 		if procPath == "" {
 			continue
 		}
-		if err := f.writeFlag(procPath, previous); err != nil {
+		if err := f.writeFlag(ctx, procPath, previous); err != nil {
 			return err
 		}
 	}
@@ -383,10 +383,10 @@ func (f *Forwarding) readNumber(procPath string) int {
 	return n
 }
 
-func (f *Forwarding) writeFlag(procPath, value string) error {
+func (f *Forwarding) writeFlag(ctx context.Context, procPath, value string) error {
 	full := f.path(procPath)
 	if err := os.WriteFile(full, []byte(value+"\n"), 0o644); err != nil {
-		return fmt.Errorf("setting %s: %w", full, err)
+		return i18n.Errorf(ctx, "setting %s: %w", full, err)
 	}
 	return nil
 }

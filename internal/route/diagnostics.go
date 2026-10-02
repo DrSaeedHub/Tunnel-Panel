@@ -3,7 +3,6 @@ package route
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"sort"
@@ -13,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
 )
@@ -135,7 +135,7 @@ func (NetProber) Probe(ctx context.Context, params ReachabilityParams) Reachabil
 	if err != nil {
 		result.Conclusive = true
 		result.Error = err.Error()
-		result.Detail = describeDialError(target, err)
+		result.Detail = describeDialError(ctx, target, err)
 		return result
 	}
 	_ = conn.Close()
@@ -143,7 +143,7 @@ func (NetProber) Probe(ctx context.Context, params ReachabilityParams) Reachabil
 	result.Reachable = true
 	result.Conclusive = true
 	result.LatencyMs = float64(elapsed.Microseconds()) / 1000
-	result.Detail = fmt.Sprintf("connected to %s in %.1f ms", target, result.LatencyMs)
+	result.Detail = i18n.T(ctx, "connected to %s in %.1f ms", target, result.LatencyMs)
 	return result
 }
 
@@ -169,7 +169,7 @@ func probeUdp(ctx context.Context, conn net.Conn, dialErr error, elapsed, timeou
 	if dialErr != nil {
 		result.Conclusive = true
 		result.Error = dialErr.Error()
-		result.Detail = describeDialError(target, dialErr)
+		result.Detail = describeDialError(ctx, target, dialErr)
 		return result
 	}
 	defer conn.Close()
@@ -183,7 +183,7 @@ func probeUdp(ctx context.Context, conn net.Conn, dialErr error, elapsed, timeou
 	if _, err := conn.Write([]byte{}); err != nil {
 		result.Conclusive = true
 		result.Error = err.Error()
-		result.Detail = fmt.Sprintf("the probe to %s/udp could not be sent: %s", target, err.Error())
+		result.Detail = i18n.T(ctx, "the probe to %s/udp could not be sent: %s", target, err.Error())
 		return result
 	}
 
@@ -193,16 +193,16 @@ func probeUdp(ctx context.Context, conn net.Conn, dialErr error, elapsed, timeou
 	case err == nil:
 		result.Reachable, result.Conclusive = true, true
 		result.LatencyMs = float64(elapsed.Microseconds()) / 1000
-		result.Detail = fmt.Sprintf("%s/udp answered the probe", target)
+		result.Detail = i18n.T(ctx, "%s/udp answered the probe", target)
 	case errors.Is(err, syscall.ECONNREFUSED):
 		result.Conclusive = true
 		result.Error = err.Error()
-		result.Detail = fmt.Sprintf("%s is reachable but nothing is listening on %d/udp: the host "+
+		result.Detail = i18n.T(ctx, "%s is reachable but nothing is listening on %d/udp: the host "+
 			"refused the datagram", result.Address, result.Port)
 	default:
 		// Neither reachable nor unreachable, and saying so is the only honest
 		// answer available.
-		result.Detail = fmt.Sprintf("%s/udp did not answer within %s. UDP has no handshake, so a "+
+		result.Detail = i18n.T(ctx, "%s/udp did not answer within %s. UDP has no handshake, so a "+
 			"service that does not reply to an empty datagram is indistinguishable from a filtered "+
 			"port: this proves nothing either way.", target, timeout)
 	}
@@ -211,20 +211,20 @@ func probeUdp(ctx context.Context, conn net.Conn, dialErr error, elapsed, timeou
 
 // describeDialError turns a transport failure into the sentence that says what
 // to do about it.
-func describeDialError(target string, err error) string {
+func describeDialError(ctx context.Context, target string, err error) string {
 	switch {
 	case errors.Is(err, syscall.ECONNREFUSED):
-		return fmt.Sprintf("%s refused the connection: the host is reachable and nothing is "+
+		return i18n.T(ctx, "%s refused the connection: the host is reachable and nothing is "+
 			"listening on that port", target)
 	case errors.Is(err, syscall.EHOSTUNREACH):
-		return fmt.Sprintf("%s has no route from this server", target)
+		return i18n.T(ctx, "%s has no route from this server", target)
 	case errors.Is(err, syscall.ENETUNREACH):
-		return fmt.Sprintf("the network holding %s is not reachable from this server", target)
+		return i18n.T(ctx, "the network holding %s is not reachable from this server", target)
 	case errors.Is(err, context.DeadlineExceeded), isTimeout(err):
-		return fmt.Sprintf("%s did not answer before the probe timed out, which is what a firewall "+
+		return i18n.T(ctx, "%s did not answer before the probe timed out, which is what a firewall "+
 			"dropping the packets looks like", target)
 	}
-	return fmt.Sprintf("%s could not be reached: %s", target, err.Error())
+	return i18n.T(ctx, "%s could not be reached: %s", target, err.Error())
 }
 
 func isTimeout(err error) bool {
@@ -296,8 +296,7 @@ func (d *Diagnostics) Test(ctx context.Context, routeRuleID int64, params Reacha
 		}
 		spec := rec.Spec()
 		if len(spec.Destinations) == 0 {
-			return ReachabilityResult{}, fmt.Errorf("%w: rule %d has no destination to test",
-				rules.ErrNoDestination, routeRuleID)
+			return ReachabilityResult{}, noDestinationToTest(ctx, routeRuleID)
 		}
 		params.Address = spec.Destinations[0].Address
 		params.Port = spec.Destinations[0].Ports.Port
@@ -306,9 +305,19 @@ func (d *Diagnostics) Test(ctx context.Context, routeRuleID int64, params Reacha
 		}
 	}
 	if strings.TrimSpace(params.Address) == "" || params.Port <= 0 {
-		return ReachabilityResult{}, errors.New("route: a reachability test needs an address and a port")
+		return ReachabilityResult{}, i18n.Errorf(ctx, "route: a reachability test needs an address and a port")
 	}
 	return d.prober.Probe(ctx, params), nil
+}
+
+// noDestinationToTest is rules.ErrNoDestination for a rule with nothing to
+// probe, said as one sentence.
+func noDestinationToTest(ctx context.Context, routeRuleID int64) error {
+	return &saidError{
+		text: i18n.T(ctx, "rules: the rule has no enabled destination: rule %d has no destination to test",
+			routeRuleID),
+		err: rules.ErrNoDestination,
+	}
 }
 
 // TestAll probes every destination a rule has, in one go.
@@ -328,8 +337,7 @@ func (d *Diagnostics) TestAll(ctx context.Context, routeRuleID int64,
 	spec := rec.Spec()
 	probes := d.probeDestinations(ctx, rec, spec, timeoutSeconds)
 	if len(probes) == 0 {
-		return nil, fmt.Errorf("%w: rule %d has no destination to test",
-			rules.ErrNoDestination, routeRuleID)
+		return nil, noDestinationToTest(ctx, routeRuleID)
 	}
 	return probes, nil
 }
@@ -457,7 +465,8 @@ func (d *Diagnostics) Connections(ctx context.Context, routeRuleID int64, limit 
 		}
 	}
 	if out.Total == 0 {
-		out.Detail = "connection tracking holds nothing for this rule, so nothing is using it right now"
+		out.Detail = i18n.T(ctx, "connection tracking holds nothing for this rule, so nothing is using "+
+			"it right now")
 	}
 	return out, nil
 }
@@ -550,14 +559,14 @@ func (d *Diagnostics) Counters(ctx context.Context, routeRuleID int64) (CounterR
 	}
 	out := CounterReport{
 		RouteRuleID: routeRuleID, CheckedAt: model.NowUTC(),
-		Source: "the accounting rules in the filter hooks — forward, and for a rule " +
-			"that also relays this server's own traffic, output and input as well",
-		Note: SinceBootMeaning,
+		Source: i18n.T(ctx, "the accounting rules in the filter hooks — forward, and for a rule "+
+			"that also relays this server's own traffic, output and input as well"),
+		Note: i18n.Tr(ctx, SinceBootMeaning),
 	}
 
 	raw, err := d.backend.Counters(ctx)
 	if err != nil {
-		return out, fmt.Errorf("reading the rule's counters: %w", err)
+		return out, i18n.Errorf(ctx, "reading the rule's counters: %w", err)
 	}
 	counter := raw[routeRuleID]
 	out.RxBytesSinceBoot, out.TxBytesSinceBoot = counter.RxBytes, counter.TxBytes
@@ -653,10 +662,10 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// send an operator looking for a fault that is a setting.
 	if !rec.IsEnabled {
 		result.Verdict = VerdictDisabled
-		result.Summary = fmt.Sprintf("%s is disabled, so it installs no rules and carries no traffic.",
+		result.Summary = i18n.T(ctx, "%s is disabled, so it installs no rules and carries no traffic.",
 			rec.RouteRuleTitle)
-		result.add("enabled", "the rule is stored but switched off", nil)
-		result.SuggestedFix = []string{"Enable the rule to install it."}
+		result.add("enabled", i18n.T(ctx, "the rule is stored but switched off"), nil)
+		result.SuggestedFix = []string{i18n.T(ctx, "Enable the rule to install it.")}
 		return result, nil
 	}
 
@@ -665,10 +674,10 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	if readErr != nil {
 		result.Verdict = VerdictRuleMissing
 		result.Confidence = ConfidenceLow
-		result.Summary = "The panel's ruleset could not be read back from the kernel."
-		result.add("ruleset", "reading the panel's namespace failed: "+readErr.Error(), nil)
+		result.Summary = i18n.T(ctx, "The panel's ruleset could not be read back from the kernel.")
+		result.add("ruleset", i18n.T(ctx, "reading the panel's namespace failed: %s", readErr.Error()), nil)
 		result.SuggestedFix = []string{
-			"Check that the netfilter tools are installed and that the panel is running as root.",
+			i18n.T(ctx, "Check that the netfilter tools are installed and that the panel is running as root."),
 		}
 		return result, nil
 	}
@@ -679,39 +688,39 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 			present++
 		}
 	}
-	result.add("ruleset", fmt.Sprintf("the panel's %s namespace holds %d rule(s) for this "+
+	result.add("ruleset", i18n.T(ctx, "the panel's %s namespace holds %d rule(s) for this "+
 		"forwarding rule, out of %d in total", d.backend.Name(), present, len(live.Rules)),
 		map[string]any{"installed": installed, "rules": present, "total": len(live.Rules)})
 
 	if !installed {
 		result.Verdict = VerdictRuleMissing
-		result.Summary = fmt.Sprintf("%s is enabled but none of its rules are in the kernel.",
+		result.Summary = i18n.T(ctx, "%s is enabled but none of its rules are in the kernel.",
 			rec.RouteRuleTitle)
 		result.SuggestedFix = []string{
-			"Reapply this rule, which installs the stored ruleset over whatever is there now.",
-			"Check the reconcile report: something outside the panel may have flushed its namespace.",
+			i18n.T(ctx, "Reapply this rule, which installs the stored ruleset over whatever is there now."),
+			i18n.T(ctx, "Check the reconcile report: something outside the panel may have flushed its namespace."),
 		}
 		return result, nil
 	}
 	if len(live.MissingJumps) > 0 {
-		result.add("jump_rules", "the panel's chains are not reached from: "+
-			strings.Join(live.MissingJumps, ", "), map[string]any{"missing": live.MissingJumps})
+		result.add("jump_rules", i18n.T(ctx, "the panel's chains are not reached from: %s",
+			strings.Join(live.MissingJumps, ", ")), map[string]any{"missing": live.MissingJumps})
 	}
 
 	// 2. Forwarding has to be on, or the rules carry nothing.
 	if d.forwarding != nil {
 		status := d.forwarding.Status(ctx, spec.IsIPv6(), 1, 0)
-		result.add("ip_forwarding", fmt.Sprintf("net.ipv4.ip_forward is %s and "+
-			"net.ipv6.conf.all.forwarding is %s", onOff(status.IPv4Forwarding), onOff(status.IPv6Forwarding)),
+		result.add("ip_forwarding", forwardingEvidence(ctx, status.IPv4Forwarding, status.IPv6Forwarding),
 			map[string]any{"ipv4": status.IPv4Forwarding, "ipv6": status.IPv6Forwarding})
 
 		if !status.IPv4Forwarding || (spec.IsIPv6() && !status.IPv6Forwarding) {
 			result.Verdict = VerdictForwardingDisabled
-			result.Summary = "The rules are installed correctly, but this kernel is not forwarding " +
-				"packets, so none of them can carry traffic."
+			result.Summary = i18n.T(ctx, "The rules are installed correctly, but this kernel is not "+
+				"forwarding packets, so none of them can carry traffic.")
 			result.SuggestedFix = []string{
-				"Turn forwarding on from the forwarding page, which writes the panel's own sysctl file.",
-				"Check whether another package turned it off: the panel never does so by itself.",
+				i18n.T(ctx, "Turn forwarding on from the forwarding page, which writes the panel's own "+
+					"sysctl file."),
+				i18n.T(ctx, "Check whether another package turned it off: the panel never does so by itself."),
 			}
 			return result, nil
 		}
@@ -739,12 +748,13 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// §8.7 — something else is claiming the same listener.
 	case len(shadows) > 0 && !forwarded:
 		result.Verdict = VerdictRuleShadowed
-		result.Summary = fmt.Sprintf("%s is installed but %s claims the same traffic, and a rule in a "+
+		result.Summary = i18n.T(ctx, "%s is installed but %s claims the same traffic, and a rule in a "+
 			"built-in chain is reached before the panel's own table.",
-			rec.RouteRuleTitle, shadows[0].Describe())
+			rec.RouteRuleTitle, shadows[0].DescribeIn(ctx))
 		result.SuggestedFix = []string{
-			"Remove or narrow the rule the evidence quotes. The panel never deletes a rule it does not own.",
-			"Bind this rule to a different address or port so the two no longer overlap.",
+			i18n.T(ctx, "Remove or narrow the rule the evidence quotes. The panel never deletes a rule it "+
+				"does not own."),
+			i18n.T(ctx, "Bind this rule to a different address or port so the two no longer overlap."),
 		}
 		return result, nil
 
@@ -752,38 +762,38 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// tunnel a rule depends on is named explicitly rather than left implicit.
 	case tunnel != nil && !tunnel.Healthy():
 		result.Verdict = VerdictTunnelDown
-		result.Summary = fmt.Sprintf("%s sends its traffic through %s, and that tunnel is not up. "+
+		result.Summary = i18n.T(ctx, "%s sends its traffic through %s, and that tunnel is not up. "+
 			"The forwarding rules are installed correctly; the path they use is what is broken.",
 			rec.RouteRuleTitle, tunnel.InterfaceName)
 		result.SuggestedFix = []string{
-			fmt.Sprintf("Bring %s up, or run the tunnel's own diagnostics.", tunnel.InterfaceName),
-			"The rule needs no change: it works again as soon as the tunnel does.",
+			i18n.T(ctx, "Bring %s up, or run the tunnel's own diagnostics.", tunnel.InterfaceName),
+			i18n.T(ctx, "The rule needs no change: it works again as soon as the tunnel does."),
 		}
 		return result, nil
 
 	case reach.none():
 		result.Verdict = VerdictDestinationUnreachable
 		if reach.probed == 1 {
-			result.Summary = fmt.Sprintf("%s cannot reach its destination: %s",
+			result.Summary = i18n.T(ctx, "%s cannot reach its destination: %s",
 				rec.RouteRuleTitle, reach.detail)
 		} else {
-			result.Summary = fmt.Sprintf("%s cannot reach any of its %d destinations. %s did not "+
+			result.Summary = i18n.T(ctx, "%s cannot reach any of its %d destinations. %s did not "+
 				"answer: %s", rec.RouteRuleTitle, reach.probed,
 				strings.Join(reach.failed, ", "), reach.detail)
 		}
 		result.SuggestedFix = []string{
-			"Check that the service on the destination is running and listening on that port.",
-			"Check the route to the destination from this server.",
+			i18n.T(ctx, "Check that the service on the destination is running and listening on that port."),
+			i18n.T(ctx, "Check the route to the destination from this server."),
 		}
 		if reach.probed > 1 {
 			result.SuggestedFix = append(result.SuggestedFix,
-				"Every destination failing at once is more often one thing they share -- the path out "+
-					"of this server, or a firewall in front of all of them -- than the same fault on "+
-					"each of them.")
+				i18n.T(ctx, "Every destination failing at once is more often one thing they share -- the "+
+					"path out of this server, or a firewall in front of all of them -- than the same "+
+					"fault on each of them."))
 		}
 		if tunnel != nil {
 			result.SuggestedFix = append(result.SuggestedFix,
-				fmt.Sprintf("The destination is reached through %s; run that tunnel's diagnostics too.",
+				i18n.T(ctx, "The destination is reached through %s; run that tunnel's diagnostics too.",
 					tunnel.InterfaceName))
 		}
 		return result, nil
@@ -794,15 +804,15 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// the part that fails, and which destination it is, is the whole answer.
 	case reach.some():
 		result.Verdict = VerdictDestinationPartial
-		result.Summary = fmt.Sprintf("%s is working, and %d of its %d destinations are not "+
+		result.Summary = i18n.T(ctx, "%s is working, and %d of its %d destinations are not "+
 			"answering: %s. The connections that go there fail; the rest are relayed normally.",
 			rec.RouteRuleTitle, reach.refused, reach.probed, strings.Join(reach.failed, ", "))
 		result.SuggestedFix = []string{
-			fmt.Sprintf("Check the service on %s: the others on this rule are answering, so what they "+
-				"share is working.", strings.Join(reach.failed, " and ")),
-			"Disable that destination to stop sending it connections while it is being fixed.",
-			"Turn on monitoring with failover, and the panel takes a destination out of the rotation " +
-				"by itself when it stops answering.",
+			i18n.T(ctx, "Check the service on %s: the others on this rule are answering, so what they "+
+				"share is working.", joinAnd(ctx, reach.failed)),
+			i18n.T(ctx, "Disable that destination to stop sending it connections while it is being fixed."),
+			i18n.T(ctx, "Turn on monitoring with failover, and the panel takes a destination out of the "+
+				"rotation by itself when it stops answering."),
 		}
 		return result, nil
 
@@ -810,13 +820,18 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	case !translated && !forwarded:
 		result.Verdict = VerdictNoInboundTraffic
 		result.Confidence = ConfidenceLow
-		result.Summary = fmt.Sprintf("%s is installed and working, and nothing has reached this server "+
-			"on %s yet.", rec.RouteRuleTitle, bindDescription(spec))
+		if spec.BindsAnyAddress() {
+			result.Summary = i18n.T(ctx, "%s is installed and working, and nothing has reached this "+
+				"server on every local address on port %s yet.", rec.RouteRuleTitle, spec.BindPorts.String())
+		} else {
+			result.Summary = i18n.T(ctx, "%s is installed and working, and nothing has reached this "+
+				"server on %s yet.", rec.RouteRuleTitle, bindEndpoint(spec))
+		}
 		result.SuggestedFix = []string{
-			"Check that clients are connecting to the right address and port.",
-			fmt.Sprintf("Check that a firewall upstream of this server allows %s to %s.",
-				spec.Protocol, bindDescription(spec)),
-			"Check the bind address: a rule bound to one address does not receive traffic sent to another.",
+			i18n.T(ctx, "Check that clients are connecting to the right address and port."),
+			upstreamFirewallFix(ctx, spec),
+			i18n.T(ctx, "Check the bind address: a rule bound to one address does not receive traffic "+
+				"sent to another."),
 		}
 		return result, nil
 
@@ -824,17 +839,17 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// other side.
 	case translated && !forwarded:
 		result.Verdict = VerdictForwardBlocked
-		result.Summary = fmt.Sprintf("Connections are reaching %s and being translated, but nothing is "+
+		result.Summary = i18n.T(ctx, "Connections are reaching %s and being translated, but nothing is "+
 			"being forwarded: another filter is dropping the packets.", rec.RouteRuleTitle)
 		result.SuggestedFix = []string{
-			"Check the FORWARD policy and any other filter rules on this host: the panel's own accept " +
-				"is in its own chain and something ahead of it may be dropping first.",
-			"Docker sets the FORWARD policy to DROP; a rule of its own may be taking these packets.",
+			i18n.T(ctx, "Check the FORWARD policy and any other filter rules on this host: the panel's "+
+				"own accept is in its own chain and something ahead of it may be dropping first."),
+			i18n.T(ctx, "Docker sets the FORWARD policy to DROP; a rule of its own may be taking these packets."),
 		}
 		if len(live.MissingJumps) > 0 {
 			result.SuggestedFix = append(result.SuggestedFix,
-				"The panel's chains are not reached from "+strings.Join(live.MissingJumps, ", ")+
-					": reapply the rule to put the jump rules back.")
+				i18n.T(ctx, "The panel's chains are not reached from %s: reapply the rule to put the jump "+
+					"rules back.", strings.Join(live.MissingJumps, ", ")))
 		}
 		return result, nil
 	}
@@ -842,45 +857,46 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 	// §8.6 — connections establish and then stall, which is what a missing MSS
 	// clamp does across a tunnel.
 	if stalled := stalledFlows(flows); len(stalled) > 0 {
-		result.add("stalled_flows", fmt.Sprintf("%d connection(s) are established with packets going out "+
-			"and almost nothing coming back, which is the shape of a path MTU problem rather than a "+
+		result.add("stalled_flows", i18n.T(ctx, "%d connection(s) are established with packets going "+
+			"out and almost nothing coming back, which is the shape of a path MTU problem rather than a "+
 			"reachability one", len(stalled)),
 			map[string]any{"stalled": len(stalled), "clamping": spec.ClampMssToPmtu})
 
 		if !spec.ClampMssToPmtu {
 			result.Verdict = VerdictMtuProblem
-			result.Summary = fmt.Sprintf("Connections through %s establish and then stall on the first "+
+			result.Summary = i18n.T(ctx, "Connections through %s establish and then stall on the first "+
 				"large transfer, and MSS clamping is off.", rec.RouteRuleTitle)
 			result.SuggestedFix = []string{
-				"Turn on MSS clamping for this rule. It rewrites the segment size of forwarded " +
-					"connections to fit the path, which is exactly this symptom's cause.",
+				i18n.T(ctx, "Turn on MSS clamping for this rule. It rewrites the segment size of "+
+					"forwarded connections to fit the path, which is exactly this symptom's cause."),
 			}
 			if tunnel != nil {
 				result.SuggestedFix = append(result.SuggestedFix,
-					fmt.Sprintf("Run the path MTU probe on %s and apply the MTU it recommends.",
+					i18n.T(ctx, "Run the path MTU probe on %s and apply the MTU it recommends.",
 						tunnel.InterfaceName))
 			}
 			return result, nil
 		}
 		result.Confidence = ConfidenceLow
 		result.Verdict = VerdictMtuProblem
-		result.Summary = fmt.Sprintf("Connections through %s establish and then stall, even though MSS "+
+		result.Summary = i18n.T(ctx, "Connections through %s establish and then stall, even though MSS "+
 			"clamping is on.", rec.RouteRuleTitle)
 		result.SuggestedFix = []string{
-			"Run the path MTU probe on the tunnel and set the MTU it recommends on both ends.",
-			"Check that the destination itself is not the one stalling.",
+			i18n.T(ctx, "Run the path MTU probe on the tunnel and set the MTU it recommends on both ends."),
+			i18n.T(ctx, "Check that the destination itself is not the one stalling."),
 		}
 		return result, nil
 	}
 
 	// §8.8 — nothing above matched.
 	result.Verdict = VerdictHealthy
-	result.Summary = fmt.Sprintf("%s is installed, forwarding traffic, and its destination answers.",
+	result.Summary = i18n.T(ctx, "%s is installed, forwarding traffic, and its destination answers.",
 		rec.RouteRuleTitle)
 	if len(shadows) > 0 {
 		result.Confidence = ConfidenceLow
-		result.Summary += " Another rule on this host claims overlapping traffic; it is not stopping " +
-			"this one today, but the two are competing."
+		result.Summary = i18n.T(ctx, "%s is installed, forwarding traffic, and its destination answers. "+
+			"Another rule on this host claims overlapping traffic; it is not stopping this one today, "+
+			"but the two are competing.", rec.RouteRuleTitle)
 	}
 	return result, nil
 }
@@ -889,26 +905,27 @@ func (d *Diagnostics) Analyze(ctx context.Context, routeRuleID int64, params Ana
 func (d *Diagnostics) shadowEvidence(ctx context.Context, spec rules.RouteSpec, result *AnalyzeResult) []rules.ForeignRule {
 	view, err := d.backend.Foreign(ctx)
 	if err != nil || !view.Readable {
-		detail := "the host's other netfilter rules could not be read, so a rule shadowing this one " +
-			"would not have been seen"
+		detail := i18n.T(ctx, "the host's other netfilter rules could not be read, so a rule "+
+			"shadowing this one would not have been seen")
 		if err != nil {
-			detail += ": " + err.Error()
+			detail = i18n.T(ctx, "the host's other netfilter rules could not be read, so a rule "+
+				"shadowing this one would not have been seen: %s", err.Error())
 		}
 		result.add("foreign_rules", detail, nil)
 		return nil
 	}
 	shadows := view.ShadowsOf(spec)
 	if len(shadows) == 0 {
-		result.add("foreign_rules", fmt.Sprintf("%d redirecting rule(s) belong to other software on "+
+		result.add("foreign_rules", i18n.T(ctx, "%d redirecting rule(s) belong to other software on "+
 			"this host, none of them claiming this rule's traffic", len(view.Rules)),
 			map[string]any{"managers": view.Managers, "total": len(view.Rules)})
 		return nil
 	}
 	quoted := make([]string, 0, len(shadows))
 	for _, rule := range shadows {
-		quoted = append(quoted, rule.Describe())
+		quoted = append(quoted, rule.DescribeIn(ctx))
 	}
-	result.add("foreign_rules", fmt.Sprintf("%d rule(s) the panel does not own claim this traffic: %s",
+	result.add("foreign_rules", i18n.T(ctx, "%d rule(s) the panel does not own claim this traffic: %s",
 		len(shadows), strings.Join(quoted, "; ")),
 		map[string]any{"rules": shadows, "managers": view.Managers})
 	return shadows
@@ -917,17 +934,17 @@ func (d *Diagnostics) shadowEvidence(ctx context.Context, spec rules.RouteSpec, 
 // flowEvidence reads connection tracking for this rule.
 func (d *Diagnostics) flowEvidence(ctx context.Context, spec rules.RouteSpec, result *AnalyzeResult) ([]Flow, bool) {
 	if ok, detail := d.conntrack.Available(); !ok {
-		result.add("connections", "connection tracking could not be read, so whether traffic is "+
-			"arriving was not determined: "+detail, nil)
+		result.add("connections", i18n.T(ctx, "connection tracking could not be read, so whether "+
+			"traffic is arriving was not determined: %s", detail), nil)
 		return nil, false
 	}
 	all, err := d.conntrack.Flows(ctx)
 	if err != nil {
-		result.add("connections", "connection tracking could not be read: "+err.Error(), nil)
+		result.add("connections", i18n.T(ctx, "connection tracking could not be read: %s", err.Error()), nil)
 		return nil, false
 	}
 	mine := FlowsFor(all, spec)
-	result.add("connections", fmt.Sprintf("connection tracking holds %d flow(s) whose original "+
+	result.add("connections", i18n.T(ctx, "connection tracking holds %d flow(s) whose original "+
 		"destination is this rule's, which is the kernel's own record that the destination NAT "+
 		"matched and translated them", len(mine)),
 		map[string]any{"flows": len(mine), "reader": d.conntrack.Name()})
@@ -938,11 +955,11 @@ func (d *Diagnostics) flowEvidence(ctx context.Context, spec rules.RouteSpec, re
 func (d *Diagnostics) counterEvidence(ctx context.Context, routeRuleID int64, result *AnalyzeResult) (rules.Counter, bool) {
 	raw, err := d.backend.Counters(ctx)
 	if err != nil {
-		result.add("counters", "the rule's counters could not be read: "+err.Error(), nil)
+		result.add("counters", i18n.T(ctx, "the rule's counters could not be read: %s", err.Error()), nil)
 		return rules.Counter{}, false
 	}
 	counter := raw[routeRuleID]
-	result.add("counters", fmt.Sprintf("since the ruleset was last built this rule has forwarded "+
+	result.add("counters", i18n.T(ctx, "since the ruleset was last built this rule has forwarded "+
 		"%d packet(s) and %d byte(s) towards its destination, and %d packet(s) and %d byte(s) back",
 		counter.TxPackets, counter.TxBytes, counter.RxPackets, counter.RxBytes), counter)
 	return counter, true
@@ -955,16 +972,15 @@ func (d *Diagnostics) tunnelEvidence(ctx context.Context, rec Record, result *An
 	}
 	health, ok := d.tunnels.TunnelHealth(ctx, *rec.TunnelID)
 	if !ok {
-		result.add("tunnel", fmt.Sprintf("this rule names tunnel %d, which the panel no longer has",
+		result.add("tunnel", i18n.T(ctx, "this rule names tunnel %d, which the panel no longer has",
 			*rec.TunnelID), map[string]any{"tunnel_id": *rec.TunnelID})
 		return nil
 	}
-	state := "up"
+	detail := i18n.T(ctx, "the destination is reached through %s, which is up", health.InterfaceName)
 	if !health.Healthy() {
-		state = "not up"
+		detail = i18n.T(ctx, "the destination is reached through %s, which is not up", health.InterfaceName)
 	}
-	result.add("tunnel", fmt.Sprintf("the destination is reached through %s, which is %s",
-		health.InterfaceName, state), health)
+	result.add("tunnel", detail, health)
 	return &health
 }
 
@@ -982,7 +998,7 @@ func (d *Diagnostics) probeEvidence(ctx context.Context, rec Record, spec rules.
 	result.Destinations = probes
 
 	summary := summarise(probes)
-	result.add("destination_probe", summary.describe(), probes)
+	result.add("destination_probe", summary.describe(ctx), probes)
 	return summary
 }
 
@@ -1098,17 +1114,17 @@ func (r reachSummary) none() bool { return r.probed > 0 && r.refused == r.probed
 // is not answering, while the rest of it still works.
 func (r reachSummary) some() bool { return r.refused > 0 && r.reachable > 0 }
 
-func (r reachSummary) describe() string {
+func (r reachSummary) describe(ctx context.Context) string {
 	switch {
 	case r.probed == 0:
-		return "no destination of this rule is in the rotation to probe"
+		return i18n.T(ctx, "no destination of this rule is in the rotation to probe")
 	case r.refused == 0:
-		return fmt.Sprintf("all %d destination(s) in the rotation answered", r.probed)
+		return i18n.T(ctx, "all %d destination(s) in the rotation answered", r.probed)
 	case r.none():
-		return fmt.Sprintf("none of the %d destination(s) in the rotation answered: %s",
+		return i18n.T(ctx, "none of the %d destination(s) in the rotation answered: %s",
 			r.probed, r.detail)
 	}
-	return fmt.Sprintf("%d of %d destination(s) in the rotation did not answer: %s",
+	return i18n.T(ctx, "%d of %d destination(s) in the rotation did not answer: %s",
 		r.refused, r.probed, strings.Join(r.failed, ", "))
 }
 
@@ -1136,17 +1152,45 @@ func stalledFlows(flows []Flow) []Flow {
 	return out
 }
 
-func onOff(on bool) string {
-	if on {
-		return "on"
+// forwardingEvidence says what the two forwarding switches are set to. Each
+// combination is a sentence of its own, so "on" and "off" are never words
+// dropped into one.
+func forwardingEvidence(ctx context.Context, ipv4, ipv6 bool) string {
+	switch {
+	case ipv4 && ipv6:
+		return i18n.T(ctx, "net.ipv4.ip_forward is on and net.ipv6.conf.all.forwarding is on")
+	case ipv4:
+		return i18n.T(ctx, "net.ipv4.ip_forward is on and net.ipv6.conf.all.forwarding is off")
+	case ipv6:
+		return i18n.T(ctx, "net.ipv4.ip_forward is off and net.ipv6.conf.all.forwarding is on")
 	}
-	return "off"
+	return i18n.T(ctx, "net.ipv4.ip_forward is off and net.ipv6.conf.all.forwarding is off")
 }
 
-// bindDescription names what a rule listens on, the way an error message does.
-func bindDescription(spec rules.RouteSpec) string {
-	if spec.BindsAnyAddress() {
-		return fmt.Sprintf("every local address on port %s", spec.BindPorts.String())
-	}
+// bindEndpoint names the one address and port range a rule listens on. A rule
+// listening on every local address is described by sentences of its own.
+func bindEndpoint(spec rules.RouteSpec) string {
 	return spec.BindAddress + ":" + spec.BindPorts.String()
+}
+
+// upstreamFirewallFix is the suggested fix for traffic that never arrives.
+func upstreamFirewallFix(ctx context.Context, spec rules.RouteSpec) string {
+	if spec.BindsAnyAddress() {
+		return i18n.T(ctx, "Check that a firewall upstream of this server allows %s to every local "+
+			"address on port %s.", string(spec.Protocol), spec.BindPorts.String())
+	}
+	return i18n.T(ctx, "Check that a firewall upstream of this server allows %s to %s.",
+		string(spec.Protocol), bindEndpoint(spec))
+}
+
+// joinAnd lists endpoints the way "a and b" reads, in the language ctx carries.
+func joinAnd(ctx context.Context, items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	out := items[0]
+	for _, item := range items[1:] {
+		out = i18n.T(ctx, "%s and %s", out, item)
+	}
+	return out
 }

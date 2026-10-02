@@ -1,9 +1,10 @@
 package route
 
 import (
-	"fmt"
+	"context"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/persist"
 	"github.com/drs/gre-panel/internal/rules"
 	"github.com/drs/gre-panel/internal/validate"
@@ -187,8 +188,9 @@ func (p *planner) name() string {
 }
 
 // Plan renders the complete payload for the desired state and the steps that
-// install it.
-func (p *planner) Plan(in planInput) (Plan, error) {
+// install it. What the plan says — its step descriptions and what will be
+// verified — is said in the language ctx carries.
+func (p *planner) Plan(ctx context.Context, in planInput) (Plan, error) {
 	desired := DesiredOf(in.desired)
 	desired.Retired = in.retired
 	desired.LiveChains = in.liveChains
@@ -205,7 +207,7 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 		// The previous state was rendered once already to be applied, so
 		// failing here means the stored state has become unrenderable. Saying so
 		// is better than planning a rollback that cannot run.
-		return Plan{}, fmt.Errorf("rendering the current ruleset for rollback: %w", err)
+		return Plan{}, i18n.Errorf(ctx, "rendering the current ruleset for rollback: %w", err)
 	}
 
 	plan := Plan{
@@ -226,8 +228,9 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 	// 1. The counters are folded into the persisted totals before anything
 	// replaces the ruleset, because the replacement zeroes them.
 	plan.Add(Step{
-		Kind:        StepSnapshotCounters,
-		Description: "fold the live traffic counters into the stored totals before the ruleset is replaced",
+		Kind: StepSnapshotCounters,
+		Description: i18n.T(ctx, "fold the live traffic counters into the stored totals before the "+
+			"ruleset is replaced"),
 	})
 
 	// 2. Forwarding, only when it would change something.
@@ -235,11 +238,11 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 	needsForwarding := !in.forwardingOn || (needIPv6 && !in.ipv6ForwardingOn)
 	needsCounting := in.countBytes && !in.byteAccountingOn
 	if len(desired.Routes) > 0 && !in.manualForwarding && (needsForwarding || needsCounting) {
-		description := "turn on kernel packet forwarding and record it in the panel's own sysctl " +
-			"file at " + p.sysctlFilePath()
+		description := i18n.T(ctx, "turn on kernel packet forwarding and record it in the panel's own "+
+			"sysctl file at %s", p.sysctlFilePath())
 		if !needsForwarding {
-			description = "have the kernel count the bytes on tracked connections and record it in " +
-				"the panel's own sysctl file at " + p.sysctlFilePath()
+			description = i18n.T(ctx, "have the kernel count the bytes on tracked connections and "+
+				"record it in the panel's own sysctl file at %s", p.sysctlFilePath())
 		}
 		plan.Add(Step{
 			Kind:        StepEnableForwarding,
@@ -250,12 +253,12 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 
 	// 3. The transaction itself.
 	copied := payload
-	applyDescription := fmt.Sprintf(
-		"replace the panel's %s ruleset with the %d enabled rule(s), in one transaction",
-		p.name(), len(desired.Routes))
+	applyDescription := i18n.T(ctx, "replace the panel's %s ruleset with the %d enabled rule(s), in "+
+		"one transaction", p.name(), len(desired.Routes))
 	if len(payload.RemovesChains) > 0 {
-		applyDescription += fmt.Sprintf(", and remove the chain(s) it no longer declares: %s",
-			strings.Join(payload.RemovesChains, ", "))
+		applyDescription = i18n.T(ctx, "replace the panel's %s ruleset with the %d enabled rule(s), in "+
+			"one transaction, and remove the chain(s) it no longer declares: %s",
+			p.name(), len(desired.Routes), strings.Join(payload.RemovesChains, ", "))
 	}
 	plan.Add(Step{
 		Kind:        StepApplyRuleset,
@@ -271,13 +274,13 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 	unit := p.renderer.RulesUnit(unitOptions(p.name(), payload))
 	plan.Add(Step{
 		Kind:        StepWriteUnit,
-		Description: "write the boot-time restore unit for the panel's own rules",
+		Description: i18n.T(ctx, "write the boot-time restore unit for the panel's own rules"),
 		Path:        p.unitPath(), Content: unit,
 	})
-	plan.Add(Step{Kind: StepDaemonReload, Description: "reload systemd so it reads the unit"})
+	plan.Add(Step{Kind: StepDaemonReload, Description: i18n.T(ctx, "reload systemd so it reads the unit")})
 	plan.Add(Step{
 		Kind: StepEnableUnit, Unit: persist.RulesUnitName,
-		Description: "enable the restore unit so the rules return after a reboot",
+		Description: i18n.T(ctx, "enable the restore unit so the rules return after a reboot"),
 	})
 	plan.AddFile(FileUnit, p.unitPath(), unit)
 
@@ -292,24 +295,25 @@ func (p *planner) Plan(in planInput) (Plan, error) {
 	// a host that could have been left as it was is left inconsistent instead.
 	// The retained payload came out of a kernel that accepted it.
 	rollback := previousPayload
-	source := "rendered from the stored rules"
+	description := i18n.T(ctx, "put the previous ruleset back (rendered from the stored rules)")
 	if in.lastApplied != nil {
 		rollback = *in.lastApplied
-		source = "the payload this host last accepted"
+		description = i18n.T(ctx, "put the previous ruleset back (the payload this host last accepted)")
 	}
 	plan.Rollback = []Step{{
 		Kind:        StepApplyRuleset,
-		Description: "put the previous ruleset back (" + source + ")",
+		Description: description,
 		Payload:     &rollback,
 	}}
 
 	plan.Verification = []string{
-		"the panel's ruleset is read back from the kernel",
-		"every rule the panel intends is present in the chain it belongs to, with its destination and its target",
-		"no rule in the panel's namespace belongs to a rule the panel does not have",
-		"the panel's namespace holds exactly the chains the ruleset declares",
-		"kernel packet forwarding is on when an enabled rule needs it",
-		"the boot-time restore file is on disk and is the one that was applied",
+		i18n.T(ctx, "the panel's ruleset is read back from the kernel"),
+		i18n.T(ctx, "every rule the panel intends is present in the chain it belongs to, with its "+
+			"destination and its target"),
+		i18n.T(ctx, "no rule in the panel's namespace belongs to a rule the panel does not have"),
+		i18n.T(ctx, "the panel's namespace holds exactly the chains the ruleset declares"),
+		i18n.T(ctx, "kernel packet forwarding is on when an enabled rule needs it"),
+		i18n.T(ctx, "the boot-time restore file is on disk and is the one that was applied"),
 	}
 	return plan, nil
 }

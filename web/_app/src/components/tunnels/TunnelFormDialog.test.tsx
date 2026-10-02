@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 
 import { PreferencesProvider } from '@/providers/PreferencesProvider'
 import { ToastProvider } from '@/providers/ToastProvider'
+import { TooltipProvider } from '@/components/ui/overlay'
 import { TunnelSide } from '@/lib/types'
 
 vi.mock('@/lib/api', async () => {
@@ -524,5 +525,206 @@ describe('a pairing code naming a pool this server does not have', () => {
     await screen.findByRole('button', { name: /create tunnel/i })
     expect(screen.queryByRole('button', { name: /create this pool here/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/no pool for/i)).not.toBeInTheDocument()
+  })
+})
+
+/** An existing tunnel and the endpoints the editor reads, for the tests below. */
+function editorFixture() {
+  const tunnel = {
+    tunnel_id: 9,
+    tunnel_number: 3,
+    interface_name: 'gre-a-3',
+    display_name: null,
+    tunnel_type_id: 1,
+    tunnel_side_id: TunnelSide.A,
+    persistence_type_id: 1,
+    local_endpoint: '203.0.113.10',
+    remote_endpoint: '198.51.100.20',
+    bind_device: null,
+    ttl: 255,
+    tos: 'inherit',
+    mtu: 1472,
+    ikey: 5150,
+    okey: 5150,
+    has_input_checksum: false,
+    has_output_checksum: false,
+    has_input_sequence: false,
+    has_output_sequence: false,
+    is_path_mtu_discovery: false,
+    is_ignore_df: false,
+    fwmark: null,
+    tx_queue_length: null,
+    hop_limit: null,
+    encap_limit: null,
+    is_enabled: true,
+    address_pool_id: 1,
+    addresses: [
+      { address: '172.17.3.1', prefix_length: 30, peer_address: '172.17.3.2', is_primary: true },
+    ],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+
+  const preview = {
+    plan: { operation: 'update', interface: 'gre-a-3', steps: [], rollback: [], files: [], requires_recreate: false },
+    // The wire shape of MtuAdvice, from internal/validate/mtu.go.
+    mtu: {
+      requested: 1472,
+      overhead: 28,
+      underlay_mtu: 1500,
+      underlay_device: 'eth0',
+      recommended: 1472,
+      matches: true,
+      breakdown: [
+        { name: 'outer IPv4 header', bytes: 20 },
+        { name: 'GRE base header', bytes: 4 },
+        { name: 'GRE key', bytes: 4 },
+      ],
+    },
+    warnings: [],
+    diffs: [],
+    tunnel,
+  }
+
+  return { tunnel, preview }
+}
+
+async function mockEditorApi(preview: unknown) {
+  const { api } = await import('@/lib/api')
+  vi.mocked(api.get).mockImplementation(async (path: string) => {
+    if (path === '/settings') return { settings: {} }
+    if (path === '/system/capabilities') {
+      return { tunnel_types: [{ id: 1, name: 'gre', supported: true }], persistence: [] }
+    }
+    if (path === '/pools') return { pools: [] }
+    if (path === '/tunnels') return { tunnels: [] }
+    if (path === '/system/interfaces') return { interfaces: [] }
+    if (path === '/tunnels/side-info') {
+      return {
+        summary: 'One end is A and the other is B.',
+        sides: [],
+        identical_on_both_ends: [],
+        tunnel_side_ids: { a: TunnelSide.A, b: TunnelSide.B },
+      }
+    }
+    if (path === '/quota') return { tunnels: [], routes: [], destinations: [] }
+    return {}
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any
+  vi.mocked(api.post).mockResolvedValue(preview as never)
+  return api
+}
+
+/**
+ * The overhead breakdown beside the MTU field.
+ *
+ * The backend sends each term as {name, bytes}. The type said {label, detail},
+ * so the tooltip printed ": 20 B" once per term -- a list of sizes with nothing
+ * to say what any of them was the size of.
+ */
+describe('the MTU overhead breakdown', () => {
+  it('names every term, in the operator language, with its size', async () => {
+    // The tooltip positions itself with a ResizeObserver, which jsdom lacks.
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+    const { tunnel, preview } = editorFixture()
+    await mockEditorApi(preview)
+    render(
+      wrapDialog(
+        <TooltipProvider>
+          <TunnelFormDialog open onOpenChange={() => {}} tunnel={tunnel} />
+        </TooltipProvider>,
+      ),
+    )
+
+    // The MTU field lives in the Advanced panel.
+    fireEvent.click(await screen.findByRole('button', { name: /^advanced$/i }))
+    const info = await screen.findByRole('button', { name: /overhead breakdown/i })
+    fireEvent.focus(info)
+
+    expect((await screen.findAllByText('Outer IPv4 header: 20 bytes')).length).toBeGreaterThan(0)
+    expect(screen.getAllByText('GRE base header: 4 bytes').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('GRE key: 4 bytes').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/^: \d+/)).not.toBeInTheDocument()
+    vi.unstubAllGlobals()
+  })
+})
+
+/**
+ * A refusal that names a field this form has no input for.
+ *
+ * The banner used to be hidden whenever the backend returned any field error,
+ * on the assumption that each would appear under its input. Some cannot: the
+ * side, the tunnel number and the monitoring overrides have no error slot on
+ * this form. A save refused for one of those did nothing visible at all.
+ */
+describe('a refusal naming a field the form does not show', () => {
+  it('says it in the banner, labelled, and still puts the rest under their fields', async () => {
+    const { tunnel, preview } = editorFixture()
+    const api = await mockEditorApi(preview)
+    const { ApiError } = await import('@/lib/api')
+    vi.mocked(api.patch).mockRejectedValue(
+      new ApiError(422, {
+        code: 'VALIDATION_FAILED',
+        message: 'The tunnel was not accepted.',
+        field: '',
+        details: {
+          fields: [
+            { field: 'tunnel_number', code: 'TUNNEL_NUMBER_TAKEN', message: 'Tunnel number 3 is taken by gre-a-9.' },
+            {
+              field: 'monitor_interval_seconds',
+              code: 'OUT_OF_RANGE',
+              message: 'The probe interval must be at least one second.',
+            },
+            { field: 'ttl', code: 'OUT_OF_RANGE', message: 'The TTL must be between 1 and 255.' },
+          ],
+        },
+      }),
+    )
+
+    render(wrapDialog(<TooltipProvider><TunnelFormDialog open onOpenChange={() => {}} tunnel={tunnel} /></TooltipProvider>))
+    fireEvent.click(await screen.findByRole('button', { name: /save changes/i }))
+
+    const taken = await screen.findByText('Tunnel number 3 is taken by gre-a-9.')
+    const banner = taken.closest('[role="alert"]') as HTMLElement
+    // Each one labelled by its field, in words.
+    expect(banner).toHaveTextContent('Tunnel number: Tunnel number 3 is taken by gre-a-9.')
+    expect(banner).toHaveTextContent('Interval (seconds): The probe interval must be at least one second.')
+    expect(banner).not.toHaveTextContent('monitor_interval_seconds')
+    // The backend's sentence keeps its own direction.
+    expect(taken).toHaveAttribute('dir', 'auto')
+
+    // The TTL has an input, so its message goes under it -- and the Advanced
+    // panel it sits in is opened rather than left closed over it.
+    const ttl = await screen.findByText('The TTL must be between 1 and 255.')
+    expect(banner).not.toContainElement(ttl)
+  })
+
+  it('opens nothing and adds nothing when every error has a field to sit under', async () => {
+    const { tunnel, preview } = editorFixture()
+    const api = await mockEditorApi(preview)
+    const { ApiError } = await import('@/lib/api')
+    vi.mocked(api.patch).mockRejectedValue(
+      new ApiError(422, {
+        code: 'VALIDATION_FAILED',
+        message: 'The tunnel was not accepted.',
+        field: '',
+        details: { fields: [{ field: 'remote_endpoint', code: 'INVALID_ADDRESS', message: 'Not an address.' }] },
+      }),
+    )
+
+    render(wrapDialog(<TooltipProvider><TunnelFormDialog open onOpenChange={() => {}} tunnel={tunnel} /></TooltipProvider>))
+    fireEvent.click(await screen.findByRole('button', { name: /save changes/i }))
+
+    const message = await screen.findByText('Not an address.')
+    // Under the field, and only there.
+    expect(screen.getAllByText('Not an address.')).toHaveLength(1)
+    expect(screen.queryByText('Some values were not accepted.')).not.toBeInTheDocument()
+    expect(message).toHaveAttribute('dir', 'auto')
   })
 })

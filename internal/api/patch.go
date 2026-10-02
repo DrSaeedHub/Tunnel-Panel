@@ -2,8 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/validate"
 )
@@ -24,9 +25,11 @@ func (n *nullableInt) UnmarshalJSON(raw []byte) error {
 		n.Value = nil
 		return nil
 	}
+	// The decoder hands this back as it is, and decodeJSON says it in the
+	// request's language; there is no request here to say it in.
 	var v int64
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return fmt.Errorf("must be a whole number or null")
+		return errors.New(i18n.N("must be a whole number or null"))
 	}
 	n.Value = &v
 	return nil
@@ -72,7 +75,7 @@ func (n *nullableFloat) UnmarshalJSON(raw []byte) error {
 	}
 	var v float64
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return fmt.Errorf("must be a number or null")
+		return errors.New(i18n.N("must be a number or null"))
 	}
 	n.Value = &v
 	return nil

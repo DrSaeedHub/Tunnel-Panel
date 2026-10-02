@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -72,6 +73,7 @@ func auditActionByName(name string) (int64, bool) {
 // exact operations performed, which is what makes a panel that runs as root
 // accountable.
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	limit, offset := pagination(r)
 
 	where := []string{"1 = 1"}
@@ -86,7 +88,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		if !ok {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-				"That is not a known audit action.", "action",
+				i18n.T(ctx, "That is not a known audit action."), "action",
 				map[string]any{"known": sortedActionNames()})
 			return
 		}
@@ -128,15 +130,15 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	clause := " WHERE " + strings.Join(where, " AND ")
 
 	var total int
-	if err := s.db.Read.QueryRowContext(r.Context(),
+	if err := s.db.Read.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM AuditLog a`+clause, args...).Scan(&total); err != nil {
 		s.log.Error("counting audit entries failed", "error", err)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The audit log could not be read.", "", nil)
+			i18n.T(ctx, "The audit log could not be read."), "", nil)
 		return
 	}
 
-	rows, err := s.db.Read.QueryContext(r.Context(), `
+	rows, err := s.db.Read.QueryContext(ctx, `
 		SELECT a.AuditLogID, a.AuditActionID, a.UserID, u.Username, a.TargetType, a.TargetID,
 		       a.RequestJson, a.OperationsJson, a.IsSuccess, a.ErrorMessage, a.DurationMs,
 		       a.ClientIp, a.CreatedDate
@@ -146,7 +148,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("reading audit entries failed", "error", err)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The audit log could not be read.", "", nil)
+			i18n.T(ctx, "The audit log could not be read."), "", nil)
 		return
 	}
 	defer rows.Close()
@@ -167,7 +169,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request) {
 			&errMessage, &entry.DurationMs, &entry.ClientIp, &entry.CreatedDate); err != nil {
 			s.log.Error("reading an audit entry failed", "error", err)
 			writeError(w, http.StatusInternalServerError, CodeInternal,
-				"The audit log could not be read.", "", nil)
+				i18n.T(ctx, "The audit log could not be read."), "", nil)
 			return
 		}
 		if userID.Valid {

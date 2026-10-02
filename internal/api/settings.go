@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/settings"
 )
@@ -37,7 +39,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetSettingsSchema(w http.ResponseWriter, r *http.Request) {
-	entries := s.settings.Schema()
+	entries := translateSchema(r.Context(), s.settings.Schema())
 
 	// Categories are returned in first-appearance order, which is the
 	// specification order, so the UI does not have to invent a grouping.
@@ -52,6 +54,29 @@ func (s *Server) handleGetSettingsSchema(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, schemaResponse{Settings: entries, Categories: categories})
 }
 
+// translateSchema says the words of the schema -- each setting's label,
+// description and unit, and the titles of the values a lookup offers -- in the
+// language of the request. Keys, types and values are the API's own and stay
+// as they are.
+func translateSchema(ctx context.Context, entries []settings.SchemaEntry) []settings.SchemaEntry {
+	for i := range entries {
+		e := &entries[i]
+		e.Label = i18n.Tr(ctx, e.Label)
+		e.Description = i18n.Tr(ctx, e.Description)
+		e.Unit = i18n.Tr(ctx, e.Unit)
+		// The options are shared with the declarations the store serves from,
+		// so they are copied before anything in them is changed.
+		if options := e.Constraints.Options; len(options) > 0 {
+			translated := make([]settings.Option, len(options))
+			for j, option := range options {
+				translated[j] = settings.Option{Value: option.Value, Label: i18n.Tr(ctx, option.Label)}
+			}
+			e.Constraints.Options = translated
+		}
+	}
+	return entries
+}
+
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	user := UserFromContext(r.Context())
@@ -62,7 +87,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(updates) == 0 {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"Supply at least one setting to change.", "", nil)
+			i18n.T(r.Context(), "Supply at least one setting to change."), "", nil)
 		return
 	}
 
@@ -77,12 +102,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				details[k] = msg
 			}
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-				"Some settings could not be saved.", "", details)
+				i18n.T(r.Context(), "Some settings could not be saved."), "", details)
 			return
 		}
 		s.log.Error("updating settings failed", "error", err)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The settings could not be saved.", "", nil)
+			i18n.T(r.Context(), "The settings could not be saved."), "", nil)
 		return
 	}
 
@@ -109,12 +134,12 @@ func (s *Server) handleResetSettings(w http.ResponseWriter, r *http.Request) {
 				details[k] = msg
 			}
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-				"Some settings could not be reset.", "", details)
+				i18n.T(r.Context(), "Some settings could not be reset."), "", details)
 			return
 		}
 		s.log.Error("resetting settings failed", "error", err)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The settings could not be reset.", "", nil)
+			i18n.T(r.Context(), "The settings could not be reset."), "", nil)
 		return
 	}
 
@@ -150,9 +175,11 @@ func (s *Server) auditSettingChange(w http.ResponseWriter, r *http.Request, user
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
 // capitalise upper-cases the first letter of a message so an error string reads
-// as a sentence in the API response.
+// as a sentence in the API response. Only a leading ASCII lower-case letter is
+// changed: a sentence in Persian, or one that opens with the invisible isolate
+// around a value, has no case and is returned exactly as it is.
 func capitalise(s string) string {
-	if s == "" {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
 		return s
 	}
 	return strings.ToUpper(s[:1]) + s[1:]

@@ -94,7 +94,7 @@ func TestTheDefaultPingIntervalFollowsTheSetting(t *testing.T) {
 	for _, want := range []float64{0.02, 0.25} {
 		h.set(t, map[string]any{"diagnostics.manual_ping_interval": want})
 
-		request, err := h.service.pingRequest(rec, PingParams{})
+		request, err := h.service.pingRequest(ctx, rec, PingParams{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +136,7 @@ func TestTheDefaultPingTimeoutFollowsTheSetting(t *testing.T) {
 	for _, want := range []float64{0.15, 0.4} {
 		h.set(t, map[string]any{"diagnostics.manual_ping_timeout": want})
 
-		request, err := h.service.pingRequest(rec, PingParams{})
+		request, err := h.service.pingRequest(ctx, rec, PingParams{})
 		if err != nil {
 			t.Fatal(err)
 		}

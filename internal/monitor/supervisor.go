@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/tunnel"
@@ -362,7 +363,7 @@ func (s *Supervisor) startProber(ctx context.Context, cfg Config) {
 					"tunnel_id", cfg.TunnelID, "interface", p.Config().InterfaceName,
 					"error", err, "retry_in", backoff.String())
 				p.force(probeCtx, model.MonitorStateUnknown,
-					"the prober could not run: "+err.Error())
+					i18n.P("the prober could not run: %s", err))
 			}
 			// A prober that ran for a good while and then stopped has hit a new
 			// problem, not the same one again, so it does not inherit the wait
@@ -441,7 +442,7 @@ func (s *Supervisor) handleLinkEvent(ctx context.Context, event link.Event) {
 
 	switch {
 	case event.Kind == link.EventRemoved:
-		target.prober.force(ctx, model.MonitorStateDown, ReasonInterfaceMissing)
+		target.prober.force(ctx, model.MonitorStateDown, i18n.Tr(ctx, ReasonInterfaceMissing))
 		s.TunnelsChanged()
 	case event.Kind == link.EventAdded, event.Kind == link.EventChanged && event.Link.IsUp:
 		// The interface is back. A prober that could not bind to its address is
@@ -451,13 +452,15 @@ func (s *Supervisor) handleLinkEvent(ctx context.Context, event link.Event) {
 		target.prober.release()
 		target.nudge()
 	case event.Kind == link.EventChanged && !event.Link.IsUp:
-		target.prober.force(ctx, model.MonitorStateDown, "the interface is administratively down")
+		target.prober.force(ctx, model.MonitorStateDown, i18n.P("the interface is administratively down"))
 	}
 }
 
 // ReasonInterfaceMissing is the exact reason recorded when the netlink
-// subscription reports that a monitored interface has gone (§10.3).
-const ReasonInterfaceMissing = "interface_missing"
+// subscription reports that a monitored interface has gone (§10.3). It is a
+// sentence an operator reads, said in the panel's language where it is
+// recorded.
+var ReasonInterfaceMissing = i18n.N("the interface no longer exists: the kernel reported that it was removed")
 
 // RecordTransition writes a MonitorEvent for a state change (§10.2).
 func (s *Supervisor) RecordTransition(ctx context.Context, cfg Config, t Transition, stats Stats) {

@@ -7,19 +7,29 @@
 // that script created still line up, but it is derived from the pool rather
 // than assumed, and a pool whose shape does not suit it falls back to dense
 // allocation instead.
+//
+// Its errors reach the operator, so they are said in the operator's language:
+// the request's where a function is handed a context, and the panel's where it
+// is not -- the arithmetic below is called with no request behind it.
 package alloc
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"net/netip"
 	"sort"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/validate"
 )
+
+// inPanelLanguage is the context the functions that take none say their
+// errors under: it names no language, so what is said under it is said in the
+// panel's.
+var inPanelLanguage = context.Background()
 
 // Pool is an address range tunnel subnets are allocated from.
 type Pool struct {
@@ -36,7 +46,8 @@ type Pool struct {
 func (p Pool) Prefix() (netip.Prefix, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(p.Cidr))
 	if err != nil {
-		return netip.Prefix{}, fmt.Errorf("address pool %q has an invalid range %q: %w", p.Title, p.Cidr, err)
+		return netip.Prefix{}, i18n.Errorf(inPanelLanguage, "address pool %q has an invalid range %q: %w",
+			p.Title, p.Cidr, err)
 	}
 	return prefix.Masked(), nil
 }
@@ -103,21 +114,21 @@ func MaxNumber(pool netip.Prefix, prefixLen int) (int64, error) {
 
 func checkShape(pool netip.Prefix, prefixLen int) error {
 	if !pool.IsValid() {
-		return fmt.Errorf("the address pool range is not valid")
+		return errors.New(i18n.P("the address pool range is not valid"))
 	}
 	max := pool.Addr().BitLen()
 	if prefixLen < pool.Bits() {
-		return fmt.Errorf("a /%d subnet is larger than the pool /%d it would come from",
-			prefixLen, pool.Bits())
+		return errors.New(i18n.P("a /%d subnet is larger than the pool /%d it would come from",
+			prefixLen, pool.Bits()))
 	}
 	if prefixLen > max {
-		return fmt.Errorf("prefix length /%d is out of range for this address family", prefixLen)
+		return errors.New(i18n.P("prefix length /%d is out of range for this address family", prefixLen))
 	}
 	if pool.Addr().Is4() && prefixLen > 31 {
-		return fmt.Errorf("a tunnel subnet needs at least two addresses; use /31 or /30")
+		return errors.New(i18n.P("a tunnel subnet needs at least two addresses; use /31 or /30"))
 	}
 	if !pool.Addr().Is4() && prefixLen > 127 {
-		return fmt.Errorf("a tunnel subnet needs at least two addresses; use /127 or shorter")
+		return errors.New(i18n.P("a tunnel subnet needs at least two addresses; use /127 or shorter"))
 	}
 	return nil
 }
@@ -132,8 +143,8 @@ func SubnetForNumber(pool netip.Prefix, prefixLen int, number int64) (netip.Pref
 		return netip.Prefix{}, err
 	}
 	if number < 0 || number > max {
-		return netip.Prefix{}, fmt.Errorf("tunnel number %d does not fit the pool %s with /%d subnets, "+
-			"which holds numbers 0 to %d", number, pool, prefixLen, max)
+		return netip.Prefix{}, errors.New(i18n.P("tunnel number %d does not fit the pool %s with /%d "+
+			"subnets, which holds numbers 0 to %d", number, pool, prefixLen, max))
 	}
 
 	stride := int64(1) << (pool.Addr().BitLen() - prefixLen)
@@ -146,7 +157,7 @@ func SubnetForNumber(pool netip.Prefix, prefixLen int, number int64) (netip.Pref
 	}
 	subnet := netip.PrefixFrom(base, prefixLen)
 	if !pool.Contains(base) {
-		return netip.Prefix{}, fmt.Errorf("subnet %s falls outside the pool %s", subnet, pool)
+		return netip.Prefix{}, errors.New(i18n.P("subnet %s falls outside the pool %s", subnet, pool))
 	}
 	return subnet, nil
 }
@@ -194,7 +205,8 @@ func SlotAddresses(subnet netip.Prefix) (a, b netip.Addr, err error) {
 		return netip.Addr{}, netip.Addr{}, err
 	}
 	if !subnet.Contains(a) || !subnet.Contains(b) {
-		return netip.Addr{}, netip.Addr{}, fmt.Errorf("the subnet %s is too small to carry two addresses", subnet)
+		return netip.Addr{}, netip.Addr{}, errors.New(i18n.P("the subnet %s is too small to carry two "+
+			"addresses", subnet))
 	}
 	return a, b, nil
 }
@@ -219,13 +231,14 @@ func AddressForSide(subnet netip.Prefix, tunnelSideID int64) (own, peer netip.Ad
 // stepping, so a large pool costs the same as a small one.
 func addOffset(addr netip.Addr, n int64) (netip.Addr, error) {
 	if n < 0 {
-		return netip.Addr{}, fmt.Errorf("cannot move %d addresses backwards from %s", n, addr)
+		return netip.Addr{}, errors.New(i18n.P("cannot move %d addresses backwards from %s", n, addr))
 	}
 	if addr.Is4() {
 		v := uint64(beUint32(addr.As4()))
 		sum := v + uint64(n)
 		if sum > 0xFFFFFFFF {
-			return netip.Addr{}, fmt.Errorf("address %s plus %d runs past the end of the address space", addr, n)
+			return netip.Addr{}, errors.New(i18n.P("address %s plus %d runs past the end of the address "+
+				"space", addr, n))
 		}
 		var out [4]byte
 		putBeUint32(&out, uint32(sum))
@@ -240,7 +253,8 @@ func addOffset(addr netip.Addr, n int64) (netip.Addr, error) {
 		carry = (carry >> 8) + (sum >> 8)
 	}
 	if carry > 0 {
-		return netip.Addr{}, fmt.Errorf("address %s plus %d runs past the end of the address space", addr, n)
+		return netip.Addr{}, errors.New(i18n.P("address %s plus %d runs past the end of the address "+
+			"space", addr, n))
 	}
 	return netip.AddrFrom16(bytes), nil
 }
@@ -377,12 +391,13 @@ func (a *Allocator) DefaultPool(ctx context.Context) (Pool, error) {
 			for _, p := range pools {
 				if p.AddressPoolID == *id {
 					if !p.IsEnabled {
-						return Pool{}, fmt.Errorf("the configured default address pool %q is disabled", p.Title)
+						return Pool{}, i18n.Errorf(ctx, "the configured default address pool %q is disabled",
+							p.Title)
 					}
 					return p, nil
 				}
 			}
-			return Pool{}, fmt.Errorf("the configured default address pool %d does not exist", *id)
+			return Pool{}, i18n.Errorf(ctx, "the configured default address pool %d does not exist", *id)
 		}
 	}
 	for _, p := range pools {
@@ -390,7 +405,7 @@ func (a *Allocator) DefaultPool(ctx context.Context) (Pool, error) {
 			return p, nil
 		}
 	}
-	return Pool{}, fmt.Errorf("no address pool is enabled; enable one before allocating a tunnel subnet")
+	return Pool{}, i18n.Errorf(ctx, "no address pool is enabled; enable one before allocating a tunnel subnet")
 }
 
 // UsedAddressSet collects every address already in use, from the database and
@@ -412,7 +427,7 @@ func (a *Allocator) UsedAddressSet(ctx context.Context) (map[netip.Addr]bool, er
 	if a.Links != nil {
 		links, err := a.Links.List(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("reading assigned addresses: %w", err)
+			return nil, i18n.Errorf(ctx, "reading assigned addresses: %w", err)
 		}
 		for _, l := range links {
 			for _, addr := range l.Addresses {
@@ -472,8 +487,8 @@ func NextFreeIn(pool Pool, prefixLen int, used map[netip.Addr]bool) (Allocation,
 		}
 		return describe(pool, prefix, subnet, number, addrA, addrB), nil
 	}
-	return Allocation{}, fmt.Errorf("the address pool %q has no free /%d subnet left; it holds %d",
-		pool.Title, prefixLen, max+1)
+	return Allocation{}, errors.New(i18n.P("the address pool %q has no free /%d subnet left; it holds %d",
+		pool.Title, prefixLen, max+1))
 }
 
 // At returns the allocation for a specific tunnel number, which is how an
@@ -510,7 +525,7 @@ func describe(pool Pool, prefix, subnet netip.Prefix, number int64, addrA, addrB
 		allocation.Warnings = append(allocation.Warnings, validate.Warning{
 			Code:  validate.WarnPublicRange,
 			Field: "address_pool_id",
-			Message: fmt.Sprintf("The pool %q hands out %s, which is globally routable. Assigning it to "+
+			Message: i18n.P("The pool %q hands out %s, which is globally routable. Assigning it to "+
 				"a tunnel squats on address space belonging to someone else and blackholes those "+
 				"destinations from this server.", pool.Title, subnet),
 			Details: map[string]any{"subnet": subnet.String(), "pool": pool.Title},

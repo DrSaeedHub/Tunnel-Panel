@@ -12,6 +12,8 @@ import (
 	"unicode"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // MinPasswordLength is the hard floor. It used to be 8, then 12 before that —
@@ -41,13 +43,23 @@ const (
 	argonSaltLen        = 16
 )
 
-// Errors returned by password handling.
+// Errors returned by password handling. The ones an operator reads are marked
+// with i18n.N and said in their language where they become a response; the two
+// length limits carry a number, so the response says them whole instead.
 var (
 	ErrPasswordTooShort = fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 	ErrPasswordTooLong  = fmt.Errorf("password must be at most %d characters", MaxPasswordLength)
-	ErrPasswordWeak     = errors.New("password is too easy to guess")
+	ErrPasswordWeak     = errors.New(i18n.N("password is too easy to guess"))
 	ErrInvalidHash      = errors.New("stored password hash is malformed")
 )
+
+// weakReason is ErrPasswordWeak with the reason one particular password was
+// refused. Its text is the whole sentence rather than ErrPasswordWeak's text
+// with a reason glued on, so it can be said in another language as one.
+type weakReason string
+
+func (e weakReason) Error() string { return string(e) }
+func (e weakReason) Unwrap() error { return ErrPasswordWeak }
 
 // weakPasswords are rejected outright regardless of length. The list is short
 // on purpose: it catches the passwords an operator types to "just get in for
@@ -89,13 +101,14 @@ func ValidatePassword(password, username string) error {
 		return ErrPasswordWeak
 	}
 	if isSingleRepeatedRune(password) {
-		return fmt.Errorf("%w: it is one character repeated", ErrPasswordWeak)
+		return weakReason(i18n.N("password is too easy to guess: it is one character repeated"))
 	}
 	if isSequentialRun(lower) {
-		return fmt.Errorf("%w: it is a straight run of consecutive characters", ErrPasswordWeak)
+		return weakReason(i18n.N("password is too easy to guess: it is a straight run of consecutive " +
+			"characters"))
 	}
 	if strings.TrimSpace(password) == "" {
-		return fmt.Errorf("%w: it is only whitespace", ErrPasswordWeak)
+		return weakReason(i18n.N("password is too easy to guess: it is only whitespace"))
 	}
 	return nil
 }

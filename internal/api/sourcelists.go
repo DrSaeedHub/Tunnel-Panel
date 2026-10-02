@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/sourcelist"
@@ -37,7 +39,7 @@ func (s *Server) requireSourceLists(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.sourceLists == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Source lists are not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Source lists are not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -53,6 +55,9 @@ func (s *Server) handleSourceLists(w http.ResponseWriter, r *http.Request) {
 	if lists == nil {
 		lists = []sourcelist.Record{}
 	}
+	for i := range lists {
+		lists[i] = spokenSourceList(r.Context(), lists[i])
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"source_lists": lists, "total": len(lists)})
 }
 
@@ -61,7 +66,7 @@ func (s *Server) handleSourceList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"source_list": rec})
+	writeJSON(w, http.StatusOK, map[string]any{"source_list": spokenSourceList(r.Context(), rec)})
 }
 
 func (s *Server) handleCreateSourceList(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +83,7 @@ func (s *Server) handleCreateSourceList(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.auditRoute(r, model.AuditActionSettingUpdate, "source_list:"+rec.Name, req, nil, nil, start)
-	writeJSON(w, http.StatusCreated, map[string]any{"source_list": rec})
+	writeJSON(w, http.StatusCreated, map[string]any{"source_list": spokenSourceList(r.Context(), rec)})
 }
 
 func (s *Server) handleUpdateSourceList(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +99,7 @@ func (s *Server) handleUpdateSourceList(w http.ResponseWriter, r *http.Request) 
 	if strings.TrimSpace(req.Name) == "" {
 		req.Name = rec.Name
 	}
+	keepShippedSourceListText(r.Context(), rec, &req)
 
 	updated, err := s.sourceLists.Update(r.Context(), rec.SourceListID, sourcelist.Input{
 		Name: req.Name, Description: req.Description, Entries: []string{req.Entries},
@@ -110,7 +116,7 @@ func (s *Server) handleUpdateSourceList(w http.ResponseWriter, r *http.Request) 
 	// watched or not.
 	applied := s.reapplyForSourceList(r, updated.SourceListID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source_list": updated,
+		"source_list": spokenSourceList(r.Context(), updated),
 		// reapplied says how many rules were reinstalled, so an operator editing
 		// a list they thought nothing used finds out that four rules changed.
 		"reapplied": applied,
@@ -129,7 +135,38 @@ func (s *Server) handleDeleteSourceList(w http.ResponseWriter, r *http.Request) 
 	}
 	s.auditRoute(r, model.AuditActionSettingUpdate, "source_list:"+rec.Name,
 		map[string]any{"deleted": true}, nil, nil, start)
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "source_list": rec})
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "source_list": spokenSourceList(r.Context(), rec)})
+}
+
+// spokenSourceList is a list as the operator reads it. A list the panel
+// shipped carries its name and description in English, marked for
+// translation, and while they are still that text they are said in the
+// operator's language. Text an operator wrote is not in the catalog and comes
+// back as they wrote it, and a list of their own is never touched, even one
+// they happened to give a shipped list's name.
+func spokenSourceList(ctx context.Context, rec sourcelist.Record) sourcelist.Record {
+	if rec.IsBuiltIn {
+		rec.Name = i18n.Tr(ctx, rec.Name)
+		rec.Description = i18n.Tr(ctx, rec.Description)
+	}
+	return rec
+}
+
+// keepShippedSourceListText keeps a shipped list's English when an edit sends
+// back the translation it was shown. The edit form is filled from what the
+// list was served as, so saving it unchanged in another language would
+// otherwise store the translation over the English -- and the next start would
+// no longer recognise the list as the one it shipped, and seed it again.
+func keepShippedSourceListText(ctx context.Context, rec sourcelist.Record, req *sourceListRequest) {
+	if !rec.IsBuiltIn {
+		return
+	}
+	if strings.TrimSpace(req.Name) == strings.TrimSpace(i18n.Tr(ctx, rec.Name)) {
+		req.Name = rec.Name
+	}
+	if strings.TrimSpace(req.Description) == strings.TrimSpace(i18n.Tr(ctx, rec.Description)) {
+		req.Description = rec.Description
+	}
 }
 
 // reapplyForSourceList reinstalls the rules that allow a list. It reports how
@@ -156,7 +193,7 @@ func (s *Server) sourceListFromPath(w http.ResponseWriter, r *http.Request) (sou
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, CodeValidationFailed,
-			"That is not a source list identifier.", "id", nil)
+			i18n.T(r.Context(), "That is not a source list identifier."), "id", nil)
 		return sourcelist.Record{}, false
 	}
 	rec, err := s.sourceLists.ByID(r.Context(), id)
@@ -167,16 +204,36 @@ func (s *Server) sourceListFromPath(w http.ResponseWriter, r *http.Request) (sou
 	return rec, true
 }
 
+// writeSourceListError answers with what the source list package said. Its
+// refusals are already whole sentences in the request's language; a failure
+// from below it is a chain of clauses, made into a sentence here.
 func (s *Server) writeSourceListError(w http.ResponseWriter, err error) {
+	message := sourceListSentence(err.Error())
 	switch {
 	case errors.Is(err, sourcelist.ErrNotFound):
-		writeError(w, http.StatusNotFound, CodeNotFound, capitalise(err.Error())+".", "", nil)
+		writeError(w, http.StatusNotFound, CodeNotFound, message, "", nil)
 	case errors.Is(err, sourcelist.ErrNameTaken):
-		writeError(w, http.StatusConflict, CodeValidationFailed, capitalise(err.Error())+".", "name", nil)
+		writeError(w, http.StatusConflict, CodeValidationFailed, message, "name", nil)
 	case errors.Is(err, sourcelist.ErrInUse):
-		writeError(w, http.StatusConflict, CodeValidationFailed, capitalise(err.Error())+".", "", nil)
+		writeError(w, http.StatusConflict, CodeValidationFailed, message, "", nil)
 	default:
-		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			capitalise(err.Error())+".", "", nil)
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, message, "", nil)
 	}
+}
+
+// sourceListSentence makes an error's text a sentence: an initial lower-case
+// Latin letter is raised and a closing full stop added when there is none.
+// Text in another script is left as it is; raising its first byte would break
+// the character.
+func sourceListSentence(text string) string {
+	if text == "" {
+		return text
+	}
+	if c := text[0]; c >= 'a' && c <= 'z' {
+		text = string(c-'a'+'A') + text[1:]
+	}
+	if !strings.HasSuffix(text, ".") {
+		text += "."
+	}
+	return text
 }

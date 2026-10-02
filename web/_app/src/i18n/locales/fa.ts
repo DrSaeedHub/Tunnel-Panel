@@ -259,7 +259,7 @@ export default {
     choose: 'یک فایل ‎.db‎ انتخاب کنید',
     start: 'بازگردانی این پایگاه داده',
     counts:
-      'بازگردانی {{users}} حساب، {{tunnels}} تونل و {{routes}} قاعده‌ی فورواردینگ.',
+      'بازگردانی {{users}} حساب، {{tunnels}} تونل و {{routes}} قانون فوروارد.',
     failed: 'بازگردانی پذیرفته نشد.',
     networkFailed: 'بارگذاری ارسال نشد.',
     timedOut:
@@ -483,6 +483,8 @@ export default {
       note: 'یادداشت',
       keepalive: 'Keepalive',
       monitorTarget: 'مقصد پروب',
+      monitorWindowSize: 'پنجرهٔ پروب',
+      monitorStateChangeSamples: 'تعداد پروب پیش از تغییر وضعیت',
     },
     help: {
       localEndpoint: 'نشانی عمومی این سرور، جایی که همتا ترافیکش را به آن می‌فرستد.',
@@ -516,6 +518,7 @@ export default {
       Networkd: 'فایل‌های systemd-networkd تونل را توصیف می‌کنند.',
       Runtime: 'هسته همین حالا پیکربندی می‌شود؛ چیزی از راه‌اندازی دوباره جان سالم به در نمی‌برد.',
     },
+    direction: { in: 'ورودی', out: 'خروجی' },
   },
 
   tunnelForm: {
@@ -561,6 +564,15 @@ export default {
       breakdown: 'تفکیک سربار',
       unknownUnderlay: 'رابط زیرین تشخیص داده نشد، پس پیشنهادی وجود ندارد.',
       useRecommended: 'استفاده از {{value}}',
+      term: '{{name}}: {{bytes}} بایت',
+      terms: {
+        'outer IPv4 header': 'سرآیند IPv4 بیرونی',
+        'outer IPv6 header': 'سرآیند IPv6 بیرونی',
+        'GRE base header': 'سرآیند پایهٔ GRE',
+        'GRE key': 'کلید GRE',
+        'GRE checksum': 'فیلد Checksum در GRE',
+        'GRE sequence number': 'شمارهٔ Sequence در GRE',
+      },
     },
     preview: {
       title: 'پیش‌نمایش',
@@ -694,6 +706,16 @@ export default {
         MTU_PROBLEM: 'بسته‌های بزرگ رد نمی‌شوند',
         LOCAL_FIREWALL_BLOCK: 'دیواره آتش همین سرور GRE را می‌بندد',
       },
+      evidenceName: {
+        interface: 'رابط',
+        flags: 'پرچم‌های رابط',
+        underlay: 'مسیر تا سرور دیگر',
+        counters: 'شمارنده‌های رابط',
+        tunnel_probe: 'پروب از درون تونل',
+        firewall: 'دیواره آتش',
+        capture: 'ضبط بسته‌ها',
+        packet_size: 'اندازه بسته',
+      },
     },
     ping: {
       title: 'پروب دستی',
@@ -771,7 +793,17 @@ export default {
       refused: 'رد کرد — که خودش یک پاسخ است',
       silent: 'چیزی برنگشت',
     },
-    runs: { title: 'اجراهای اخیر', empty: 'هنوز عیب‌یابی‌ای اجرا نشده است.' },
+    runs: {
+      title: 'اجراهای اخیر',
+      empty: 'هنوز عیب‌یابی‌ای اجرا نشده است.',
+      type: {
+        ping: 'پروب دستی',
+        mtu_probe: 'پروب Path MTU',
+        traceroute: 'Traceroute',
+        analyze: 'تحلیل',
+        tcp: 'بررسی اتصال',
+      },
+    },
   },
 
   settings: {
@@ -810,7 +842,7 @@ export default {
       diagnostics: 'محدودیت‌های ابزارهای عیب‌یابی دستی.',
       keepalive: 'ترافیکی که نمی‌گذارد مسیر بی‌کار بماند.',
       metrics: 'اینکه هر چند وقت از این سرور نمونه گرفته شود و چه چیزی نشان داده شود.',
-      routes: 'مقادیری که هر قاعده فوروارد تازه با آن‌ها شروع می‌شود، و اینکه ترافیک رله‌شده چگونه اندازه گرفته شود. همه برای هر قاعده قابل تغییرند.',
+      routes: 'مقادیری که هر قانون فوروارد تازه با آن‌ها شروع می‌شود، و اینکه ترافیک رله‌شده چگونه اندازه گرفته شود. همه برای هر قانون قابل تغییرند.',
       security: 'نشست‌ها، محدودیت نرخ و مبدأهای مجاز.',
       system: 'نگهداشت، تطبیق و کارهای خانه‌داری.',
     },
@@ -913,7 +945,16 @@ export default {
       apply: 'اعمال این پشتیبان',
       applied: 'پشتیبان اعمال شد.',
       noActions: 'این پشتیبان چیزی را تغییر نمی‌دهد.',
-      action: { apply: 'اعمال', skip: 'رد شدن', create: 'ساخت', update: 'به‌روزرسانی', error: 'ناموفق' },
+      action: {
+        skip: 'دست‌نخورده',
+        would_apply: 'اعمال خواهد شد',
+        applied: 'اعمال شد',
+        would_create: 'ساخته خواهد شد',
+        created: 'ساخته شد',
+        would_fail: 'ناموفق خواهد بود',
+        failed: 'ناموفق',
+      },
+      kind: { setting: 'تنظیم', pool: 'استخر نشانی', tunnel: 'تونل' },
     },
     pools: {
       title: 'استخرهای نشانی',
@@ -993,12 +1034,12 @@ export default {
       PasswordChange: 'تغییر گذرواژه',
       PoolChange: 'تغییر استخر نشانی',
       BackupImport: 'وارد کردن پشتیبان',
-      RouteCreate: 'ساخت قاعده فوروارد',
-      RouteUpdate: 'به‌روزرسانی قاعده فوروارد',
-      RouteDelete: 'حذف قاعده فوروارد',
-      RouteEnable: 'فعال کردن قاعده فوروارد',
-      RouteDisable: 'غیرفعال کردن قاعده فوروارد',
-      RouteReapply: 'اعمال دوباره قاعده فوروارد',
+      RouteCreate: 'ساخت قانون فوروارد',
+      RouteUpdate: 'به‌روزرسانی قانون فوروارد',
+      RouteDelete: 'حذف قانون فوروارد',
+      RouteEnable: 'فعال کردن قانون فوروارد',
+      RouteDisable: 'غیرفعال کردن قانون فوروارد',
+      RouteReapply: 'اعمال دوباره قانون فوروارد',
       PanelAddressChange: 'تغییر نشانی پنل',
       PasswordReset: 'بازنشانی گذرواژه از روی سرور',
       UsernameChange: 'تغییر نام کاربری',
@@ -1491,6 +1532,7 @@ export default {
     PORT_IN_USE_FORCED:
       '{{process}} روی پورت {{port}} گوش می‌دهد. شما اعمال را انتخاب کردید: آن سرویس از لحظهٔ اعمال قانون دیگر ترافیکی روی این پورت دریافت نمی‌کند.',
     unknownProcess: 'فرایندی که این پنل نمی‌تواند شناسایی کند',
+    processWithId: '{{name}} (PID {{pid}})',
     LOOPBACK_DESTINATION:
       '{{address}} یک نشانی loopback است. فوروارد به آن نیاز دارد که route_localnet روی رابط ورودی روشن باشد، و پنل این کار را نمی‌کند: همهٔ سرویس‌هایی که روی localhost گوش می‌دهند روی آن رابط در دسترس قرار می‌گیرند.',
     LOOPBACK_DESTINATION_FORCED:
@@ -1604,7 +1646,7 @@ export default {
       installed: 'آنچه کرنل دارد',
       inSync: 'کرنل دقیقاً همان چیزی را دارد که پنل در نظر دارد.',
       drifted: 'کرنل آنچه را پنل در نظر دارد ندارد. برای اصلاح، دوباره اعمال کنید.',
-      notInstalled: 'هیچ‌کدام از قانون‌های این قاعده در کرنل نیست.',
+      notInstalled: 'هیچ‌کدام از قانون‌های این قانون فوروارد در کرنل نصب نیست.',
       installedCount: '{{formatted}} قانون نصب‌شده',
       installedCount_other: '{{formatted}} قانون نصب‌شده',
       counters: 'هم‌خوانی',
@@ -1660,6 +1702,7 @@ export default {
       tunnel: 'تونل',
       jump_rules: 'پرش‌های زنجیره',
       stalled_flows: 'اتصال‌های گیرکرده',
+      enabled: 'روشن یا خاموش بودن قانون',
     },
   },
 

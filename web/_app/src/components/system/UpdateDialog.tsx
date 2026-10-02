@@ -84,13 +84,13 @@ export function UpdateDialog() {
               check that reached the panel and failed at the release host, which
               is reported with the rest of the answer below. */}
           {!status && error ? (
-            <p className="rounded-md border border-danger/40 bg-danger-muted p-3 text-sm">
+            <p dir="auto" className="rounded-md border border-danger/40 bg-danger-muted p-3 text-sm">
               {describeError(error, t).message}
             </p>
           ) : null}
 
           {startError ? (
-            <p className="rounded-md border border-danger/40 bg-danger-muted p-3 text-sm">
+            <p dir="auto" className="rounded-md border border-danger/40 bg-danger-muted p-3 text-sm">
               {describeError(startError, t).message}
             </p>
           ) : null}
@@ -110,7 +110,11 @@ export function UpdateDialog() {
                 <dd>{formatDateTime(status.checked_at, { locale: language, calendar, digits })}</dd>
               </div>
             ) : null}
-            {status?.error ? <p className="text-danger">{status.error}</p> : null}
+            {status?.error ? (
+              <p dir="auto" className="text-danger">
+                {status.error}
+              </p>
+            ) : null}
           </dl>
         </DialogBody>
 
@@ -156,7 +160,7 @@ function OfferBody() {
   if (!status.update_available) {
     return (
       <div className="space-y-3">
-        <p className="text-sm">
+        <p dir={status.note ? 'auto' : undefined} className="text-sm">
           {status.note ? status.note : t('update.upToDate', { version: status.current_version })}
         </p>
         {status.latest.version ? (
@@ -201,13 +205,15 @@ function OfferBody() {
       ) : null}
 
       {!status.can_apply ? (
-        <p className="rounded-md border border-warn/40 bg-warn-muted p-3 text-sm">{status.reason}</p>
+        <p dir="auto" className="rounded-md border border-warn/40 bg-warn-muted p-3 text-sm">
+          {status.reason}
+        </p>
       ) : null}
 
       {/* A previous attempt that failed is part of the picture here: the
           operator is being asked to press the same button again. */}
       {status.state.stage === 'failed' ? (
-        <p className="rounded-md border border-danger/40 bg-danger-muted p-3 text-sm">
+        <p dir="auto" className="rounded-md border border-danger/40 bg-danger-muted p-3 text-sm">
           {status.state.error || t('update.dialog.failed')}
         </p>
       ) : null}
@@ -264,7 +270,7 @@ function FailedBody() {
     <div className="space-y-3">
       <p className="flex items-start gap-2 text-sm">
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden="true" />
-        {state?.error || t('update.dialog.failed')}
+        <span dir="auto">{state?.error || t('update.dialog.failed')}</span>
       </p>
       <p className="text-sm text-muted-foreground">{t('update.dialog.failedHint')}</p>
       <UpdateLog />

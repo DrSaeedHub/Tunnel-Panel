@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -43,7 +44,7 @@ func TestAnIPv6TunnelIsVerifiedAgainstItsHopLimit(t *testing.T) {
 	// assertion is on its detail rather than on a per-field name. Asserting on
 	// a check called "TTL" passed vacuously, because no such check exists — the
 	// IPv4 case below is what caught that.
-	for _, check := range parameterChecks(desired, observed) {
+	for _, check := range parameterChecks(context.Background(), desired, observed) {
 		if !check.Ok && (strings.Contains(check.Detail, "TTL") || strings.Contains(check.Detail, "hop limit")) {
 			t.Errorf("verification failed for an IPv6 tunnel whose hop limit was honoured: %s\n"+
 				"The hop limit is what was written, so it is what has to be checked.", check.Detail)
@@ -64,7 +65,7 @@ func TestAnIPv4TunnelIsStillVerifiedAgainstItsTtl(t *testing.T) {
 	}
 
 	var sawMismatch bool
-	for _, check := range parameterChecks(desired, observed) {
+	for _, check := range parameterChecks(context.Background(), desired, observed) {
 		if !check.Ok && strings.Contains(check.Detail, "TTL") {
 			sawMismatch = true
 		}

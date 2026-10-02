@@ -179,7 +179,9 @@ export default function TunnelDetailPage() {
       {tunnel.last_apply_error ? (
         <div className="rounded-md border border-danger/30 bg-danger-muted p-3 text-xs" role="alert">
           <p className="font-medium text-danger">{t('apply.lastError')}</p>
-          <p className="mt-1">{tunnel.last_apply_error}</p>
+          <p dir="auto" className="mt-1">
+            {tunnel.last_apply_error}
+          </p>
         </div>
       ) : null}
 
@@ -312,11 +314,21 @@ export default function TunnelDetailPage() {
                         <li key={event.monitor_event_id} className="flex gap-2 text-xs">
                           <StatusDot stateId={event.to_monitor_state_id} className="mt-0.5" />
                           <div className="min-w-0">
+                            {/* The states by their names in this language: the
+                                backend sends its own identifiers ("Up",
+                                "Degraded"), which read as English inside a
+                                Farsi sentence. */}
                             <p>
-                              {t('tunnelDetail.eventLog.from', { state: event.from_state })}{' '}
-                              {t('tunnelDetail.eventLog.to', { state: event.to_state })}
+                              {t('tunnelDetail.eventLog.from', {
+                                state: t(`monitor.state.${event.from_state}`, { defaultValue: event.from_state }),
+                              })}{' '}
+                              {t('tunnelDetail.eventLog.to', {
+                                state: t(`monitor.state.${event.to_state}`, { defaultValue: event.to_state }),
+                              })}
                             </p>
-                            <p className="text-2xs text-muted-foreground">{event.reason}</p>
+                            <p dir="auto" className="text-2xs text-muted-foreground">
+                              {event.reason}
+                            </p>
                             <p className="text-2xs text-muted-foreground">
                               {formatDateTime(event.created_date, { locale: language, calendar, digits })}
                             </p>

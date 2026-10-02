@@ -63,7 +63,7 @@ export function EmptyState({
    */
   illustration?: IllustrationName
   title: string
-  body?: string
+  body?: React.ReactNode
   action?: React.ReactNode
   className?: string
 }) {
@@ -119,7 +119,9 @@ export function ErrorState({
       <div className="flex items-start gap-3">
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-danger" aria-hidden="true" />
         <div className="min-w-0 flex-1 space-y-2">
-          <p className="text-sm font-medium">{message}</p>
+          {/* Usually the backend's own sentence, which may be in the other
+              script from the page around it. */}
+          <p dir="auto" className="text-sm font-medium">{message}</p>
 
           {code || details ? (
             <Collapsible>
@@ -168,7 +170,11 @@ export function describeError(
   }
   if (error instanceof ApiError) {
     const details = Object.keys(error.details).length ? JSON.stringify(error.details, null, 2) : ''
-    return { message: error.message || fallbackMessage(error, t), code: error.code, field: error.field, details }
+    // A failure with no envelope has no code of its own; its status is the one
+    // machine-readable fact it carries, and it belongs with the technical
+    // details rather than in the sentence.
+    const code = error.code === 'UNKNOWN' && error.status ? `HTTP ${error.status}` : error.code
+    return { message: error.message || fallbackMessage(error, t), code, field: error.field, details }
   }
   if (error instanceof Error) {
     return { message: error.message || t('errors.title'), code: '', field: '', details: '' }
@@ -176,6 +182,14 @@ export function describeError(
   return { message: t('errors.title'), code: '', field: '', details: '' }
 }
 
+/**
+ * What to say for a failure the backend did not put into words.
+ *
+ * The code when it has one, and the status otherwise: a reverse proxy's 502
+ * while the panel restarts carries no envelope at all, and "The panel could
+ * not be reached" is the truth of it, where "Request failed with status 502"
+ * was English on every screen and said nothing an operator could act on.
+ */
 function fallbackMessage(error: ApiError, t: (key: string) => string): string {
   switch (error.code) {
     case 'NOT_FOUND':
@@ -190,9 +204,31 @@ function fallbackMessage(error: ApiError, t: (key: string) => string): string {
       return t('errors.conflict')
     case 'INTERNAL_ERROR':
       return t('errors.internal')
-    default:
-      return t('errors.title')
+    case 'RATE_LIMITED':
+      return t('login.rateLimited')
   }
+  switch (error.status) {
+    case 400:
+    case 422:
+      return t('errors.validation')
+    case 401:
+      return t('login.expired')
+    case 403:
+      return t('errors.forbidden')
+    case 404:
+      return t('errors.notFound')
+    case 409:
+      return t('errors.conflict')
+    case 429:
+      return t('login.rateLimited')
+    // A gateway answering for a panel that is not there: the panel itself
+    // never sends these without an envelope.
+    case 502:
+    case 503:
+    case 504:
+      return t('errors.network')
+  }
+  return error.status >= 500 ? t('errors.internal') : t('errors.title')
 }
 
 /** A thin progress bar, used for utilisation rather than for indeterminate waits. */

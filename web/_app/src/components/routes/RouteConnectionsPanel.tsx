@@ -90,11 +90,18 @@ export function RouteConnectionsPanel({ routeRuleId }: { routeRuleId: number }) 
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
             <span>
               {t('routeDetail.connections.unavailable')}
-              {list?.detail ? <span className="block text-2xs text-muted-foreground">{list.detail}</span> : null}
+              {list?.detail ? (
+                <span dir="auto" className="block text-2xs text-muted-foreground">
+                  {list.detail}
+                </span>
+              ) : null}
             </span>
           </p>
         ) : !(list.connections ?? []).length ? (
-          <EmptyState title={t('routeDetail.connections.empty')} body={list.detail} />
+          <EmptyState
+            title={t('routeDetail.connections.empty')}
+            body={list.detail ? <span dir="auto">{list.detail}</span> : undefined}
+          />
         ) : (
           <div className="space-y-3">
             {/* Counted over every flow the rule has, so the numbers on these

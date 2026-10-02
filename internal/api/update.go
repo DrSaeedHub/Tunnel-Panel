@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/update"
 )
@@ -35,7 +36,7 @@ func (s *Server) requireUpdates(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.updates == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Update checking is not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Update checking is not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -96,10 +97,12 @@ func (s *Server) handleUpdateStart(w http.ResponseWriter, r *http.Request) {
 		var unavailable *update.Unavailable
 		switch {
 		case errors.As(err, &unavailable):
-			writeError(w, http.StatusServiceUnavailable, CodeUnavailable, unavailable.Reason, "", nil)
+			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
+				i18n.Tr(r.Context(), unavailable.Reason), "", nil)
 		case errors.Is(err, update.ErrUpdateRunning):
 			writeError(w, http.StatusConflict, CodeConflict,
-				"An update is already running. Watch this one rather than starting a second.", "", nil)
+				i18n.T(r.Context(), "An update is already running. Watch this one rather than starting a second."),
+				"", nil)
 		default:
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, err.Error(), "version", nil)
 		}
@@ -127,7 +130,7 @@ func (s *Server) updateResponse(r *http.Request) updateResponse {
 func (s *Server) buildUpdateResponse(r *http.Request, status update.Status) updateResponse {
 	out := updateResponse{Status: status, State: s.updates.Applier.State(r.Context())}
 	if err := s.updates.Applier.Available(); err != nil {
-		out.Reason = err.Error()
+		out.Reason = i18n.Tr(r.Context(), err.Error())
 		return out
 	}
 	out.CanApply = true

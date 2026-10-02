@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	webui "github.com/drs/gre-panel/web"
 )
 
@@ -149,7 +150,7 @@ func (h *StaticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")
 		writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
-			"That method is not allowed here.", "", nil)
+			i18n.T(languageOf(r), "That method is not allowed here."), "", nil)
 		return
 	}
 

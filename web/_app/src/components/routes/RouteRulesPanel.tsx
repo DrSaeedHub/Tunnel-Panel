@@ -5,6 +5,7 @@ import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import { api } from '@/lib/api'
 import type { ReconcileReport, RouteCounterReport, RoutePreviewResponse } from '@/lib/types'
 import { formatCount, formatVolume } from '@/lib/format'
+import { tunnelFieldLabel } from '@/lib/fieldLabels'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, ErrorState, Skeleton } from '../ui/feedback'
@@ -103,7 +104,9 @@ export function RouteRulesPanel({ routeRuleId }: { routeRuleId: number }) {
             </p>
             {/* The two figures are different measurements, and the backend's own
                 sentence saying so travels with them. */}
-            <p className="mt-1 text-2xs text-muted-foreground">{counters.note}</p>
+            <p dir="auto" className="mt-1 text-2xs text-muted-foreground">
+              {counters.note}
+            </p>
           </div>
         ) : null}
 
@@ -111,12 +114,18 @@ export function RouteRulesPanel({ routeRuleId }: { routeRuleId: number }) {
           <div className="rounded-md border border-warn/40 bg-warn-muted p-3">
             <p className="text-xs font-medium">{t('routeDetail.rules.installed')}</p>
             <ul className="mt-1 space-y-0.5 text-2xs">
+              {/* desired is what the rule should install, actual what the
+                  kernel holds -- both said by the backend. The type used to
+                  name them expected/observed, which the wire never sent, so
+                  every row here was a badge beside two blanks. */}
               {(item.diffs ?? []).map((diff) => (
                 <li key={diff.field} className="flex flex-wrap items-center gap-1.5">
-                  <Badge>{diff.field}</Badge>
-                  <span className="text-muted-foreground">{diff.expected}</span>
+                  <Badge>{tunnelFieldLabel(diff.field, t)}</Badge>
+                  <span dir="auto" className="text-muted-foreground">
+                    {diff.desired}
+                  </span>
                   <span aria-hidden="true">·</span>
-                  <span>{diff.observed}</span>
+                  <span dir="auto">{diff.actual}</span>
                 </li>
               ))}
             </ul>

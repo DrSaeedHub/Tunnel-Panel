@@ -11,6 +11,7 @@ import (
 
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // UnitFileMode is the permission mask for a generated unit file. systemd units
@@ -25,6 +26,13 @@ const BackupSuffix = ".gre-panel-backup"
 // file the panel did not write. It is a hard invariant, not a warning: the file
 // belongs to whatever created it (§17.3).
 var ErrNotPanelOwned = errors.New("persist: this file was not written by the panel")
+
+// notOwnedError is ErrNotPanelOwned said as a whole sentence that names the
+// file, in the language of the request. errors.Is still recognises it.
+type notOwnedError struct{ sentence string }
+
+func (e *notOwnedError) Error() string { return e.sentence }
+func (e *notOwnedError) Unwrap() error { return ErrNotPanelOwned }
 
 // Store reads and writes the generated files and drives systemctl.
 type Store struct {
@@ -78,13 +86,16 @@ func Exists(path string) bool {
 
 // IsPanelOwned reports whether a file carries the ownership marker. A file that
 // does not exist counts as owned, because writing it creates it fresh.
+//
+// It is handed no request, so a file it cannot read is reported in the
+// panel's language.
 func IsPanelOwned(path string) (bool, error) {
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("reading %s: %w", path, err)
+		return false, i18n.Errorf(context.Background(), "reading %s: %w", path, err)
 	}
 	return strings.Contains(string(raw), OwnershipMarker), nil
 }
@@ -99,8 +110,8 @@ func (s *Store) Write(ctx context.Context, path, content string, takeover bool) 
 	}
 	if !owned {
 		if !takeover {
-			return "", fmt.Errorf("%w: %s. Adopt the tunnel with takeover to let the panel manage it",
-				ErrNotPanelOwned, path)
+			return "", &notOwnedError{i18n.T(ctx, "%s was not written by the panel. Adopt the tunnel "+
+				"with takeover to let the panel manage it", path)}
 		}
 		backupPath, err = s.Backup(ctx, path)
 		if err != nil {
@@ -109,20 +120,20 @@ func (s *Store) Write(ctx context.Context, path, content string, takeover bool) 
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return backupPath, fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+		return backupPath, i18n.Errorf(ctx, "creating %s: %w", filepath.Dir(path), err)
 	}
 	// Write to a sibling and rename, so a crash mid-write cannot leave systemd
 	// reading half a unit file.
 	temp := path + ".tmp"
 	if err := os.WriteFile(temp, []byte(content), UnitFileMode); err != nil {
-		return backupPath, fmt.Errorf("writing %s: %w", temp, err)
+		return backupPath, i18n.Errorf(ctx, "writing %s: %w", temp, err)
 	}
 	if err := os.Rename(temp, path); err != nil {
 		_ = os.Remove(temp)
-		return backupPath, fmt.Errorf("installing %s: %w", path, err)
+		return backupPath, i18n.Errorf(ctx, "installing %s: %w", path, err)
 	}
 	if err := os.Chmod(path, UnitFileMode); err != nil {
-		return backupPath, fmt.Errorf("setting permissions on %s: %w", path, err)
+		return backupPath, i18n.Errorf(ctx, "setting permissions on %s: %w", path, err)
 	}
 	s.trace(ctx, "write "+path, nil)
 	return backupPath, nil
@@ -135,7 +146,7 @@ func (s *Store) Backup(ctx context.Context, path string) (string, error) {
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("reading %s to back it up: %w", path, err)
+		return "", i18n.Errorf(ctx, "reading %s to back it up: %w", path, err)
 	}
 	now := time.Now
 	if s.Now != nil {
@@ -143,7 +154,7 @@ func (s *Store) Backup(ctx context.Context, path string) (string, error) {
 	}
 	backup := fmt.Sprintf("%s%s.%s", path, BackupSuffix, now().UTC().Format("20060102T150405Z"))
 	if err := os.WriteFile(backup, raw, UnitFileMode); err != nil {
-		return "", fmt.Errorf("writing the backup %s: %w", backup, err)
+		return "", i18n.Errorf(ctx, "writing the backup %s: %w", backup, err)
 	}
 	s.trace(ctx, "backup "+path+" to "+backup, nil)
 	return backup, nil
@@ -162,7 +173,8 @@ func (s *Store) Remove(ctx context.Context, path string, takeover bool) (backupP
 	}
 	if !owned {
 		if !takeover {
-			return "", fmt.Errorf("%w: %s", ErrNotPanelOwned, path)
+			return "", &notOwnedError{i18n.T(ctx, "%s was not written by the panel, so the panel will "+
+				"not delete it", path)}
 		}
 		backupPath, err = s.Backup(ctx, path)
 		if err != nil {
@@ -170,7 +182,7 @@ func (s *Store) Remove(ctx context.Context, path string, takeover bool) (backupP
 		}
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return backupPath, fmt.Errorf("removing %s: %w", path, err)
+		return backupPath, i18n.Errorf(ctx, "removing %s: %w", path, err)
 	}
 	s.trace(ctx, "remove "+path, nil)
 	return backupPath, nil

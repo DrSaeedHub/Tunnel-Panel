@@ -2,10 +2,10 @@ package diag
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
@@ -101,15 +101,16 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	observed, err := s.links.Get(ctx, name)
 	if err != nil {
 		result.Verdict = VerdictInterfaceMissing
-		result.Summary = fmt.Sprintf("There is no interface called %s on this host.", name)
-		result.add("interface", "the interface was not found", map[string]any{"interface_name": name})
+		result.Summary = i18n.T(ctx, "There is no interface called %s on this host.", name)
+		result.add("interface", i18n.T(ctx, "the interface was not found"),
+			map[string]any{"interface_name": name})
 		result.SuggestedFix = []string{
-			"Reapply this tunnel, which rebuilds it from the stored configuration.",
-			"Check whether something outside the panel removed it.",
+			i18n.T(ctx, "Reapply this tunnel, which rebuilds it from the stored configuration."),
+			i18n.T(ctx, "Check whether something outside the panel removed it."),
 		}
 		return result
 	}
-	result.add("interface", fmt.Sprintf("%s exists as a %s interface with an MTU of %d",
+	result.add("interface", i18n.T(ctx, "%s exists as a %s interface with an MTU of %d",
 		name, observed.Kind, observed.MTU),
 		map[string]any{"kind": observed.Kind, "mtu": observed.MTU, "oper_state": observed.OperState})
 
@@ -118,17 +119,17 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	// used to decide (§2).
 	if !observed.IsUp || !observed.IsLowerUp {
 		result.Verdict = VerdictInterfaceDown
-		result.Summary = fmt.Sprintf("%s exists but is not up: its flags are %s.",
+		result.Summary = i18n.T(ctx, "%s exists but is not up: its flags are %s.",
 			name, strings.Join(observed.Flags, ","))
-		result.add("flags", "the interface is missing UP or LOWER_UP",
+		result.add("flags", i18n.T(ctx, "the interface is missing UP or LOWER_UP"),
 			map[string]any{"flags": observed.Flags, "oper_state": observed.OperState})
 		result.SuggestedFix = []string{
-			"Bring the tunnel up from the panel.",
-			"Reapply it if bringing it up does not work.",
+			i18n.T(ctx, "Bring the tunnel up from the panel."),
+			i18n.T(ctx, "Reapply it if bringing it up does not work."),
 		}
 		return result
 	}
-	result.add("flags", fmt.Sprintf("the flags are %s and the operational state is %s, which is normal "+
+	result.add("flags", i18n.T(ctx, "the flags are %s and the operational state is %s, which is normal "+
 		"for a point-to-point tunnel", strings.Join(observed.Flags, ","), observed.OperState), nil)
 
 	source, target := probeEndpoints(rec)
@@ -143,13 +144,13 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 		}, nil)
 		switch {
 		case err != nil:
-			result.add("underlay", "the underlay could not be probed: "+err.Error(), nil)
+			result.add("underlay", i18n.T(ctx, "the underlay could not be probed: %v", err), nil)
 		case reply.Received > 0:
 			underlayReachable = true
-			result.add("underlay", fmt.Sprintf("%d of %d probes to the remote endpoint %s were answered",
+			result.add("underlay", i18n.T(ctx, "%d of %d probes to the remote endpoint %s were answered",
 				reply.Received, reply.Sent, rec.RemoteEndpoint), reply)
 		default:
-			result.add("underlay", fmt.Sprintf("none of the %d probes to the remote endpoint %s were answered",
+			result.add("underlay", i18n.T(ctx, "none of the %d probes to the remote endpoint %s were answered",
 				reply.Sent, rec.RemoteEndpoint), reply)
 		}
 	}
@@ -159,7 +160,7 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	before, after, elapsed := s.watchCounters(ctx, name, params.SampleSeconds)
 	txMoved := after.TxBytes > before.TxBytes
 	rxMoved := after.RxBytes > before.RxBytes
-	result.add("counters", fmt.Sprintf(
+	result.add("counters", i18n.T(ctx,
 		"over %.1f s the interface sent %d bytes and received %d bytes",
 		elapsed, after.TxBytes-before.TxBytes, saturating(after.RxBytes, before.RxBytes)),
 		map[string]any{
@@ -177,15 +178,16 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 			Count: 5, Interval: 200 * time.Millisecond, Timeout: time.Second,
 		}, nil)
 		if err != nil {
-			result.add("tunnel_probe", "the tunnel could not be probed: "+err.Error(), nil)
+			result.add("tunnel_probe", i18n.T(ctx, "the tunnel could not be probed: %v", err), nil)
 		} else {
 			tunnelReachable = reply.Received > 0
 			tunnelLoss = reply.LossPercent
-			result.add("tunnel_probe", fmt.Sprintf("%d of %d probes through the tunnel were answered",
+			result.add("tunnel_probe", i18n.T(ctx, "%d of %d probes through the tunnel were answered",
 				reply.Received, reply.Sent), reply)
 		}
 	} else {
-		result.add("tunnel_probe", "this tunnel has no address pair, so it cannot be probed end to end", nil)
+		result.add("tunnel_probe", i18n.T(ctx, "this tunnel has no address pair, so it cannot be probed "+
+			"end to end"), nil)
 	}
 
 	firewall := s.inspectFirewall(ctx)
@@ -199,7 +201,7 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	// The tunnel works.
 	if tunnelReachable && tunnelLoss == 0 {
 		result.Verdict = VerdictHealthy
-		result.Summary = fmt.Sprintf("%s is up and carrying traffic: every probe through it was answered.", name)
+		result.Summary = i18n.T(ctx, "%s is up and carrying traffic: every probe through it was answered.", name)
 		return result
 	}
 
@@ -208,9 +210,10 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	if firewall != nil && firewall.Data != nil {
 		if blocked, ok := firewall.Data.(map[string]any)["blocks_gre"].(bool); ok && blocked {
 			result.Verdict = VerdictLocalFirewall
-			result.Summary = "A firewall rule on this host affects protocol 47, which is what GRE uses."
+			result.Summary = i18n.T(ctx, "A firewall rule on this host affects protocol 47, which is what GRE uses.")
 			result.SuggestedFix = []string{
-				"Review the rule the evidence quotes and allow protocol 47 to and from the remote endpoint.",
+				i18n.T(ctx, "Review the rule the evidence quotes and allow protocol 47 to and from the remote "+
+					"endpoint."),
 			}
 			return result
 		}
@@ -220,11 +223,11 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	// 4. Sending but nothing coming back.
 	case txMoved && !rxMoved:
 		result.Verdict = VerdictNoReturnTraffic
-		result.Summary = fmt.Sprintf("%s is sending but nothing is coming back.", name)
+		result.Summary = i18n.T(ctx, "%s is sending but nothing is coming back.", name)
 		result.SuggestedFix = []string{
-			"Protocol 47 may be filtered by a provider or a firewall between the two servers.",
-			"The other end may not be configured yet; check that its tunnel exists and is up.",
-			fmt.Sprintf("The remote endpoint may be wrong: this tunnel points at %s.", rec.RemoteEndpoint),
+			i18n.T(ctx, "Protocol 47 may be filtered by a provider or a firewall between the two servers."),
+			i18n.T(ctx, "The other end may not be configured yet; check that its tunnel exists and is up."),
+			i18n.T(ctx, "The remote endpoint may be wrong: this tunnel points at %s.", rec.RemoteEndpoint),
 		}
 		return result
 
@@ -232,12 +235,13 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	// getting here and being rejected or misdirected.
 	case rxMoved && !tunnelReachable:
 		result.Verdict = VerdictKeyOrAddressing
-		result.Summary = fmt.Sprintf(
+		result.Summary = i18n.T(ctx,
 			"%s is receiving traffic, but probes through it are not being answered.", name)
 		result.SuggestedFix = []string{
-			"Check that the GRE keys match exactly on both servers; a mismatch makes the kernel drop the packets.",
-			fmt.Sprintf("Check that the peer address %s is inside this tunnel's own subnet.", target),
-			"Check that the MTU, the checksum flags and the sequence flags match on both ends.",
+			i18n.T(ctx, "Check that the GRE keys match exactly on both servers; a mismatch makes the kernel "+
+				"drop the packets."),
+			i18n.T(ctx, "Check that the peer address %s is inside this tunnel's own subnet.", target),
+			i18n.T(ctx, "Check that the MTU, the checksum flags and the sequence flags match on both ends."),
 		}
 		return result
 
@@ -247,22 +251,23 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 			result.Evidence = append(result.Evidence, *mtu)
 			if broken, ok := mtu.Data.(map[string]any)["large_packets_fail"].(bool); ok && broken {
 				result.Verdict = VerdictMtuProblem
-				result.Summary = fmt.Sprintf(
+				result.Summary = i18n.T(ctx,
 					"%s answers small packets but not large ones, which is an MTU problem.", name)
 				result.SuggestedFix = []string{
-					"Run the path MTU probe and apply the tunnel MTU it recommends.",
-					"Set the same MTU on both ends: they have to agree.",
+					i18n.T(ctx, "Run the path MTU probe and apply the tunnel MTU it recommends."),
+					i18n.T(ctx, "Set the same MTU on both ends: they have to agree."),
 				}
 				return result
 			}
 		}
 		result.Verdict = VerdictHealthy
-		result.Summary = fmt.Sprintf("%s is up and answering, with %.0f%% of probes lost.", name, tunnelLoss)
+		result.Summary = i18n.T(ctx, "%s is up and answering, with %.0f%% of probes lost.", name, tunnelLoss)
 		if tunnelLoss > 0 {
 			result.Confidence = ConfidenceLow
-			result.Summary = fmt.Sprintf("%s is answering but losing %.0f%% of probes.", name, tunnelLoss)
+			result.Summary = i18n.T(ctx, "%s is answering but losing %.0f%% of probes.", name, tunnelLoss)
 			result.SuggestedFix = []string{
-				"Watch the monitoring history: intermittent loss is usually the path rather than the tunnel.",
+				i18n.T(ctx, "Watch the monitoring history: intermittent loss is usually the path rather than "+
+					"the tunnel."),
 			}
 		}
 		return result
@@ -272,23 +277,23 @@ func (s *Service) analyze(ctx context.Context, rec tunnel.Record, params Analyze
 	if !underlayReachable {
 		result.Verdict = VerdictUnderlayUnreachable
 		result.Confidence = ConfidenceLow
-		result.Summary = fmt.Sprintf(
+		result.Summary = i18n.T(ctx,
 			"The remote endpoint %s did not answer, so the two servers may not be able to reach each other at all.",
 			rec.RemoteEndpoint)
 		result.SuggestedFix = []string{
-			"Check that the remote endpoint address is right.",
-			"ICMP is often filtered while GRE still works, so confirm this before acting on it.",
-			"Check that the other end is up and reachable by some other means.",
+			i18n.T(ctx, "Check that the remote endpoint address is right."),
+			i18n.T(ctx, "ICMP is often filtered while GRE still works, so confirm this before acting on it."),
+			i18n.T(ctx, "Check that the other end is up and reachable by some other means."),
 		}
 		return result
 	}
 
 	result.Verdict = VerdictNoReturnTraffic
-	result.Summary = fmt.Sprintf(
+	result.Summary = i18n.T(ctx,
 		"The remote endpoint answers, but %s is not carrying traffic in either direction.", name)
 	result.SuggestedFix = []string{
-		"Protocol 47 may be filtered even though ICMP is not.",
-		"Check that the other end's tunnel exists, is up, and points back at this server.",
+		i18n.T(ctx, "Protocol 47 may be filtered even though ICMP is not."),
+		i18n.T(ctx, "Check that the other end's tunnel exists, is up, and points back at this server."),
 	}
 	return result
 }
@@ -346,8 +351,8 @@ func (s *Service) probeMtuShape(ctx context.Context, rec tunnel.Record, source, 
 	broken := small.Received > 0 && big.Received == 0
 	return &Evidence{
 		Name: "packet_size",
-		Detail: fmt.Sprintf("small packets: %d of %d answered; packets filling the %d-byte MTU: %d of %d answered",
-			small.Received, small.Sent, rec.Mtu, big.Received, big.Sent),
+		Detail: i18n.T(ctx, "small packets: %d of %d answered; packets filling the %d-byte MTU: %d of %d "+
+			"answered", small.Received, small.Sent, rec.Mtu, big.Received, big.Sent),
 		Data: map[string]any{
 			"large_packets_fail": broken,
 			"small_received":     small.Received,
@@ -372,8 +377,9 @@ func (s *Service) inspectFirewall(ctx context.Context) *Evidence {
 	}
 	if len(attempts) == 0 || s.runner == nil {
 		return &Evidence{
-			Name:   "firewall",
-			Detail: "neither nft nor iptables is available here, so local firewall rules were not inspected",
+			Name: "firewall",
+			Detail: i18n.T(ctx, "neither nft nor iptables is available here, so local firewall rules were "+
+				"not inspected"),
 		}
 	}
 
@@ -385,7 +391,7 @@ func (s *Service) inspectFirewall(ctx context.Context) *Evidence {
 		matches := greRules(result.Stdout)
 		return &Evidence{
 			Name: "firewall",
-			Detail: fmt.Sprintf("%s reported %d rule(s) mentioning protocol 47",
+			Detail: i18n.T(ctx, "%s reported %d rule(s) mentioning protocol 47",
 				a.bin, len(matches)),
 			Data: map[string]any{
 				"tool":       a.bin,
@@ -394,7 +400,7 @@ func (s *Service) inspectFirewall(ctx context.Context) *Evidence {
 			},
 		}
 	}
-	return &Evidence{Name: "firewall", Detail: "the firewall rules could not be read"}
+	return &Evidence{Name: "firewall", Detail: i18n.T(ctx, "the firewall rules could not be read")}
 }
 
 // greRules picks out the rules that mention protocol 47 by any of its names.
@@ -432,13 +438,14 @@ func blocksGre(rules []string) bool {
 func (s *Service) capture(ctx context.Context, params AnalyzeParams, observed link.Link, rec tunnel.Record) *Evidence {
 	allowed := s.settings == nil || s.settings.Bool("diagnostics.allow_tcpdump")
 	if !allowed {
-		return &Evidence{Name: "capture", Detail: "packet capture is switched off in the settings"}
+		return &Evidence{Name: "capture", Detail: i18n.T(ctx, "packet capture is switched off in the settings")}
 	}
 	if !params.Capture {
 		return nil
 	}
 	if s.tcpdumpBin == "" || s.runner == nil {
-		return &Evidence{Name: "capture", Detail: "tcpdump is not installed here, so nothing was captured"}
+		return &Evidence{Name: "capture",
+			Detail: i18n.T(ctx, "tcpdump is not installed here, so nothing was captured")}
 	}
 
 	device := observed.Name
@@ -456,9 +463,9 @@ func (s *Service) capture(ctx context.Context, params AnalyzeParams, observed li
 	result, err := s.runner.Run(captureCtx, []string{
 		s.tcpdumpBin, "-ni", device, "-c", "5", "proto", "gre",
 	})
-	detail := fmt.Sprintf("captured on %s", device)
+	detail := i18n.T(ctx, "captured on %s", device)
 	if err != nil {
-		detail = fmt.Sprintf("the capture on %s ended without seeing five GRE packets", device)
+		detail = i18n.T(ctx, "the capture on %s ended without seeing five GRE packets", device)
 	}
 	return &Evidence{
 		Name:   "capture",

@@ -169,10 +169,10 @@ func TestTheRecommendedAlgorithmIsOfferedEvenWhenTheModuleIsNotLoadedYet(t *test
 			t.Errorf("%s is not offered", want)
 		}
 	}
-	if err := host.Validate("net.ipv4.tcp_congestion_control", "bbr"); err != nil {
+	if err := host.Validate(context.Background(), "net.ipv4.tcp_congestion_control", "bbr"); err != nil {
 		t.Errorf("the panel's own recommendation is refused: %v", err)
 	}
-	if err := host.Validate("net.ipv4.tcp_congestion_control", "vegas"); err == nil {
+	if err := host.Validate(context.Background(), "net.ipv4.tcp_congestion_control", "vegas"); err == nil {
 		t.Error("an algorithm this kernel does not have was accepted")
 	}
 }

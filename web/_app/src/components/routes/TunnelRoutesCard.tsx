@@ -3,12 +3,31 @@ import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { Waypoints } from 'lucide-react'
 
+import type { TFunction } from 'i18next'
+
 import { api } from '@/lib/api'
-import type { TunnelRoutesResponse } from '@/lib/types'
+import { RouteProtocol, type TunnelRoutesResponse } from '@/lib/types'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, EmptyState, ErrorState, Skeleton } from '../ui/feedback'
 import { Technical } from '../ui/technical'
 import { RouteFlow } from './RouteFlow'
+
+/** The wire protocol names (rules.Protocol in Go) and their lookup identifiers. */
+const PROTOCOL_IDS: Record<string, number> = {
+  tcp: RouteProtocol.TCP,
+  udp: RouteProtocol.UDP,
+  both: RouteProtocol.Both,
+}
+
+/**
+ * A rule's protocol, labelled the way the rules list labels it. This endpoint
+ * sends the wire name ("both") rather than the lookup id, and upper-casing it
+ * printed "BOTH" where everywhere else says "TCP + UDP".
+ */
+function protocolLabel(protocol: string, t: TFunction): string {
+  const id = PROTOCOL_IDS[protocol.toLowerCase()]
+  return id ? t(`routes.protocol.${id}`) : protocol.toUpperCase()
+}
 
 /**
  * The forwarding rules relaying over one tunnel, on its detail page (§10).
@@ -59,7 +78,7 @@ export function TunnelRoutesCard({ tunnelId }: { tunnelId: number }) {
                   >
                     {dependant.title}
                   </Link>
-                  <Badge>{dependant.protocol.toUpperCase()}</Badge>
+                  <Badge>{protocolLabel(dependant.protocol, t)}</Badge>
                   {!dependant.is_enabled ? <Badge>{t('states.disabled')}</Badge> : null}
                   <RouteFlow size="sm" bind={dependant.bind} destination={dependant.destination} />
                 </li>

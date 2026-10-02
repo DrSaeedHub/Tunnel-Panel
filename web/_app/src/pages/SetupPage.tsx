@@ -7,6 +7,7 @@ import { ApiError, NetworkError } from '@/lib/api'
 import { useAuth } from '@/providers/AuthProvider'
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/form'
+import { describeError } from '@/components/ui/feedback'
 import { LanguageMenu } from '@/components/layout/LanguageMenu'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
@@ -61,7 +62,10 @@ export default function SetupPage() {
         setError(t('errors.network'))
       } else if (caught instanceof ApiError) {
         setFieldErrors(caught.fieldErrors)
-        setError(Object.keys(caught.fieldErrors).length ? null : caught.message)
+        // Only the two fields this form has can carry an error under them;
+        // anything else is said above the form rather than lost.
+        const placed = Object.keys(caught.fieldErrors).some((key) => key === 'username' || key === 'password')
+        setError(placed ? null : describeError(caught, t).message)
       } else {
         setError(t('errors.title'))
       }
@@ -90,7 +94,7 @@ export default function SetupPage() {
 
           <form onSubmit={submit} className="card-surface space-y-4 rounded-xl p-6 shadow-pop">
             {error ? (
-              <p className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
+              <p dir="auto" className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
                 {error}
               </p>
             ) : null}

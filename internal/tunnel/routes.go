@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/validate"
 )
@@ -127,12 +128,31 @@ func (s *Service) routeDependencyWarning(ctx context.Context, tunnelID int64,
 	if len(enabled) == 0 {
 		return nil
 	}
+	list := strings.Join(enabled, clauseSeparator(i18n.Language(ctx)))
+
+	// One whole sentence for each way the tunnel can go, because the verb
+	// moves in a language other than English.
+	var message string
+	switch action {
+	case "down":
+		message = i18n.T(ctx, "%d forwarding rule(s) send their traffic through %s and stop working "+
+			"when it goes down: %s. Their rules stay installed and correct; the path they use is what "+
+			"disappears.", len(enabled), rec.InterfaceName, list)
+	default:
+		message = i18n.T(ctx, "%d forwarding rule(s) send their traffic through %s and stop working "+
+			"when it goes away: %s. Their rules stay installed and correct; the path they use is what "+
+			"disappears.", len(enabled), rec.InterfaceName, list)
+	}
 	return []validate.Warning{{
-		Code:  WarnRouteDependants,
-		Field: "tunnel_id",
-		Message: fmt.Sprintf("%d forwarding rule(s) send their traffic through %s and stop working "+
-			"when it goes %s: %s. Their rules stay installed and correct; the path they use is what "+
-			"disappears.", len(enabled), rec.InterfaceName, action, strings.Join(enabled, "; ")),
+		Code:    WarnRouteDependants,
+		Field:   "tunnel_id",
+		Message: message,
+		Details: map[string]any{
+			"count":          len(enabled),
+			"interface_name": rec.InterfaceName,
+			"action":         action,
+			"rules":          enabled,
+		},
 	}}
 }
 

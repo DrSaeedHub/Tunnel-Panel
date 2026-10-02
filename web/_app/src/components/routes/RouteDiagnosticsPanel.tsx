@@ -112,7 +112,7 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
 
       <CardContent className="space-y-4">
         {error ? (
-          <p className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
+          <p dir="auto" className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
             {error}
           </p>
         ) : null}
@@ -150,7 +150,9 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
                   <Badge tone="neutral">{t('routeDiag.confidence.low')}</Badge>
                 ) : null}
               </p>
-              <p className="mt-1 text-xs">{analysis.summary}</p>
+              <p dir="auto" className="mt-1 text-xs">
+                {analysis.summary}
+              </p>
               <p className="mt-1 text-2xs text-muted-foreground">
                 {formatDateTime(analysis.checked_at, { locale: language, calendar, digits })}
               </p>
@@ -163,7 +165,7 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
                   {(analysis.suggested_fix ?? []).map((fix, index) => (
                     <li key={fix} className="flex gap-2">
                       <span className="tabular shrink-0 text-muted-foreground">{index + 1}.</span>
-                      <span>{fix}</span>
+                      <span dir="auto">{fix}</span>
                     </li>
                   ))}
                 </ol>
@@ -186,7 +188,9 @@ export function RouteDiagnosticsPanel({ route }: { route: RouteRule }) {
                   <p className="text-xs font-medium">
                     {t(`routeDiag.evidenceName.${evidence.name}`, evidence.name)}
                   </p>
-                  <p className="text-2xs text-muted-foreground">{evidence.detail}</p>
+                  <p dir="auto" className="text-2xs text-muted-foreground">
+                    {evidence.detail}
+                  </p>
                   {evidence.data ? (
                     <TechnicalBlock className="mt-1 max-h-40 text-2xs">
                       {JSON.stringify(evidence.data, null, 2)}
@@ -260,7 +264,9 @@ function ProbeList({
                 <Badge tone="neutral">{t('states.disabled')}</Badge>
               ) : null}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">{probe.detail}</p>
+            <p dir="auto" className="mt-1 text-xs text-muted-foreground">
+              {probe.detail}
+            </p>
             {out ? (
               <p className="mt-1 text-2xs text-muted-foreground">
                 {probe.is_suppressed

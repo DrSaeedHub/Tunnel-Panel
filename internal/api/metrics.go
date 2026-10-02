@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/metrics"
 )
 
@@ -13,7 +14,7 @@ func (s *Server) requireMetrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.metrics == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"System metrics are not available on this instance.", "", nil)
+				i18n.T(r.Context(), "System metrics are not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -57,7 +58,7 @@ func (s *Server) handleMetricsHistory(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMetricsStream(w http.ResponseWriter, r *http.Request) {
 	stream, ok := newSSE(w)
 	if !ok {
-		streamNotSupported(w)
+		streamNotSupported(w, r)
 		return
 	}
 

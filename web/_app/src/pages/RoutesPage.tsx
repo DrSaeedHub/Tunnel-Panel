@@ -868,7 +868,9 @@ function RouteExpansion({ entry, tunnel }: { entry: RouteResponse; tunnel?: Name
         {rule.last_apply_error ? (
           <div className="sm:col-span-2 lg:col-span-4">
             <dt className="text-muted-foreground">{t('apply.lastError')}</dt>
-            <dd className="text-danger">{rule.last_apply_error}</dd>
+            <dd dir="auto" className="text-danger">
+              {rule.last_apply_error}
+            </dd>
           </div>
         ) : null}
       </dl>

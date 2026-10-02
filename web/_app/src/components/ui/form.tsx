@@ -109,7 +109,9 @@ export function Field({ label, htmlFor, description, error, required, aside, chi
           })
         : children}
       {error ? (
-        <p id={describedBy} className="text-xs text-danger" role="alert">
+        // Almost always the backend's validation message, laid out by its own
+        // direction rather than the page's.
+        <p id={describedBy} dir="auto" className="text-xs text-danger" role="alert">
           {error}
         </p>
       ) : description ? (

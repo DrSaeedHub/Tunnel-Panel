@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Pencil, Plus, Trash2 } from 'lucide-react'
 
-import { api } from '@/lib/api'
+import { ApiError, api } from '@/lib/api'
 import type { PoolResponse } from '@/lib/types'
 import { formatCount } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
@@ -102,7 +102,12 @@ export function PoolsSection() {
                       used: formatCount(pool.in_use, digits, language),
                       total: formatCount(pool.capacity.capacity, digits, language),
                     })}
-                    {pool.description ? ` · ${pool.description}` : ''}
+                    {pool.description ? (
+                      <>
+                        {' · '}
+                        <bdi>{pool.description}</bdi>
+                      </>
+                    ) : null}
                   </p>
                   {pool.is_public_range ? (
                     <p className="mt-1 text-2xs text-danger">{t('settings.pools.publicRangeWarning')}</p>
@@ -199,7 +204,10 @@ function PoolDialog({
     },
     onError: (error) => {
       const described = describeError(error, t)
-      setErrors(error instanceof Error && 'fieldErrors' in error ? (error as never) : {})
+      // The per-field messages, not the error itself: storing the ApiError
+      // here made every lookup below read a property of the error object, so
+      // "A pool needs a name" never appeared under the name.
+      setErrors(error instanceof ApiError ? error.fieldErrors : {})
       toast({ tone: 'error', title: t('actions.save'), description: described.message })
     },
   })
@@ -238,7 +246,7 @@ function PoolDialog({
               />
             )}
           </Field>
-          <Field label={t('settings.pools.description')}>
+          <Field label={t('settings.pools.description')} error={errors['description']}>
             {(props) => (
               <Input {...props} value={description} onChange={(event) => setDescription(event.target.value)} />
             )}

@@ -2,9 +2,9 @@ package diag
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
 	"github.com/drs/gre-panel/internal/tunnel"
@@ -98,7 +98,7 @@ func (s *Service) MtuProbe(ctx context.Context, tunnelID int64, params MtuParams
 		result.Target = params.Target
 	}
 	if result.Source == "" || result.Target == "" {
-		return Run{}, result, fmt.Errorf("there is no address pair to probe between")
+		return Run{}, result, i18n.Errorf(ctx, "there is no address pair to probe between")
 	}
 
 	low := params.Min
@@ -138,7 +138,7 @@ func (s *Service) MtuProbe(ctx context.Context, tunnelID int64, params MtuParams
 		result.ReportedPathMtu = floorStep.ReportedMtu
 	}
 	if !floor {
-		result.Detail = fmt.Sprintf("even a %d-byte packet did not get through, so this is not an MTU "+
+		result.Detail = i18n.T(ctx, "even a %d-byte packet did not get through, so this is not an MTU "+
 			"problem: the path is not carrying traffic at all.", low)
 		s.finishMtu(ctx, runID, result, false)
 		release()
@@ -187,14 +187,14 @@ func (s *Service) MtuProbe(ctx context.Context, tunnelID int64, params MtuParams
 
 	switch {
 	case result.Matches:
-		result.Detail = fmt.Sprintf("the path carries %d-byte packets, and this tunnel's MTU of %d is "+
+		result.Detail = i18n.T(ctx, "the path carries %d-byte packets, and this tunnel's MTU of %d is "+
 			"already the right value for it.", result.DiscoveredPathMtu, result.CurrentTunnelMtu)
 	case result.Path == "underlay":
-		result.Detail = fmt.Sprintf("the path carries %d-byte packets. Less %d bytes of encapsulation "+
+		result.Detail = i18n.T(ctx, "the path carries %d-byte packets. Less %d bytes of encapsulation "+
 			"that makes a tunnel MTU of %d; this tunnel is set to %d.",
 			result.DiscoveredPathMtu, result.Overhead, result.RecommendedTunnelMtu, result.CurrentTunnelMtu)
 	default:
-		result.Detail = fmt.Sprintf("the tunnel carries %d-byte packets; its MTU is set to %d.",
+		result.Detail = i18n.T(ctx, "the tunnel carries %d-byte packets; its MTU is set to %d.",
 			result.DiscoveredPathMtu, result.CurrentTunnelMtu)
 	}
 
@@ -221,7 +221,7 @@ func (s *Service) probeSize(ctx context.Context, tunnelID int64, source, target 
 	step := MtuStep{PacketSize: packetSize}
 	payload := packetSize - overhead
 	if payload < monitor.MinPacketSize {
-		step.Detail = fmt.Sprintf("a %d-byte packet is too small to carry a probe", packetSize)
+		step.Detail = i18n.T(ctx, "a %d-byte packet is too small to carry a probe", packetSize)
 		return false, step
 	}
 
@@ -240,28 +240,28 @@ func (s *Service) probeSize(ctx context.Context, tunnelID int64, source, target 
 		}
 		if result.ReportedMtu > 0 {
 			step.ReportedMtu = result.ReportedMtu
-			step.Detail = fmt.Sprintf("a router on the path reported an MTU of %d", result.ReportedMtu)
+			step.Detail = i18n.T(ctx, "a router on the path reported an MTU of %d", result.ReportedMtu)
 			return false, step
 		}
 		if result.TooLargeToSend {
 			// The packet never left the host, so there was never a reply to
 			// wait for and a second attempt would fail identically. This is the
 			// most definite evidence the search can get.
-			step.Detail = fmt.Sprintf(
+			step.Detail = i18n.T(ctx,
 				"the kernel refused to send %d bytes without fragmenting, so it is larger than the outgoing interface allows",
 				packetSize)
 			return false, step
 		}
 		if result.Received > 0 {
 			step.Fits = true
-			step.Detail = "the packet got through"
+			step.Detail = i18n.T(ctx, "the packet got through")
 			return true, step
 		}
 		if ctx.Err() != nil {
 			break
 		}
 	}
-	step.Detail = "no reply, so the packet did not get through"
+	step.Detail = i18n.T(ctx, "no reply, so the packet did not get through")
 	return false, step
 }
 

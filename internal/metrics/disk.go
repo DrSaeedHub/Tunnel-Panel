@@ -2,10 +2,13 @@ package metrics
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // pseudoFilesystems are the kernel's own filesystems: real enough to appear in
@@ -108,7 +111,7 @@ func (r *Reader) Mounts() ([]Mount, error) {
 func (r *Reader) mountInfo() ([]Mount, error) {
 	file, err := os.Open(r.path("proc", "self", "mountinfo"))
 	if err != nil {
-		return nil, fmt.Errorf("reading the mount table: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading the mount table: %w", err)
 	}
 	defer file.Close()
 
@@ -140,10 +143,10 @@ func (r *Reader) mountInfo() ([]Mount, error) {
 		out = append(out, mount)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading the mount table: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading the mount table: %w", err)
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("reading the mount table: no usable entries")
+		return nil, i18n.Errorf(context.Background(), "reading the mount table: no usable entries")
 	}
 	return out, nil
 }
@@ -152,7 +155,7 @@ func (r *Reader) mountInfo() ([]Mount, error) {
 func (r *Reader) procMounts() ([]Mount, error) {
 	file, err := os.Open(r.path("proc", "mounts"))
 	if err != nil {
-		return nil, fmt.Errorf("reading the mount table: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading the mount table: %w", err)
 	}
 	defer file.Close()
 
@@ -174,7 +177,7 @@ func (r *Reader) procMounts() ([]Mount, error) {
 		out = append(out, mount)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading the mount table: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading the mount table: %w", err)
 	}
 	return out, nil
 }

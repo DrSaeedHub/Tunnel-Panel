@@ -11,11 +11,11 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"net"
 	"net/netip"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
 	"golang.org/x/net/ipv6"
@@ -61,11 +61,13 @@ type Dialer interface {
 // SystemDialer opens real sockets.
 type SystemDialer struct{}
 
-// Listen binds a raw ICMP socket to the given source address.
+// Listen binds a raw ICMP socket to the given source address. Its errors are
+// said in the panel's language: the interface it implements carries no request.
 func (SystemDialer) Listen(source string) (PacketConn, error) {
+	ctx := context.Background()
 	addr, err := netip.ParseAddr(source)
 	if err != nil {
-		return nil, fmt.Errorf("probe source %q is not an IP address: %w", source, err)
+		return nil, i18n.Errorf(ctx, "probe source %q is not an IP address: %w", source, err)
 	}
 	addr = addr.Unmap()
 
@@ -78,12 +80,12 @@ func (SystemDialer) Listen(source string) (PacketConn, error) {
 	// bit and the hop limit are socket options the diagnostics need.
 	conn, err := net.ListenPacket(network, addr.String())
 	if err != nil {
-		return nil, fmt.Errorf("opening an ICMP socket bound to %s: %w", addr, err)
+		return nil, i18n.Errorf(ctx, "opening an ICMP socket bound to %s: %w", addr, err)
 	}
 	ipConn, ok := conn.(*net.IPConn)
 	if !ok {
 		conn.Close()
-		return nil, fmt.Errorf("the ICMP socket for %s is not an IP connection", addr)
+		return nil, i18n.Errorf(ctx, "the ICMP socket for %s is not an IP connection", addr)
 	}
 	return &systemConn{conn: ipConn, isIPv6: addr.Is6()}, nil
 }
@@ -166,11 +168,34 @@ type Reply struct {
 	// From is the address the message came from, which for an ICMP error is a
 	// router on the path rather than the target.
 	From string
-	// Detail describes an error reply for display.
+	// Detail describes an error reply for display, in the panel's language.
+	// Describe says it in another.
 	Detail string
 	// Mtu is the next-hop MTU reported by a packet-too-big message, when there
 	// is one.
 	Mtu int
+
+	// code and isIPv6 are what the detail is said from.
+	code   int
+	isIPv6 bool
+}
+
+// Describe says what an error reply means, in the language ctx carries. It is
+// empty for an echo reply, which needs no explaining.
+func (r Reply) Describe(ctx context.Context) string {
+	switch r.Kind {
+	case ReplyUnreachable:
+		return describeUnreachable(ctx, r.isIPv6, r.code)
+	case ReplyTimeExceeded:
+		return i18n.T(ctx, "the packet's hop limit ran out before it reached the target")
+	case ReplyTooBig:
+		if !r.isIPv6 {
+			// IPv4 says this with an unreachable message, code 4.
+			return describeUnreachable(ctx, false, r.code)
+		}
+		return i18n.T(ctx, "the packet was too big for a link on the path, which reported an MTU of %d", r.Mtu)
+	}
+	return ""
 }
 
 // ErrNotOurs is returned when a message is well-formed but belongs to another
@@ -286,20 +311,15 @@ func Decode(isIPv6 bool, identifier int, tunnelID int64, raw []byte, from net.Ad
 			if len(raw) >= 8 {
 				mtu = int(binary.BigEndian.Uint16(raw[6:8]))
 			}
-			return decodeError(isIPv6, identifier, ReplyTooBig, source,
-				describeUnreachable(isIPv6, message.Code), body.Data, mtu)
+			return decodeError(isIPv6, identifier, ReplyTooBig, source, message.Code, body.Data, mtu)
 		}
-		return decodeError(isIPv6, identifier, ReplyUnreachable, source,
-			describeUnreachable(isIPv6, message.Code), body.Data, 0)
+		return decodeError(isIPv6, identifier, ReplyUnreachable, source, message.Code, body.Data, 0)
 
 	case *icmp.TimeExceeded:
-		return decodeError(isIPv6, identifier, ReplyTimeExceeded, source,
-			"the packet's hop limit ran out before it reached the target", body.Data, 0)
+		return decodeError(isIPv6, identifier, ReplyTimeExceeded, source, message.Code, body.Data, 0)
 
 	case *icmp.PacketTooBig:
-		return decodeError(isIPv6, identifier, ReplyTooBig, source,
-			fmt.Sprintf("the packet was too big for a link on the path, which reported an MTU of %d", body.MTU),
-			body.Data, body.MTU)
+		return decodeError(isIPv6, identifier, ReplyTooBig, source, message.Code, body.Data, body.MTU)
 	}
 	return Reply{}, ErrNotOurs
 }
@@ -311,7 +331,11 @@ func Decode(isIPv6 bool, identifier int, tunnelID int64, raw []byte, from net.Ad
 // ICMP header — which carries the identifier and the sequence number. That is
 // exactly enough to say which probe died, and it is why an error is counted
 // against the right sequence rather than as an unexplained loss (§10.1).
-func decodeError(isIPv6 bool, identifier int, kind ReplyKind, from, detail string, quoted []byte, mtu int) (Reply, error) {
+//
+// The detail is said in the panel's language, because most replies are decoded
+// by the background monitor; the on-demand probe says it again in the
+// language of its request.
+func decodeError(isIPv6 bool, identifier int, kind ReplyKind, from string, code int, quoted []byte, mtu int) (Reply, error) {
 	innerHeaderLen := 40 // the fixed IPv6 header
 	if !isIPv6 {
 		if len(quoted) < 1 {
@@ -332,62 +356,64 @@ func decodeError(isIPv6 bool, identifier int, kind ReplyKind, from, detail strin
 	if innerID != identifier {
 		return Reply{}, ErrNotOurs
 	}
-	return Reply{Kind: kind, Sequence: innerSeq, From: from, Detail: detail, Mtu: mtu}, nil
+	reply := Reply{Kind: kind, Sequence: innerSeq, From: from, Mtu: mtu, code: code, isIPv6: isIPv6}
+	reply.Detail = reply.Describe(context.Background())
+	return reply, nil
 }
 
-func describeUnreachable(isIPv6 bool, code int) string {
+func describeUnreachable(ctx context.Context, isIPv6 bool, code int) string {
 	if isIPv6 {
 		switch code {
 		case 0:
-			return "no route to the target"
+			return i18n.T(ctx, "no route to the target")
 		case 1:
-			return "the target is administratively unreachable, which usually means a firewall"
+			return i18n.T(ctx, "the target is administratively unreachable, which usually means a firewall")
 		case 3:
-			return "the target address is unreachable"
+			return i18n.T(ctx, "the target address is unreachable")
 		case 4:
-			return "the target port is unreachable"
+			return i18n.T(ctx, "the target port is unreachable")
 		}
-		return "the target is unreachable"
+		return i18n.T(ctx, "the target is unreachable")
 	}
 	switch code {
 	case 0:
-		return "no route to the target network"
+		return i18n.T(ctx, "no route to the target network")
 	case 1:
-		return "no route to the target host"
+		return i18n.T(ctx, "no route to the target host")
 	case 2:
-		return "the protocol is unreachable at the target"
+		return i18n.T(ctx, "the protocol is unreachable at the target")
 	case 3:
-		return "the port is unreachable at the target"
+		return i18n.T(ctx, "the port is unreachable at the target")
 	case 4:
-		return "the packet needed fragmenting but the Don't-Fragment bit was set"
+		return i18n.T(ctx, "the packet needed fragmenting but the Don't-Fragment bit was set")
 	case 9, 10, 13:
-		return "the target is administratively unreachable, which usually means a firewall"
+		return i18n.T(ctx, "the target is administratively unreachable, which usually means a firewall")
 	}
-	return "the target is unreachable"
+	return i18n.T(ctx, "the target is unreachable")
 }
 
 // targetAddr builds the destination address for a raw ICMP write.
-func targetAddr(target string) (net.Addr, bool, error) {
+func targetAddr(ctx context.Context, target string) (net.Addr, bool, error) {
 	addr, err := netip.ParseAddr(target)
 	if err != nil {
-		return nil, false, fmt.Errorf("probe target %q is not an IP address: %w", target, err)
+		return nil, false, i18n.Errorf(ctx, "probe target %q is not an IP address: %w", target, err)
 	}
 	addr = addr.Unmap()
 	return &net.IPAddr{IP: net.IP(addr.AsSlice())}, addr.Is6(), nil
 }
 
 // sameFamily reports whether two addresses can talk to each other.
-func sameFamily(source, target string) error {
+func sameFamily(ctx context.Context, source, target string) error {
 	a, err := netip.ParseAddr(source)
 	if err != nil {
-		return fmt.Errorf("probe source %q is not an IP address", source)
+		return i18n.Errorf(ctx, "probe source %q is not an IP address", source)
 	}
 	b, err := netip.ParseAddr(target)
 	if err != nil {
-		return fmt.Errorf("probe target %q is not an IP address", target)
+		return i18n.Errorf(ctx, "probe target %q is not an IP address", target)
 	}
 	if a.Unmap().Is4() != b.Unmap().Is4() {
-		return fmt.Errorf("the probe source %s and target %s are different address families", source, target)
+		return i18n.Errorf(ctx, "the probe source %s and target %s are different address families", source, target)
 	}
 	return nil
 }

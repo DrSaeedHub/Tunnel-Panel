@@ -3,7 +3,8 @@ import { cleanup, render } from '@testing-library/react'
 import { readFileSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 
-import { FALLBACK_TITLE, useDocumentTitle } from './useDocumentTitle'
+import i18n from '@/i18n'
+import { useDocumentTitle } from './useDocumentTitle'
 
 afterEach(cleanup)
 
@@ -40,14 +41,26 @@ describe('useDocumentTitle', () => {
   it('falls back rather than keeping a stale title when there is nothing to say', () => {
     document.title = 'Tunnels'
     render(<Titled title={null} />)
-    expect(document.title).toBe(FALLBACK_TITLE)
+    expect(document.title).toBe(i18n.t('app.name'))
     expect(document.title).not.toBe('Tunnels')
   })
 
   it('falls back for a blank title too', () => {
     document.title = 'Settings'
     render(<Titled title="   " />)
-    expect(document.title).toBe(FALLBACK_TITLE)
+    expect(document.title).toBe(i18n.t('app.name'))
+  })
+
+  it('falls back to the panel name in the language the page is in', async () => {
+    // The fallback was the English word "Panel" in every language, so a Farsi
+    // operator's not-found tab carried the one English word on the page.
+    await i18n.changeLanguage('fa')
+    try {
+      render(<Titled title={null} />)
+      expect(document.title).toBe('پنل تونل')
+    } finally {
+      await i18n.changeLanguage('en')
+    }
   })
 })
 

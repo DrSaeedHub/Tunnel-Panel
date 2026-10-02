@@ -1,10 +1,13 @@
 package validate
 
 import (
+	"context"
 	"fmt"
 	"net/netip"
 	"regexp"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // InterfaceNamePattern is the rule of §7.1. Linux caps interface names at 15
@@ -31,25 +34,84 @@ func IsReservedInterfaceName(name string) bool {
 	return false
 }
 
-// InterfaceName applies the syntactic rules of §7.1. The collision rules need
-// live state and are checked separately.
-func InterfaceName(name string) error {
+// nameProblem is why a string cannot be an interface name.
+type nameProblem int
+
+const (
+	nameUsable nameProblem = iota
+	nameEmpty
+	nameDots
+	nameSlash
+	nameWhitespace
+	nameTooLong
+	nameCharacters
+)
+
+// interfaceNameProblem applies the syntactic rules of §7.1.
+func interfaceNameProblem(name string) nameProblem {
 	switch {
 	case strings.TrimSpace(name) == "":
-		return fmt.Errorf("must not be empty")
+		return nameEmpty
 	case name == "." || name == "..":
-		return fmt.Errorf("%q is not a usable interface name", name)
+		return nameDots
 	case strings.ContainsAny(name, "/"):
-		return fmt.Errorf("must not contain a slash")
+		return nameSlash
 	case strings.ContainsAny(name, " \t\n\r\v\f"):
-		return fmt.Errorf("must not contain whitespace")
+		return nameWhitespace
 	case len(name) > MaxInterfaceNameLength:
-		return fmt.Errorf("is %d characters; Linux allows at most %d", len(name), MaxInterfaceNameLength)
+		return nameTooLong
 	case !interfaceNameRe.MatchString(name):
+		return nameCharacters
+	}
+	return nameUsable
+}
+
+// InterfaceName applies the syntactic rules of §7.1. The collision rules need
+// live state and are checked separately.
+//
+// Its error is a fragment that finishes a sentence about the name ("must not
+// be empty"), which only works in English. InterfaceNameMessage says the same
+// thing as a whole sentence in the operator's language, and is what anything
+// shown to an operator should use.
+func InterfaceName(name string) error {
+	switch interfaceNameProblem(name) {
+	case nameEmpty:
+		return fmt.Errorf("must not be empty")
+	case nameDots:
+		return fmt.Errorf("%q is not a usable interface name", name)
+	case nameSlash:
+		return fmt.Errorf("must not contain a slash")
+	case nameWhitespace:
+		return fmt.Errorf("must not contain whitespace")
+	case nameTooLong:
+		return fmt.Errorf("is %d characters; Linux allows at most %d", len(name), MaxInterfaceNameLength)
+	case nameCharacters:
 		return fmt.Errorf("must be at most %d characters from A-Z a-z 0-9 . _ - and start with a "+
 			"letter or digit", MaxInterfaceNameLength)
 	}
 	return nil
+}
+
+// InterfaceNameMessage says why name cannot be an interface name, as a whole
+// sentence in the language ctx carries, or returns "" when it can be one.
+func InterfaceNameMessage(ctx context.Context, name string) string {
+	switch interfaceNameProblem(name) {
+	case nameEmpty:
+		return i18n.T(ctx, "The interface name must not be empty.")
+	case nameDots:
+		return i18n.T(ctx, "%q is not a usable interface name.", name)
+	case nameSlash:
+		return i18n.T(ctx, "The interface name must not contain a slash.")
+	case nameWhitespace:
+		return i18n.T(ctx, "The interface name must not contain whitespace.")
+	case nameTooLong:
+		return i18n.T(ctx, "The interface name is %d characters; Linux allows at most %d.",
+			len(name), MaxInterfaceNameLength)
+	case nameCharacters:
+		return i18n.T(ctx, "The interface name must be at most %d characters from A-Z a-z 0-9 . _ - "+
+			"and start with a letter or digit.", MaxInterfaceNameLength)
+	}
+	return ""
 }
 
 // PrefixLengthFor reports whether a prefix length is valid for an address, and
@@ -136,6 +198,21 @@ func ParsePrefix(address string, prefixLen int) (netip.Prefix, error) {
 		return netip.Prefix{}, err
 	}
 	return netip.PrefixFrom(addr, prefixLen), nil
+}
+
+// prefixMessage says why an address and a prefix length do not make a network,
+// as a whole sentence in the language ctx carries, or returns "" when they do.
+// It is ParsePrefix's refusal, said to an operator.
+func prefixMessage(ctx context.Context, address string, prefixLen int) string {
+	addr, err := netip.ParseAddr(strings.TrimSpace(address))
+	if err != nil {
+		return i18n.T(ctx, "%q is not an IP address.", address)
+	}
+	if max := addr.Unmap().BitLen(); prefixLen < 0 || prefixLen > max {
+		return i18n.T(ctx, "The prefix length /%d is out of range; for this family it must be 0 to %d.",
+			prefixLen, max)
+	}
+	return ""
 }
 
 // PrefixesOverlap reports whether two networks intersect.

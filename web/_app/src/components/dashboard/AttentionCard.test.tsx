@@ -42,7 +42,11 @@ function report() {
         reconcile_status_id: 20, // Drifted
         status: 'Drifted',
         detail: 'The MTU on this server does not match what is stored.',
-        diffs: [{ field: 'mtu', expected: '1472', observed: '1400' }],
+        // The wire spelling, from FieldDiff in internal/reconcile.
+        diffs: [
+          { field: 'mtu', desired: '1472', actual: '1400' },
+          { field: 'tunnel_attributes', desired: 'present', actual: 'the interface reports none' },
+        ],
         actions: ['reapply', 'forget', 'delete'],
         is_ignored: false,
       },
@@ -124,6 +128,37 @@ describe('AttentionCard', () => {
 
     await screen.findByRole('button', { name: 'Reapply' })
     expect(screen.queryByRole('button', { name: /delete/i })).toBeNull()
+  })
+
+  /**
+   * Every drifted row rendered its diff with both values blank.
+   *
+   * The backend's FieldDiff is {field, desired, actual}; the type here said
+   * expected/observed, so the card read two properties that never arrive and
+   * printed "mtu Stored On this server" with nothing after either word -- the
+   * one part of the report that says what actually drifted.
+   */
+  it('shows what was stored and what the server holds for each drifted field', async () => {
+    render(wrap(<AttentionCard />, client))
+
+    // The diff's own line, not the row around it.
+    const diff = (await screen.findByText('1472')).closest('li') as HTMLElement
+    expect(diff).toHaveTextContent('1472')
+    expect(diff).toHaveTextContent('1400')
+    // The field by its label, not its wire name.
+    expect(diff).toHaveTextContent('MTU')
+    expect(diff).not.toHaveTextContent('mtu')
+  })
+
+  it('lays a diff that is a sentence out by its own direction', async () => {
+    render(wrap(<AttentionCard />, client))
+
+    // A phrase the backend wrote rather than a value, which is translated
+    // with the request and may be in either script.
+    const phrase = await screen.findByText('the interface reports none')
+    expect(phrase).toHaveAttribute('dir', 'auto')
+    // A value stays a technical token, left-to-right whatever the page.
+    expect(screen.getByText('1400')).toHaveAttribute('dir', 'ltr')
   })
 
   it('refreshes the report even when an action fails', async () => {

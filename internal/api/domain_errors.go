@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/reconcile"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/rules"
@@ -28,21 +29,29 @@ const (
 // distinct thing the operator can do about it, which is why they are not
 // collapsed into one generic failure.
 func (s *Server) writeDomainError(w http.ResponseWriter, r *http.Request, err error) {
+	ctx := r.Context()
+
+	// Every message a service hands over is passed through Tr: one it marked
+	// with i18n.N is said in the request's language here, and one it already
+	// said that way, or any other text, is left exactly as it is.
 	var verrs *validate.Errors
 	if errors.As(err, &verrs) {
-		details := map[string]any{"fields": verrs.Fields}
-		for _, f := range verrs.Fields {
+		fields := make([]validate.FieldError, len(verrs.Fields))
+		details := map[string]any{"fields": fields}
+		for i, f := range verrs.Fields {
+			f.Message = i18n.Tr(ctx, f.Message)
+			fields[i] = f
 			details[f.Field] = f.Message
 		}
 		first := verrs.First()
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			first.Message, first.Field, details)
+			i18n.Tr(ctx, first.Message), first.Field, details)
 		return
 	}
 
 	var adoptable *validate.AdoptableError
 	if errors.As(err, &adoptable) {
-		writeError(w, http.StatusConflict, CodeAdoptable, adoptable.Reason, "interface_name",
+		writeError(w, http.StatusConflict, CodeAdoptable, i18n.Tr(ctx, adoptable.Reason), "interface_name",
 			map[string]any{
 				"interface_name": adoptable.InterfaceName,
 				"adopt_path":     adoptable.AdoptPath,
@@ -55,7 +64,7 @@ func (s *Server) writeDomainError(w http.ResponseWriter, r *http.Request, err er
 	if errors.As(err, &violation) {
 		// A safety refusal is a conflict with the state of the host, not a
 		// malformed request: the request was understood and declined.
-		writeError(w, http.StatusConflict, violation.Code, violation.Message, violation.Field,
+		writeError(w, http.StatusConflict, violation.Code, i18n.Tr(ctx, violation.Message), violation.Field,
 			violation.Details)
 		return
 	}
@@ -63,8 +72,8 @@ func (s *Server) writeDomainError(w http.ResponseWriter, r *http.Request, err er
 	var recreate *tunnel.RecreateRequiredError
 	if errors.As(err, &recreate) {
 		writeError(w, http.StatusConflict, CodeRecreateRequired,
-			"This change cannot be made to the running interface. Confirm that it may be deleted and "+
-				"rebuilt, which briefly interrupts the tunnel.",
+			i18n.T(ctx, "This change cannot be made to the running interface. Confirm that it may be "+
+				"deleted and rebuilt, which briefly interrupts the tunnel."),
 			"confirm_recreate",
 			map[string]any{"interface_name": recreate.Interface, "reasons": recreate.Reasons})
 		return
@@ -75,7 +84,7 @@ func (s *Server) writeDomainError(w http.ResponseWriter, r *http.Request, err er
 		// The panel could not configure the tunnel and could not clean up either.
 		// Saying so plainly, with the commands to fix it, is the only honest
 		// answer available (§9.3).
-		writeError(w, http.StatusConflict, CodeInconsistent, inconsistent.Error(), "",
+		writeError(w, http.StatusConflict, CodeInconsistent, i18n.Tr(ctx, inconsistent.Error()), "",
 			map[string]any{
 				"interface_name": inconsistent.Interface,
 				"tunnel_id":      inconsistent.TunnelID,
@@ -98,19 +107,19 @@ func (s *Server) writeDomainError(w http.ResponseWriter, r *http.Request, err er
 		if apply.Journal != "" {
 			details["journal"] = apply.Journal
 		}
-		writeError(w, http.StatusConflict, CodeApplyFailed, apply.Error(), "", details)
+		writeError(w, http.StatusConflict, CodeApplyFailed, i18n.Tr(ctx, apply.Error()), "", details)
 		return
 	}
 
 	if errors.Is(err, tunnel.ErrNotFound) {
-		writeError(w, http.StatusNotFound, CodeNotFound, err.Error(), "", nil)
+		writeError(w, http.StatusNotFound, CodeNotFound, i18n.Tr(ctx, err.Error()), "", nil)
 		return
 	}
 
 	s.log.Error("a tunnel operation failed", "error", err,
-		"path", r.URL.Path, "request_id", RequestIDFromContext(r.Context()))
+		"path", r.URL.Path, "request_id", RequestIDFromContext(ctx))
 	writeError(w, http.StatusInternalServerError, CodeInternal,
-		"The operation could not be completed.", "", nil)
+		i18n.T(ctx, "The operation could not be completed."), "", nil)
 }
 
 // Error codes the forwarding endpoints add. Like the tunnel ones they are part
@@ -128,12 +137,13 @@ const (
 // netfilter transaction: an apply that failed and was rolled back, and one that
 // failed and could not be rolled back either.
 func (s *Server) writeRouteError(w http.ResponseWriter, r *http.Request, err error) {
+	ctx := r.Context()
 	var inconsistent *route.InconsistentError
 	if errors.As(err, &inconsistent) {
 		// The panel could neither install the ruleset nor put the previous one
 		// back. Saying so plainly, with the commands to fix it, is the only
 		// honest answer available (§7).
-		writeError(w, http.StatusConflict, CodeRulesInconsistent, inconsistent.Error(), "",
+		writeError(w, http.StatusConflict, CodeRulesInconsistent, i18n.Tr(ctx, inconsistent.Error()), "",
 			map[string]any{
 				"operation":      inconsistent.Operation,
 				"apply_error":    inconsistent.ApplyError,
@@ -145,7 +155,7 @@ func (s *Server) writeRouteError(w http.ResponseWriter, r *http.Request, err err
 
 	var apply *route.ApplyError
 	if errors.As(err, &apply) {
-		writeError(w, http.StatusConflict, CodeRulesApplyFailed, apply.Error(), "",
+		writeError(w, http.StatusConflict, CodeRulesApplyFailed, i18n.Tr(ctx, apply.Error()), "",
 			map[string]any{
 				"operation":    apply.Operation,
 				"title":        apply.Title,
@@ -158,19 +168,21 @@ func (s *Server) writeRouteError(w http.ResponseWriter, r *http.Request, err err
 	}
 
 	if errors.Is(err, route.ErrNotFound) {
-		writeError(w, http.StatusNotFound, CodeNotFound, err.Error(), "", nil)
+		writeError(w, http.StatusNotFound, CodeNotFound, i18n.Tr(ctx, err.Error()), "", nil)
 		return
 	}
 	if errors.Is(err, rules.ErrUnavailable) {
 		writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-			"No netfilter backend is available on this host, so forwarding rules cannot be applied "+
-				"here. Install nftables or iptables.", "", nil)
+			i18n.T(ctx, "No netfilter backend is available on this host, so forwarding rules cannot be "+
+				"applied here. Install nftables or iptables."), "", nil)
 		return
 	}
 	if errors.Is(err, rules.ErrUnsupported) || errors.Is(err, rules.ErrRangeWidth) ||
 		errors.Is(err, rules.ErrNoDestination) {
+		// The text is looked up whole first, package prefix and all, since that
+		// is how a sentinel is marked where it is defined.
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			capitalise(strings.TrimPrefix(err.Error(), "rules: "))+".", "", nil)
+			sentence(ctx, strings.TrimPrefix(i18n.Tr(ctx, err.Error()), "rules: ")), "", nil)
 		return
 	}
 

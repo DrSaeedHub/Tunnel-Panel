@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/tunnel"
@@ -24,7 +25,7 @@ func (s *Server) requireRoutes(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.routes == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Port forwarding is not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Port forwarding is not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -75,7 +76,7 @@ func (s *Server) handleListRoutes(w http.ResponseWriter, r *http.Request) {
 
 	out := routeListResponse{
 		Routes: []routeResponse{}, Total: total, Limit: limit, Offset: offset,
-		Note: route.SinceBootMeaning,
+		Note: i18n.Tr(ctx, route.SinceBootMeaning),
 	}
 	for _, rec := range records[offset:end] {
 		out.Routes = append(out.Routes, routeResponse{
@@ -230,9 +231,9 @@ func (s *Server) handleDeleteRoute(w http.ResponseWriter, r *http.Request) {
 		"forwarding_can_be_reverted": report.ForwardingCanBeReverted,
 	}
 	if report.ForwardingCanBeReverted {
-		body["note"] = "That was the last forwarding rule, and the panel was the one that turned IP " +
-			"forwarding on. It has been left on: other software on this server may have come to " +
-			"depend on it. Turn it off from the forwarding page if you want it reverted."
+		body["note"] = i18n.T(r.Context(), "That was the last forwarding rule, and the panel was the one "+
+			"that turned IP forwarding on. It has been left on: other software on this server may have "+
+			"come to depend on it. Turn it off from the forwarding page if you want it reverted.")
 	}
 	writeJSON(w, http.StatusOK, body)
 }
@@ -309,8 +310,8 @@ func (s *Server) handlePreviewRoute(w http.ResponseWriter, r *http.Request) {
 		"route":    preview.Route,
 		"payload":  preview.Payload,
 		"warnings": warningsOf(preview.Warnings),
-		"note": "Nothing has been applied. This is the exact ruleset that would be submitted to " +
-			"netfilter, in one transaction.",
+		"note": i18n.T(r.Context(), "Nothing has been applied. This is the exact ruleset that would be "+
+			"submitted to netfilter, in one transaction."),
 	})
 }
 
@@ -346,8 +347,9 @@ func (s *Server) handleDuplicateRoute(w http.ResponseWriter, r *http.Request) {
 		"plan":         result.Plan,
 		"verification": result.Verify,
 		"warnings":     warningsOf(result.Warnings),
-		"note": "The copy was created disabled and with a free name, because an exact copy of an " +
-			"enabled rule would claim the same listener and be refused. Edit it and enable it.",
+		"note": i18n.T(r.Context(), "The copy was created disabled and with a free name, because an "+
+			"exact copy of an enabled rule would claim the same listener and be refused. Edit it and "+
+			"enable it."),
 	})
 }
 
@@ -367,7 +369,7 @@ func (s *Server) handleReorderRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.RouteRuleIDs) == 0 {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			"Send the forwarding rule identifiers in the order they should be emitted.",
+			i18n.T(r.Context(), "Send the forwarding rule identifiers in the order they should be emitted."),
 			"route_rule_ids", nil)
 		return
 	}
@@ -385,8 +387,8 @@ func (s *Server) handleReorderRoutes(w http.ResponseWriter, r *http.Request) {
 		"plan":         result.Plan,
 		"verification": result.Verify,
 		"warnings":     warningsOf(result.Warnings),
-		"note": "Rules are emitted in this order. Where two rules could match the same packet, the " +
-			"first one wins.",
+		"note": i18n.T(r.Context(), "Rules are emitted in this order. Where two rules could match the "+
+			"same packet, the first one wins."),
 	})
 }
 
@@ -408,7 +410,7 @@ func (s *Server) handleApplyAllRoutes(w http.ResponseWriter, r *http.Request) {
 		"verification":  result.Verify,
 		"warnings":      warningsOf(result.Warnings),
 		"rules_applied": len(result.Plan.AffectedRouteRuleIDs),
-		"note":          "Every enabled rule was installed in one transaction.",
+		"note":          i18n.T(r.Context(), "Every enabled rule was installed in one transaction."),
 	})
 }
 
@@ -490,8 +492,8 @@ func (s *Server) handleListAllowedSources(w http.ResponseWriter, r *http.Request
 	}
 	body := map[string]any{"allowed_sources": rec.AllowedSources, "total": len(rec.AllowedSources)}
 	if len(rec.AllowedSources) == 0 {
-		body["note"] = "This rule has no allowlist, so any source that can reach the bind address " +
-			"may use the relay."
+		body["note"] = i18n.T(r.Context(), "This rule has no allowlist, so any source that can reach the "+
+			"bind address may use the relay.")
 	}
 	writeJSON(w, http.StatusOK, body)
 }
@@ -556,7 +558,7 @@ func (s *Server) requireAccounting(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.accounting == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Forwarding traffic accounting is not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Forwarding traffic accounting is not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -589,7 +591,7 @@ func (s *Server) handleRouteTraffic(w http.ResponseWriter, r *http.Request) {
 		"traffic":       traffic,
 		"sampled":       known,
 		"points":        s.accounting.History(rec.RouteRuleID, limit),
-		"note":          route.SinceBootMeaning,
+		"note":          i18n.Tr(r.Context(), route.SinceBootMeaning),
 	})
 }
 
@@ -615,8 +617,8 @@ func (s *Server) handleRouteTrafficHistory(w http.ResponseWriter, r *http.Reques
 		"samples":       samples,
 		"total":         len(samples),
 		"since":         model.FormatTime(since.UTC()),
-		"note": "Each row covers one aggregate interval and holds the bytes that moved in it, not a " +
-			"running total.",
+		"note": i18n.T(r.Context(), "Each row covers one aggregate interval and holds the bytes that "+
+			"moved in it, not a running total."),
 	})
 }
 
@@ -630,7 +632,7 @@ func (s *Server) handleRouteTrafficSummary(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, map[string]any{
 		"summary": s.accounting.Summary(),
 		"routes":  all,
-		"note":    route.SinceBootMeaning,
+		"note":    i18n.Tr(r.Context(), route.SinceBootMeaning),
 	})
 }
 
@@ -642,7 +644,7 @@ func (s *Server) requireRouteDiag(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.routeDiag == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Forwarding diagnostics are not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Forwarding diagnostics are not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -787,7 +789,7 @@ func (s *Server) handleForwarding(w http.ResponseWriter, r *http.Request) {
 	forwarding := s.routes.Forwarding()
 	if forwarding == nil {
 		writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-			"The kernel forwarding parameters are not managed on this instance.", "", nil)
+			i18n.T(ctx, "The kernel forwarding parameters are not managed on this instance."), "", nil)
 		return
 	}
 
@@ -806,7 +808,7 @@ func (s *Server) handleForwarding(w http.ResponseWriter, r *http.Request) {
 	body := map[string]any{
 		"forwarding": status,
 		"warnings":   warningsOf(status.Warnings),
-		"backend":    s.ruleBackendCapability(),
+		"backend":    s.ruleBackendCapabilityIn(ctx),
 	}
 	// The other software managing netfilter here, which is what turns "my rule
 	// does nothing" into an answer.
@@ -820,7 +822,7 @@ func (s *Server) handleForwarding(w http.ResponseWriter, r *http.Request) {
 	} else {
 		body["foreign"] = map[string]any{
 			"readable": false,
-			"detail":   "the rest of this host's netfilter rules could not be read: " + err.Error(),
+			"detail":   i18n.T(ctx, "the rest of this host's netfilter rules could not be read: %s", err.Error()),
 		}
 	}
 	writeJSON(w, http.StatusOK, body)
@@ -844,24 +846,25 @@ func (s *Server) handleEnableForwarding(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	ctx := r.Context()
 	forwarding := s.routes.Forwarding()
 	if forwarding == nil {
 		writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-			"The kernel forwarding parameters are not managed on this instance.", "", nil)
+			i18n.T(ctx, "The kernel forwarding parameters are not managed on this instance."), "", nil)
 		return
 	}
 
-	ctx := r.Context()
 	desired, err := s.routes.Repo().Desired(ctx)
 	if err != nil {
 		s.writeRouteError(w, r, err)
 		return
 	}
 
-	action, note := "enable", "IP forwarding is on and recorded in the panel's own sysctl file."
+	action, note := "enable", i18n.T(ctx, "IP forwarding is on and recorded in the panel's own sysctl file.")
 	if req.Revert {
 		action = "revert"
-		note = "The kernel parameters the panel changed have been put back and its sysctl file removed."
+		note = i18n.T(ctx, "The kernel parameters the panel changed have been put back and its sysctl "+
+			"file removed.")
 		err = forwarding.Revert(ctx)
 	} else {
 		err = forwarding.Enable(ctx, desired.HasIPv6(),
@@ -907,8 +910,8 @@ func (s *Server) handleTunnelRoutes(w http.ResponseWriter, r *http.Request) {
 		"peer_address": tunnel.PeerAddressOf(rec),
 		"routes":       dependants,
 		"total":        len(dependants),
-		"note": "These forwarding rules send their traffic through this tunnel. Taking it down leaves " +
-			"their rules installed and removes the path they use.",
+		"note": i18n.T(r.Context(), "These forwarding rules send their traffic through this tunnel. "+
+			"Taking it down leaves their rules installed and removes the path they use."),
 	})
 }
 
@@ -921,7 +924,7 @@ func (s *Server) routeFromPath(w http.ResponseWriter, r *http.Request) (route.Re
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"The forwarding rule identifier in the path is not a number.", "id", nil)
+			i18n.T(r.Context(), "The forwarding rule identifier in the path is not a number."), "id", nil)
 		return route.Record{}, false
 	}
 	rec, err := s.routes.Repo().ByID(r.Context(), id)

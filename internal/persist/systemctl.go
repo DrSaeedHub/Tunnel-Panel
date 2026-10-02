@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // DaemonReloadArgs, EnableArgs and the rest build the systemctl invocations.
@@ -67,7 +69,7 @@ func JournalArgs(unit string, lines int) []string {
 
 // DaemonReload rereads unit files.
 func (s *Store) DaemonReload(ctx context.Context) error {
-	if err := s.requireSystemctl(); err != nil {
+	if err := s.requireSystemctl(ctx); err != nil {
 		return err
 	}
 	_, err := s.Runner.Run(ctx, DaemonReloadArgs(s.SystemctlBin))
@@ -98,14 +100,14 @@ func (s *Store) Restart(ctx context.Context, unit string) error {
 // ResetFailed clears a unit's failed state, ignoring the failure that comes
 // from a unit systemd has never heard of.
 func (s *Store) ResetFailed(ctx context.Context, unit string) {
-	if s.requireSystemctl() != nil {
+	if s.requireSystemctl(ctx) != nil {
 		return
 	}
 	_, _ = s.Runner.Run(ctx, ResetFailedArgs(s.SystemctlBin, unit))
 }
 
 func (s *Store) simple(ctx context.Context, build func(string, string) []string, unit string) error {
-	if err := s.requireSystemctl(); err != nil {
+	if err := s.requireSystemctl(ctx); err != nil {
 		return err
 	}
 	_, err := s.Runner.Run(ctx, build(s.SystemctlBin, unit))
@@ -116,7 +118,7 @@ func (s *Store) simple(ctx context.Context, build func(string, string) []string,
 // disabled unit, which is an answer rather than a failure, so the exit code is
 // read from the result instead of being treated as an error.
 func (s *Store) IsEnabled(ctx context.Context, unit string) (bool, string, error) {
-	if err := s.requireSystemctl(); err != nil {
+	if err := s.requireSystemctl(ctx); err != nil {
 		return false, "", err
 	}
 	res, _ := s.Runner.Run(ctx, IsEnabledArgs(s.SystemctlBin, unit))
@@ -134,7 +136,7 @@ func (s *Store) IsEnabled(ctx context.Context, unit string) (bool, string, error
 // RemainAfterExit=yes reports "active" once its ExecStart steps have succeeded,
 // which is exactly the signal §9.3 needs.
 func (s *Store) IsActive(ctx context.Context, unit string) (bool, string, error) {
-	if err := s.requireSystemctl(); err != nil {
+	if err := s.requireSystemctl(ctx); err != nil {
 		return false, "", err
 	}
 	res, _ := s.Runner.Run(ctx, IsActiveArgs(s.SystemctlBin, unit))
@@ -159,9 +161,9 @@ func (s *Store) JournalTail(ctx context.Context, unit string, lines int) string 
 	return strings.TrimSpace(res.Stdout)
 }
 
-func (s *Store) requireSystemctl() error {
+func (s *Store) requireSystemctl(ctx context.Context) error {
 	if strings.TrimSpace(s.SystemctlBin) == "" {
-		return fmt.Errorf("systemctl was not found on this system, so systemd persistence is unavailable")
+		return i18n.Errorf(ctx, "systemctl was not found on this system, so systemd persistence is unavailable")
 	}
 	return nil
 }

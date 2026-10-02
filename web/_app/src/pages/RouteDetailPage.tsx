@@ -173,7 +173,9 @@ export default function RouteDetailPage() {
             />
           </div>
           {route.description ? (
-            <p className="mt-1 text-xs text-muted-foreground">{route.description}</p>
+            <p dir="auto" className="mt-1 text-xs text-muted-foreground">
+              {route.description}
+            </p>
           ) : null}
         </div>
 
@@ -333,7 +335,7 @@ export default function RouteDetailPage() {
                 ) : null}
               </dl>
               {route.last_apply_error ? (
-                <p className="mt-3 rounded-md border border-danger/30 bg-danger-muted p-3 text-xs text-danger">
+                <p dir="auto" className="mt-3 rounded-md border border-danger/30 bg-danger-muted p-3 text-xs text-danger">
                   {route.last_apply_error}
                 </p>
               ) : null}
@@ -371,7 +373,12 @@ export default function RouteDetailPage() {
                     .filter((entry) => entry.target_id === route.route_rule_title)
                     .map((entry) => (
                       <li key={entry.audit_log_id} className="flex flex-wrap items-baseline gap-2 py-2">
-                        <span className={entry.is_success ? '' : 'text-danger'}>{entry.action}</span>
+                        {/* Named the way the tunnel's history names it: the
+                            backend's identifier ("RouteUpdate") was printed
+                            as it is, in every language. */}
+                        <span className={entry.is_success ? '' : 'text-danger'}>
+                          {t(`audit.actions.${entry.action}`, entry.action)}
+                        </span>
                         <span className="text-muted-foreground">
                           {formatDateTime(entry.created_date, { locale: language, calendar, digits })}
                         </span>
@@ -382,7 +389,9 @@ export default function RouteDetailPage() {
                           {entry.client_ip}
                         </Technical>
                         {entry.error_message ? (
-                          <span className="w-full text-danger">{entry.error_message}</span>
+                          <span dir="auto" className="w-full text-danger">
+                            {entry.error_message}
+                          </span>
                         ) : null}
                       </li>
                     ))}

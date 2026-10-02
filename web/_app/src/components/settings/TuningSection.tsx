@@ -303,7 +303,9 @@ function Row({
   return (
     <li className="py-3">
       <div className="flex flex-wrap items-baseline gap-2">
-        <p className="text-xs font-medium">{reading.title}</p>
+        <p dir="auto" className="text-xs font-medium">
+          {reading.title}
+        </p>
         {!reading.available ? (
           <Badge tone="neutral">{t('tuning.absent')}</Badge>
         ) : reading.drifted ? (
@@ -332,7 +334,9 @@ function Row({
         ) : null}
       </div>
 
-      <p className="mt-1 text-2xs leading-relaxed text-muted-foreground">{reading.explain}</p>
+      <p dir="auto" className="mt-1 text-2xs leading-relaxed text-muted-foreground">
+        {reading.explain}
+      </p>
 
       {reading.available ? (
         <div className="mt-2 flex flex-wrap items-start gap-2">
@@ -437,7 +441,7 @@ function ValueField({
         options={reading.choices.map((choice) => ({
           value: choice.value,
           label: choice.value,
-          description: choice.detail,
+          description: choice.detail ? <span dir="auto">{choice.detail}</span> : undefined,
         }))}
       />
     )

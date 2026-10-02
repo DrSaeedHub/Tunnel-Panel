@@ -1,8 +1,10 @@
 package monitor
 
 import (
+	"context"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/tunnel"
 )
 
@@ -131,7 +133,8 @@ func probeEndpoints(rec tunnel.Record) (source, target string) {
 
 // shouldMonitor decides whether a tunnel is probed, and says why when it is
 // not. A tunnel that cannot be monitored is Disabled with an explanation rather
-// than silently absent from the display.
+// than silently absent from the display. The explanation is decided in the
+// background, so it is said in the panel's language.
 func shouldMonitor(rec tunnel.Record, set Settings, cfg Config) (bool, string) {
 	enabled := set.Bool("monitor.enabled")
 	if rec.IsMonitorEnabled != nil {
@@ -139,15 +142,15 @@ func shouldMonitor(rec tunnel.Record, set Settings, cfg Config) (bool, string) {
 	}
 	switch {
 	case !enabled:
-		return false, "monitoring is switched off for this tunnel"
+		return false, i18n.P("monitoring is switched off for this tunnel")
 	case !rec.IsEnabled:
-		return false, "this tunnel is administratively down"
+		return false, i18n.P("this tunnel is administratively down")
 	case cfg.Source == "":
-		return false, "this tunnel has no address to probe from"
+		return false, i18n.P("this tunnel has no address to probe from")
 	case cfg.Target == "":
-		return false, "no peer address is recorded for this tunnel, so there is nothing to probe"
+		return false, i18n.P("no peer address is recorded for this tunnel, so there is nothing to probe")
 	}
-	if err := sameFamily(cfg.Source, cfg.Target); err != nil {
+	if err := sameFamily(context.Background(), cfg.Source, cfg.Target); err != nil {
 		return false, err.Error()
 	}
 	return true, ""

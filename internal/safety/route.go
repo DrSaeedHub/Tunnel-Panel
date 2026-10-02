@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/rules"
 )
 
@@ -130,11 +131,25 @@ func NewRouteGuard(panelPort int, sockets SocketTable, rulesDir string) *RouteGu
 
 // ProtectedPort is one port no forwarding rule may claim, and why.
 type ProtectedPort struct {
-	Port   int    `json:"port"`
+	Port int `json:"port"`
+	// Reason says why, in the operator's language.
 	Reason string `json:"reason"`
 	// Process names what is listening, when that is known.
 	Process string `json:"process,omitempty"`
+
+	// why is the reason as a fact rather than a sentence, so that a refusal
+	// can say the whole of its sentence instead of quoting Reason inside one.
+	why protectedWhy
 }
+
+// protectedWhy is why a port is protected.
+type protectedWhy int
+
+const (
+	protectedPanel protectedWhy = iota
+	protectedSsh
+	protectedSshFallback
+)
 
 // ProtectedPorts returns every port that may never be forwarded, so the
 // frontend can grey them out rather than letting an operator discover the
@@ -147,17 +162,21 @@ func (g *RouteGuard) ProtectedPorts(ctx context.Context) []ProtectedPort {
 	var out []ProtectedPort
 	if g.PanelPort > 0 {
 		out = append(out, ProtectedPort{
-			Port:   g.PanelPort,
-			Reason: "this panel is served on it; forwarding it elsewhere would make the panel unreachable",
+			Port: g.PanelPort,
+			Reason: i18n.T(ctx, "this panel is served on it; forwarding it elsewhere would make the panel "+
+				"unreachable"),
+			why: protectedPanel,
 		})
 	}
 
 	ports, err := g.sshPorts()
 	for _, port := range ports {
 		out = append(out, ProtectedPort{
-			Port:    port,
-			Reason:  "the SSH daemon is listening on it; forwarding it elsewhere would lock this machine",
+			Port: port,
+			Reason: i18n.T(ctx, "the SSH daemon is listening on it; forwarding it elsewhere would lock this "+
+				"machine"),
 			Process: "sshd",
+			why:     protectedSsh,
 		})
 	}
 	if err != nil || len(ports) == 0 {
@@ -165,8 +184,9 @@ func (g *RouteGuard) ProtectedPorts(ctx context.Context) []ProtectedPort {
 		// This is the deliberately conservative direction.
 		out = append(out, ProtectedPort{
 			Port: DefaultSshPort,
-			Reason: "the running SSH daemon could not be identified, so the conventional SSH port is " +
-				"protected as a precaution",
+			Reason: i18n.T(ctx, "the running SSH daemon could not be identified, so the conventional SSH "+
+				"port is protected as a precaution"),
+			why: protectedSshFallback,
 		})
 	}
 
@@ -217,16 +237,34 @@ func (g *RouteGuard) CheckRoute(ctx context.Context, spec rules.RouteSpec) error
 		if !coversPort(spec.BindPorts, protected.Port) {
 			continue
 		}
-		return violation(CodeProtectedPort, "bind_port",
-			fmt.Sprintf("This rule would redirect port %d, and %s. The panel will not do that under "+
-				"any setting or flag: unlike a tunnel mistake, it is not recoverable without console "+
-				"access to this server.", protected.Port, protected.Reason),
+		return violation(CodeProtectedPort, "bind_port", protectedPortRefusal(ctx, protected),
 			map[string]any{
 				"port": protected.Port, "reason": protected.Reason,
 				"bind_ports": spec.BindPorts.String(), "process": protected.Process,
 			})
 	}
 	return nil
+}
+
+// protectedPortRefusal says why a rule may not take a protected port, as one
+// whole sentence for each reason a port is protected.
+func protectedPortRefusal(ctx context.Context, protected ProtectedPort) string {
+	switch protected.why {
+	case protectedSsh:
+		return i18n.T(ctx, "This rule would redirect port %d, and the SSH daemon is listening on it; "+
+			"forwarding it elsewhere would lock this machine. The panel will not do that under any "+
+			"setting or flag: unlike a tunnel mistake, it is not recoverable without console access to "+
+			"this server.", protected.Port)
+	case protectedSshFallback:
+		return i18n.T(ctx, "This rule would redirect port %d, and the running SSH daemon could not be "+
+			"identified, so the conventional SSH port is protected as a precaution. The panel will not do "+
+			"that under any setting or flag: unlike a tunnel mistake, it is not recoverable without "+
+			"console access to this server.", protected.Port)
+	}
+	return i18n.T(ctx, "This rule would redirect port %d, and this panel is served on it; forwarding it "+
+		"elsewhere would make the panel unreachable. The panel will not do that under any setting or "+
+		"flag: unlike a tunnel mistake, it is not recoverable without console access to this server.",
+		protected.Port)
 }
 
 // CheckRuleset applies CheckRoute to every rule of a ruleset, which is what the
@@ -259,26 +297,29 @@ func coversPort(r rules.PortRange, port int) bool {
 // there, and which is checked before it is installed so it can never duplicate.
 func (g *RouteGuard) CheckNetfilterObject(kind, name string) error {
 	trimmed := strings.TrimSpace(name)
+	var message string
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "table":
 		if trimmed == rules.TableName {
 			return nil
 		}
+		message = i18n.P("The table %q was not created by the panel, so the panel will not touch it. "+
+			"It only ever rebuilds its own table %q and its own chains.", trimmed, rules.TableName)
 	case "chain":
 		if rules.IsPanelChain(trimmed) {
 			return nil
 		}
+		message = i18n.P("The chain %q was not created by the panel, so the panel will not touch it. "+
+			"It only ever rebuilds its own table %q and its own chains.", trimmed, rules.TableName)
 	default:
 		// A kind the panel has no namespace for cannot be one of its own, so
 		// the answer is the same refusal rather than a different question.
 		return violation(CodeForeignNetfilter, "object",
-			fmt.Sprintf("The panel manages netfilter tables and chains of its own and nothing else, so "+
+			i18n.P("The panel manages netfilter tables and chains of its own and nothing else, so "+
 				"it will not touch the %s %q.", kind, trimmed),
 			map[string]any{"kind": kind, "name": trimmed})
 	}
-	return violation(CodeForeignNetfilter, "object",
-		fmt.Sprintf("The %s %q was not created by the panel, so the panel will not touch it. It only "+
-			"ever rebuilds its own table %q and its own chains.", kind, trimmed, rules.TableName),
+	return violation(CodeForeignNetfilter, "object", message,
 		map[string]any{
 			"kind": kind, "name": trimmed,
 			"owned_table":  rules.TableName,
@@ -298,13 +339,13 @@ func (g *RouteGuard) CheckSysctl(key string) error {
 	}
 	if strings.Contains(trimmed, "route_localnet") {
 		return violation(CodeProtectedSysctl, "sysctl",
-			"The panel never enables route_localnet. It makes the kernel treat 127.0.0.0/8 as routable "+
-				"on an interface, which exposes every service bound to localhost on this server, and "+
-				"that is a decision for the operator to make deliberately and by hand.",
+			i18n.P("The panel never enables route_localnet. It makes the kernel treat 127.0.0.0/8 as "+
+				"routable on an interface, which exposes every service bound to localhost on this server, "+
+				"and that is a decision for the operator to make deliberately and by hand."),
 			map[string]any{"sysctl": trimmed})
 	}
 	return violation(CodeProtectedSysctl, "sysctl",
-		fmt.Sprintf("The panel does not set %s. The only kernel parameters it ever sets are: %s.",
+		i18n.P("The panel does not set %s. The only kernel parameters it ever sets are: %s.",
 			trimmed, strings.Join(AllowedSysctls, ", ")),
 		map[string]any{"sysctl": trimmed, "allowed": AllowedSysctls})
 }
@@ -320,7 +361,7 @@ func (g *RouteGuard) CheckPath(target string) error {
 	cleaned := hostPath(target)
 	if !isAbsHostPath(target) {
 		return violation(CodeProtectedPath, "path",
-			fmt.Sprintf("%q is not an absolute path.", target), map[string]any{"path": target})
+			i18n.P("%q is not an absolute path.", target), map[string]any{"path": target})
 	}
 	for _, own := range g.ownFiles() {
 		if cleaned == hostPath(own) {
@@ -330,7 +371,7 @@ func (g *RouteGuard) CheckPath(target string) error {
 	for _, protectedPath := range ProtectedPaths {
 		if isUnderHostPath(cleaned, protectedPath) {
 			return violation(CodeProtectedPath, "path",
-				fmt.Sprintf("%s belongs to this system's own configuration, not to the panel.", cleaned),
+				i18n.P("%s belongs to this system's own configuration, not to the panel.", cleaned),
 				map[string]any{"path": cleaned})
 		}
 	}
@@ -338,7 +379,7 @@ func (g *RouteGuard) CheckPath(target string) error {
 		return nil
 	}
 	return violation(CodeProtectedPath, "path",
-		fmt.Sprintf("%s is outside the directories the forwarding subsystem writes to.", cleaned),
+		i18n.P("%s is outside the directories the forwarding subsystem writes to.", cleaned),
 		map[string]any{"path": cleaned, "rules_dir": g.RulesDir, "sysctl_file": g.sysctlFile()})
 }
 

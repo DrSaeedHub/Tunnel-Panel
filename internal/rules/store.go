@@ -2,12 +2,12 @@ package rules
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/persist"
 )
 
@@ -48,20 +48,21 @@ func writeOwned(ctx context.Context, path, text string) error {
 		return err
 	}
 	if !owned {
-		return fmt.Errorf("%w: %s", ErrNotPanelOwned, path)
+		return &saidError{i18n.T(ctx, "rules: this file was not written by the panel: %s", path),
+			ErrNotPanelOwned}
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
+		return i18n.Errorf(ctx, "creating %s: %w", filepath.Dir(path), err)
 	}
 	// Write to a sibling and rename, so a crash mid-write cannot leave the
 	// restore unit reading half a ruleset at the next boot.
 	temp := path + ".tmp"
 	if err := os.WriteFile(temp, []byte(text), FileMode); err != nil {
-		return fmt.Errorf("writing %s: %w", temp, err)
+		return i18n.Errorf(ctx, "writing %s: %w", temp, err)
 	}
 	if err := os.Rename(temp, path); err != nil {
 		_ = os.Remove(temp)
-		return fmt.Errorf("installing %s: %w", path, err)
+		return i18n.Errorf(ctx, "installing %s: %w", path, err)
 	}
 	audit.TraceFrom(ctx).Add(audit.Operation{Kind: audit.KindFile, Detail: "write " + path})
 	return nil

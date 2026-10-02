@@ -92,6 +92,7 @@ export default function SettingsPage() {
       ? entries.filter(
           (entry) =>
             entry.key.toLowerCase().includes(needle) ||
+            (entry.label ?? '').toLowerCase().includes(needle) ||
             entry.description.toLowerCase().includes(needle),
         )
       : entries

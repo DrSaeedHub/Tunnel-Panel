@@ -1,11 +1,13 @@
 package rules
 
 import (
-	"fmt"
+	"context"
 	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // ForeignRule is a redirecting rule outside the panel's namespace.
@@ -35,16 +37,20 @@ type ForeignRule struct {
 	Manager string `json:"manager,omitempty"`
 }
 
-// Describe renders the rule the way a report names it.
-func (f ForeignRule) Describe() string {
+// Describe renders the rule the way a report names it, in the panel's
+// language.
+func (f ForeignRule) Describe() string { return f.DescribeIn(context.Background()) }
+
+// DescribeIn is Describe in the language ctx carries.
+func (f ForeignRule) DescribeIn(ctx context.Context) string {
 	where := f.Chain
 	if f.Table != "" {
 		where = f.Table + "/" + f.Chain
 	}
 	if f.Manager != "" {
-		return fmt.Sprintf("%s in %s, which belongs to %s", strings.TrimSpace(f.Text), where, f.Manager)
+		return i18n.T(ctx, "%s in %s, which belongs to %s", strings.TrimSpace(f.Text), where, f.Manager)
 	}
-	return fmt.Sprintf("%s in %s", strings.TrimSpace(f.Text), where)
+	return i18n.T(ctx, "%s in %s", strings.TrimSpace(f.Text), where)
 }
 
 // Ports returns the range this rule claims.

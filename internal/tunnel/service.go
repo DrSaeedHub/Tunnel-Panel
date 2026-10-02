@@ -12,7 +12,6 @@ package tunnel
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -23,6 +22,7 @@ import (
 	"github.com/drs/gre-panel/internal/alloc"
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/lock"
 	"github.com/drs/gre-panel/internal/model"
@@ -250,11 +250,25 @@ type Preview struct {
 type RecreateRequiredError struct {
 	Interface string   `json:"interface"`
 	Reasons   []string `json:"reasons"`
+
+	// lang is the language of the request that was refused, which the error
+	// is said in wherever it is printed.
+	lang string
 }
 
 func (e *RecreateRequiredError) Error() string {
-	return fmt.Sprintf("changing %s needs the interface deleted and rebuilt: %s",
-		e.Interface, strings.Join(e.Reasons, "; "))
+	lang := errorLanguage(e.lang)
+	return i18n.In(lang, "changing %s needs the interface deleted and rebuilt: %s",
+		e.Interface, strings.Join(e.Reasons, clauseSeparator(lang)))
+}
+
+// errorLanguage is the language an error is said in: the one of the request
+// that produced it, or the panel's own for an error built without one.
+func errorLanguage(lang string) string {
+	if lang == "" {
+		return i18n.Panel()
+	}
+	return lang
 }
 
 // InconsistentError is returned when an apply failed and the rollback failed
@@ -268,11 +282,14 @@ type InconsistentError struct {
 	RollbackError string   `json:"rollback_error"`
 	Remediation   []string `json:"remediation"`
 	Journal       string   `json:"journal,omitempty"`
+
+	// lang is the language of the request whose apply failed.
+	lang string
 }
 
 func (e *InconsistentError) Error() string {
-	return fmt.Sprintf("%s could not be configured and could not be cleaned up either: %s "+
-		"(rollback also failed: %s)", e.Interface, e.ApplyError, e.RollbackError)
+	return i18n.In(errorLanguage(e.lang), "%s could not be configured and could not be cleaned up "+
+		"either: %s (rollback also failed: %s)", e.Interface, e.ApplyError, e.RollbackError)
 }
 
 // ApplyError is a plain apply failure that was rolled back successfully.
@@ -283,11 +300,14 @@ type ApplyError struct {
 	Journal    string       `json:"journal,omitempty"`
 	Verify     VerifyReport `json:"verification"`
 	RolledBack bool         `json:"rolled_back"`
+
+	// lang is the language of the request whose apply failed.
+	lang string
 }
 
 func (e *ApplyError) Error() string {
 	if e.Step != "" {
-		return fmt.Sprintf("%s: %s failed: %s", e.Interface, e.Step, e.Cause)
+		return i18n.In(errorLanguage(e.lang), "%s: %s failed: %s", e.Interface, e.Step, e.Cause)
 	}
 	return fmt.Sprintf("%s: %s", e.Interface, e.Cause)
 }
@@ -301,7 +321,7 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 	// chosen and before anything is read. Allocating a subnet reads kernel state,
 	// so without this an unparseable endpoint would still cost a kernel call
 	// before being refused — and the whole point of §7.2 is that it does not.
-	if errs := validate.ValidateSupplied(*in); !errs.Empty() {
+	if errs := validate.ValidateSuppliedContext(ctx, *in); !errs.Empty() {
 		return errs
 	}
 
@@ -394,13 +414,13 @@ func (s *Service) ApplyDefaults(ctx context.Context, in *validate.TunnelInput) e
 		// no number to render from. Every tunnel would then render the same
 		// name; the lowest number whose name is free gives each one its own.
 		if in.TunnelNumber == nil {
-			number, err := s.firstFreeNumber(*in, taken)
+			number, err := s.firstFreeNumber(ctx, *in, taken)
 			if err != nil {
 				return err
 			}
 			in.TunnelNumber = &number
 		}
-		name, err := s.RenderName(*in)
+		name, err := s.renderName(ctx, *in)
 		if err != nil {
 			return err
 		}
@@ -439,7 +459,7 @@ func (s *Service) takenNames(ctx context.Context, selfID int64) (map[string]bool
 	if s.links != nil {
 		links, err := s.links.List(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("reading the existing interfaces: %w", err)
+			return nil, i18n.Errorf(ctx, "reading the existing interfaces: %w", err)
 		}
 		for _, l := range links {
 			taken[l.Name] = true
@@ -469,7 +489,7 @@ func (s *Service) nextFreeAllocation(
 		probe := in
 		number := allocation.TunnelNumber
 		probe.TunnelNumber = &number
-		name, err := s.RenderName(probe)
+		name, err := s.renderName(ctx, probe)
 		if err != nil {
 			return alloc.Allocation{}, err
 		}
@@ -485,18 +505,18 @@ func (s *Service) nextFreeAllocation(
 			}
 		}
 	}
-	return alloc.Allocation{}, fmt.Errorf(
+	return alloc.Allocation{}, i18n.Errorf(ctx,
 		"no free tunnel number in pool %q renders a name that is not already taken", pool.Title)
 }
 
 // firstFreeNumber is the same search without an allocation: the lowest number
 // from 1 whose rendered name is free.
-func (s *Service) firstFreeNumber(in validate.TunnelInput, taken map[string]bool) (int64, error) {
+func (s *Service) firstFreeNumber(ctx context.Context, in validate.TunnelInput, taken map[string]bool) (int64, error) {
 	for number := int64(1); number <= nameSearchLimit; number++ {
 		probe := in
 		candidate := number
 		probe.TunnelNumber = &candidate
-		name, err := s.RenderName(probe)
+		name, err := s.renderName(ctx, probe)
 		if err != nil {
 			return 0, err
 		}
@@ -504,7 +524,7 @@ func (s *Service) firstFreeNumber(in validate.TunnelInput, taken map[string]bool
 			return number, nil
 		}
 	}
-	return 0, fmt.Errorf("no tunnel number under %d renders a name that is not already taken", nameSearchLimit)
+	return 0, i18n.Errorf(ctx, "no tunnel number under %d renders a name that is not already taken", nameSearchLimit)
 }
 
 // freeName is the last resort for a naming template that renders the same name
@@ -524,8 +544,14 @@ func freeName(name string, taken map[string]bool) string {
 }
 
 // RenderName builds an interface name from the naming template, the side labels
-// and the tunnel number (§5.3, §5.4).
+// and the tunnel number (§5.3, §5.4). A template that renders an unusable name
+// is reported in the panel's language.
 func (s *Service) RenderName(in validate.TunnelInput) (string, error) {
+	return s.renderName(context.Background(), in)
+}
+
+// renderName is RenderName with the refusal said in the language ctx carries.
+func (s *Service) renderName(ctx context.Context, in validate.TunnelInput) (string, error) {
 	template := s.settings.String("tunnel.naming_template")
 	if strings.TrimSpace(template) == "" {
 		template = "gre-{side}-{number}"
@@ -548,8 +574,9 @@ func (s *Service) RenderName(in validate.TunnelInput) (string, error) {
 	).Replace(template)
 
 	if err := validate.InterfaceName(rendered); err != nil {
-		return "", fmt.Errorf("the naming template %q with side label %q and number %s renders to %q, "+
-			"which %s", template, label, number, rendered, err.Error())
+		return "", i18n.Errorf(ctx, "the naming template %q with side label %q and number %s renders to "+
+			"%q, which cannot be an interface name. %s", template, label, number, rendered,
+			validate.InterfaceNameMessage(ctx, rendered))
 	}
 	return rendered, nil
 }
@@ -603,7 +630,7 @@ func (s *Service) PreviewCreate(ctx context.Context, req Request) (Preview, erro
 	}
 
 	rec := RecordFromInput(in)
-	plan := s.planner.PlanCreate(rec, s.KeepaliveFor(rec, req.KeepaliveEnabled), false)
+	plan := s.planner.PlanCreate(ctx, rec, s.KeepaliveFor(rec, req.KeepaliveEnabled), false)
 	plan.Warnings = result.Warnings
 
 	return Preview{Plan: plan, Warnings: result.Warnings, Mtu: result.Mtu, Tunnel: rec}, nil
@@ -620,7 +647,7 @@ func (s *Service) PreviewUpdate(ctx context.Context, id int64, req Request) (Pre
 		return Preview{}, err
 	}
 
-	plan := s.planner.PlanUpdate(current, desired, s.KeepaliveFor(desired, req.KeepaliveEnabled), diffs, req.Takeover)
+	plan := s.planner.PlanUpdate(ctx, current, desired, s.KeepaliveFor(desired, req.KeepaliveEnabled), diffs, req.Takeover)
 	plan.Warnings = result.Warnings
 	return Preview{Plan: plan, Warnings: result.Warnings, Mtu: result.Mtu, Diffs: diffs, Tunnel: desired}, nil
 }
@@ -683,7 +710,7 @@ func (s *Service) Create(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	plan := s.planner.PlanCreate(rec, s.KeepaliveFor(rec, req.KeepaliveEnabled), false)
+	plan := s.planner.PlanCreate(ctx, rec, s.KeepaliveFor(rec, req.KeepaliveEnabled), false)
 	plan.Warnings = validation.Warnings
 
 	result, err := s.run(ctx, rec, plan, req, trace)
@@ -734,8 +761,10 @@ func (s *Service) Update(ctx context.Context, id int64, req Request) (Result, er
 		}, nil
 	}
 
-	if recreate, reasons := RequiresRecreate(diffs); recreate && !req.ConfirmRecreate {
-		return Result{}, &RecreateRequiredError{Interface: current.InterfaceName, Reasons: reasons}
+	if recreate, reasons := RequiresRecreate(ctx, diffs); recreate && !req.ConfirmRecreate {
+		return Result{}, &RecreateRequiredError{
+			Interface: current.InterfaceName, Reasons: reasons, lang: i18n.Language(ctx),
+		}
 	}
 
 	// The request may be arriving through the very tunnel it is changing (§17.4).
@@ -752,7 +781,7 @@ func (s *Service) Update(ctx context.Context, id int64, req Request) (Result, er
 	trace := audit.NewTrace()
 	ctx = audit.WithTrace(ctx, trace)
 
-	plan := s.planner.PlanUpdate(current, desired, s.KeepaliveFor(desired, req.KeepaliveEnabled), diffs, req.Takeover)
+	plan := s.planner.PlanUpdate(ctx, current, desired, s.KeepaliveFor(desired, req.KeepaliveEnabled), diffs, req.Takeover)
 	plan.Warnings = validation.Warnings
 
 	if err := s.repo.Update(ctx, id, mergedInput(desired), desired.IsNameTemplated); err != nil {
@@ -918,7 +947,7 @@ func (s *Service) Delete(ctx context.Context, id int64, req Request) (DeleteRepo
 	report.Warnings = s.routeDependencyWarning(ctx, id, rec, "away")
 
 	keepalive := s.KeepaliveFor(rec, req.KeepaliveEnabled)
-	plan := s.planner.PlanDelete(rec, keepalive.Enabled, req.Takeover)
+	plan := s.planner.PlanDelete(ctx, rec, keepalive.Enabled, req.Takeover)
 	report.Plan = plan
 
 	for _, step := range plan.Steps {
@@ -945,7 +974,8 @@ func (s *Service) Delete(ctx context.Context, id int64, req Request) (DeleteRepo
 	if _, stillThere := s.observe(ctx, rec.InterfaceName); stillThere {
 		return report, &ApplyError{
 			Interface: rec.InterfaceName,
-			Cause:     "the interface is still present after every removal step ran",
+			Cause:     i18n.T(ctx, "the interface is still present after every removal step ran"),
+			lang:      i18n.Language(ctx),
 		}
 	}
 	if err := s.repo.SoftDelete(ctx, id); err != nil {
@@ -984,7 +1014,7 @@ func (s *Service) Up(ctx context.Context, id int64, req Request) (Result, error)
 	}
 	rec.IsEnabled = true
 	defer s.notifyChanged()
-	return s.run(ctx, rec, s.planner.PlanUp(rec), req, trace)
+	return s.run(ctx, rec, s.planner.PlanUp(ctx, rec), req, trace)
 }
 
 // Down takes a tunnel down without removing it (§9.6).
@@ -1006,7 +1036,7 @@ func (s *Service) Down(ctx context.Context, id int64, req Request) (Result, erro
 	trace := audit.NewTrace()
 	ctx = audit.WithTrace(ctx, trace)
 
-	plan := s.planner.PlanDown(rec)
+	plan := s.planner.PlanDown(ctx, rec)
 	if err := s.guardPlan(ctx, plan, rec, req.Takeover); err != nil {
 		return Result{}, err
 	}
@@ -1063,13 +1093,13 @@ func (s *Service) Reapply(ctx context.Context, id int64, req Request) (Result, e
 	ctx = audit.WithTrace(ctx, trace)
 
 	keepalive := s.KeepaliveFor(rec, req.KeepaliveEnabled)
-	plan := s.planner.PlanCreate(rec, keepalive, req.Takeover)
+	plan := s.planner.PlanCreate(ctx, rec, keepalive, req.Takeover)
 	plan.Operation = OpReapply
 
 	// Reapplying starts from a clean slate, so whatever is there now is removed
 	// first. Every teardown step is tolerant, so a tunnel that is already gone
 	// reapplies just as well as one that is drifted.
-	teardown := s.planner.PlanDelete(rec, keepalive.Enabled, req.Takeover)
+	teardown := s.planner.PlanDelete(ctx, rec, keepalive.Enabled, req.Takeover)
 	plan.Steps = append(teardown.Steps, plan.Steps...)
 
 	defer s.notifyChanged()
@@ -1091,7 +1121,8 @@ func (s *Service) run(ctx context.Context, rec Record, plan Plan, req Request, t
 	if applyErr == nil {
 		report = s.Verify(ctx, rec)
 		if !report.Ok {
-			applyErr = fmt.Errorf("verification failed: %s", strings.Join(report.Failures, "; "))
+			applyErr = i18n.Errorf(ctx, "verification failed: %s",
+				strings.Join(report.Failures, clauseSeparator(i18n.Language(ctx))))
 		}
 	}
 
@@ -1122,6 +1153,7 @@ func (s *Service) run(ctx context.Context, rec Record, plan Plan, req Request, t
 			RollbackError: rollbackErr.Error(),
 			Remediation:   s.remediation(rec),
 			Journal:       journal,
+			lang:          i18n.Language(ctx),
 		}
 	}
 
@@ -1132,6 +1164,7 @@ func (s *Service) run(ctx context.Context, rec Record, plan Plan, req Request, t
 		Journal:    journal,
 		Verify:     report,
 		RolledBack: true,
+		lang:       i18n.Language(ctx),
 	}
 }
 
@@ -1194,7 +1227,7 @@ func (s *Service) runStep(ctx context.Context, step Step, takeover bool) error {
 	switch step.Kind {
 	case StepLinkCreate:
 		if step.Spec == nil {
-			return errors.New("the plan step has no tunnel specification")
+			return i18n.Errorf(ctx, "the plan step has no tunnel specification")
 		}
 		return s.links.Create(ctx, *step.Spec)
 	case StepLinkDelete:
@@ -1209,12 +1242,12 @@ func (s *Service) runStep(ctx context.Context, step Step, takeover bool) error {
 		return s.links.SetTxQueueLength(ctx, step.Interface, step.TxQueueLength)
 	case StepAddressAdd:
 		if step.Address == nil {
-			return errors.New("the plan step has no address")
+			return i18n.Errorf(ctx, "the plan step has no address")
 		}
 		return s.links.AddAddress(ctx, step.Interface, *step.Address)
 	case StepAddressRemove:
 		if step.Address == nil {
-			return errors.New("the plan step has no address")
+			return i18n.Errorf(ctx, "the plan step has no address")
 		}
 		return s.links.RemoveAddress(ctx, step.Interface, *step.Address)
 
@@ -1246,7 +1279,7 @@ func (s *Service) runStep(ctx context.Context, step Step, takeover bool) error {
 		_, err := s.runner.Run(ctx, step.Argv)
 		return err
 	}
-	return fmt.Errorf("unknown plan step %q", step.Kind)
+	return i18n.Errorf(ctx, "unknown plan step %q", step.Kind)
 }
 
 // remediation returns the exact commands an operator should run to put the host

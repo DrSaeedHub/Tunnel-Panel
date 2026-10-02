@@ -2,9 +2,9 @@ package diag
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 )
 
@@ -39,7 +39,7 @@ func (s *Service) Counters(ctx context.Context, tunnelID int64, sampleSeconds fl
 
 	before, err := s.links.Statistics(ctx, rec.InterfaceName)
 	if err != nil {
-		return CounterSnapshot{}, fmt.Errorf("reading the counters of %s: %w", rec.InterfaceName, err)
+		return CounterSnapshot{}, i18n.Errorf(ctx, "reading the counters of %s: %w", rec.InterfaceName, err)
 	}
 	started := time.Now()
 
@@ -53,7 +53,7 @@ func (s *Service) Counters(ctx context.Context, tunnelID int64, sampleSeconds fl
 
 	after, err := s.links.Statistics(ctx, rec.InterfaceName)
 	if err != nil {
-		return CounterSnapshot{}, fmt.Errorf("reading the counters of %s: %w", rec.InterfaceName, err)
+		return CounterSnapshot{}, i18n.Errorf(ctx, "reading the counters of %s: %w", rec.InterfaceName, err)
 	}
 	elapsed := time.Since(started).Seconds()
 

@@ -74,6 +74,11 @@ function asString(value: unknown, fallback: string): string {
   return typeof value === 'string' && value ? value : fallback
 }
 
+/** The ['settings'] query: the stored values, as opposed to the schema under it. */
+function isSettingsValues(key: readonly unknown[]): boolean {
+  return key.length === 1 && key[0] === 'settings'
+}
+
 export function PreferencesProvider({
   children,
   authenticated,
@@ -158,9 +163,21 @@ export function PreferencesProvider({
     root.style.colorScheme = resolvedTheme
   }, [dir, language, resolvedTheme, density])
 
+  // Everything the server has said so far -- messages, explanations, the
+  // settings' own labels -- was said in the language the page was in when it
+  // was asked, because every request names that language. Changing it
+  // refetches all of it, once the new language is the one the requests carry.
+  //
+  // The settings values themselves are left alone: they carry no prose, and
+  // refetching them races the write that changes display.language, so a read
+  // landing first would hand the old language back to the effect above and
+  // switch the page straight back.
   useEffect(() => {
-    if (i18n.language !== language) void i18n.changeLanguage(language)
-  }, [i18n, language])
+    if (i18n.language === language) return
+    void i18n.changeLanguage(language).then(() =>
+      queryClient.invalidateQueries({ predicate: (query) => !isSettingsValues(query.queryKey) }),
+    )
+  }, [i18n, language, queryClient])
 
   const persist = useCallback(
     (key: string, value: unknown) => {

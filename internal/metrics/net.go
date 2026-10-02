@@ -2,12 +2,13 @@ package metrics
 
 import (
 	"bufio"
-	"fmt"
+	"context"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 )
 
@@ -94,7 +95,7 @@ func ClassifyInterface(name, kind string, isLoopback bool) string {
 func (r *Reader) ProcNetDev() (map[string]InterfaceCounters, error) {
 	file, err := os.Open(r.path("proc", "net", "dev"))
 	if err != nil {
-		return nil, fmt.Errorf("reading interface counters: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading interface counters: %w", err)
 	}
 	defer file.Close()
 
@@ -130,7 +131,7 @@ func (r *Reader) ProcNetDev() (map[string]InterfaceCounters, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading interface counters: %w", err)
+		return nil, i18n.Errorf(context.Background(), "reading interface counters: %w", err)
 	}
 	return out, nil
 }

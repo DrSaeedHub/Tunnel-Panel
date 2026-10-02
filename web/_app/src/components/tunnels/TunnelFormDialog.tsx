@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, Check, Dices, Info } from 'lucide-react'
 
 import { ApiError, api } from '@/lib/api'
+import { tunnelFieldLabel } from '@/lib/fieldLabels'
 import { cn } from '@/lib/utils'
 import {
   PersistenceType,
@@ -68,6 +69,29 @@ const MAX_ENCAP_LIMIT = 255
 
 /** The tunnel types whose outer header is IPv6, and so have these two fields. */
 const IPV6_TUNNEL_TYPES: number[] = [TunnelType.IP6GRE, TunnelType.IP6GRETAP]
+
+/** The fields whose inputs live in the Advanced panel, which starts closed. */
+const ADVANCED_FIELDS = new Set([
+  'ikey',
+  'okey',
+  'mtu',
+  'ttl',
+  'tos',
+  'interface_name',
+  'bind_device',
+  'fwmark',
+  'tx_queue_length',
+  'hop_limit',
+  'encap_limit',
+  'persistence_type_id',
+])
+
+/** The lookup name each persistence type is labelled by under `tunnel.persistence`. */
+function persistenceKey(id: number): 'Systemd' | 'Networkd' | 'Runtime' {
+  if (id === PersistenceType.Systemd) return 'Systemd'
+  if (id === PersistenceType.Networkd) return 'Networkd'
+  return 'Runtime'
+}
 
 /** Per-tunnel monitoring overrides, which are nullable on the backend. */
 interface MonitorOverrides {
@@ -151,6 +175,7 @@ export function TunnelFormDialog({
   const [force, setForce] = useState(false)
   const [confirmRecreate, setConfirmRecreate] = useState(false)
   const [askingToRecreate, setAskingToRecreate] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   // The traffic limit rides beside the tunnel: saved through its own endpoint
   // after the tunnel lands, which is what lets the create dialog carry a limit
   // for a tunnel that does not exist yet.
@@ -167,6 +192,7 @@ export function TunnelFormDialog({
       setForce(false)
       setConfirmRecreate(false)
       setAskingToRecreate(false)
+      setAdvancedOpen(false)
       setQuotaDraft(null)
       return
     }
@@ -199,6 +225,12 @@ export function TunnelFormDialog({
     setForm((current) => (current ? { ...current, address_pool_id: next } : current))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, tunnel, initial, manualAddressing, form?.address_pool_id, poolsQuery.isSuccess])
+
+  // An error on a field inside the Advanced panel is no use while the panel is
+  // closed over it, so a refusal that names one opens it.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).some((field) => ADVANCED_FIELDS.has(field))) setAdvancedOpen(true)
+  }, [fieldErrors])
 
   const patch = useMemo(() => (form ? toPatch(form, manualAddressing) : null), [form, manualAddressing])
 
@@ -339,6 +371,29 @@ export function TunnelFormDialog({
   // Save was the whole of what an operator saw.
   const mustConfirmRecreate = requiresRecreate && Boolean(tunnel) && !confirmRecreate
 
+  // The field errors that have an input on screen to sit under. The backend
+  // also names fields this form has no input for -- the side, the tunnel
+  // number, the monitoring overrides, one part of an address -- and the banner
+  // used to be hidden whenever any field error came back, so those refusals
+  // reached nobody: the form did nothing, and said nothing about why.
+  const showsPoolPicker =
+    !manualAddressing && (pools.some((pool) => pool.is_enabled) || form.address_pool_id !== null)
+  const placedFields = new Set<string>([
+    'display_name',
+    'tunnel_type_id',
+    'local_endpoint',
+    'remote_endpoint',
+    ...[...ADVANCED_FIELDS].filter(
+      (field) =>
+        (field !== 'hop_limit' && field !== 'encap_limit') || IPV6_TUNNEL_TYPES.includes(form.tunnel_type_id),
+    ),
+    ...(manualAddressing
+      ? ['addresses', 'addresses.0.address', 'addresses.0.prefix_length', 'addresses.0.peer_address']
+      : []),
+    ...(showsPoolPicker ? ['address_pool_id'] : []),
+  ])
+  const unplacedErrors = Object.entries(fieldErrors).filter(([field]) => !placedFields.has(field))
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="xl">
@@ -349,10 +404,21 @@ export function TunnelFormDialog({
         </DialogHeader>
 
         <DialogBody className="space-y-4">
-          {submitError ? (
-            <p className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
-              {submitError}
-            </p>
+          {submitError || unplacedErrors.length ? (
+            <div className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
+              {submitError ? <p dir="auto">{submitError}</p> : <p>{t('errors.validation')}</p>}
+              {unplacedErrors.length ? (
+                <ul className="mt-1 space-y-0.5">
+                  {unplacedErrors.map(([field, message]) => (
+                    <li key={field}>
+                      <span className="font-medium">{tunnelFieldLabel(field, t)}</span>
+                      {': '}
+                      <span dir="auto">{message}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
           ) : null}
 
           {/* 1 — Type and side */}
@@ -388,7 +454,7 @@ export function TunnelFormDialog({
                         ? tunnelTypes.map((type) => ({
                             value: String(type.tunnel_type_id),
                             label: type.title,
-                            description: type.note,
+                            description: type.note ? <span dir="auto">{type.note}</span> : undefined,
                           }))
                         : [{ value: String(TunnelType.GRE), label: 'GRE' }]
                     }
@@ -457,7 +523,12 @@ export function TunnelFormDialog({
           </section>
 
           {/* 3 — Advanced */}
-          <DisclosurePanel title={t('tunnelForm.sectionAdvanced')} contentClassName="space-y-3">
+          <DisclosurePanel
+            title={t('tunnelForm.sectionAdvanced')}
+            contentClassName="space-y-3"
+            open={advancedOpen}
+            onOpenChange={setAdvancedOpen}
+          >
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
                 label={t('tunnel.fields.key')}
@@ -697,13 +768,15 @@ export function TunnelFormDialog({
                       persistenceOptions.length
                         ? persistenceOptions.map((option) => ({
                             value: String(option.persistence_type_id),
-                            label: option.title,
-                            description: option.note,
+                            // The lookup's own title is the wire name
+                            // ("Networkd"); the label is the translated one.
+                            label: t(`tunnel.persistence.${persistenceKey(option.persistence_type_id)}`),
+                            description: option.note ? <span dir="auto">{option.note}</span> : undefined,
                             // An unavailable backend is shown and disabled, so
                             // its absence is explained rather than mysterious.
                             disabled: !option.available,
                           }))
-                        : [{ value: String(PersistenceType.Runtime), label: 'Runtime' }]
+                        : [{ value: String(PersistenceType.Runtime), label: t('tunnel.persistence.Runtime') }]
                     }
                   />
                 )}
@@ -828,7 +901,7 @@ export function TunnelFormDialog({
               {warnings.map((warning) => (
                 <p key={warning.code} className="flex items-start gap-2 text-xs">
                   <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warn" aria-hidden="true" />
-                  {warning.message}
+                  <span dir="auto">{warning.message}</span>
                 </p>
               ))}
               <label className="flex items-center gap-2 pt-1 text-xs font-medium">
@@ -932,7 +1005,7 @@ function RecreateDialog({
           {reasons.length ? (
             <ul className="space-y-1 rounded-md border border-border bg-muted/40 p-3">
               {reasons.map((reason) => (
-                <li key={reason} className="text-2xs text-muted-foreground">
+                <li key={reason} dir="auto" className="text-2xs text-muted-foreground">
                   {reason}
                 </li>
               ))}
@@ -996,14 +1069,25 @@ function MtuField({
               <div className="space-y-0.5">
                 <p className="font-medium">{t('tunnelForm.mtuAdvice.breakdown')}</p>
                 {(advice.breakdown ?? []).map((term) => (
-                  <p key={term.label}>
-                    {term.label}: {term.bytes} B
+                  <p key={term.name}>
+                    {t('tunnelForm.mtuAdvice.term', {
+                      // The backend names each term with a fixed English
+                      // phrase, which is the key it is translated under; one
+                      // added there before its translation lands here is
+                      // still shown, as the backend wrote it.
+                      name: t(`tunnelForm.mtuAdvice.terms.${term.name}`, { defaultValue: term.name }),
+                      bytes: term.bytes,
+                    })}
                   </p>
                 ))}
               </div>
             }
           >
-            <button type="button" className="text-muted-foreground hover:text-foreground">
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground"
+              aria-label={t('tunnelForm.mtuAdvice.breakdown')}
+            >
               <Info className="size-3.5" aria-hidden="true" />
             </button>
           </Tooltip>
@@ -1112,7 +1196,11 @@ function AddressingSection({
 
       {manual ? (
         <div className="grid gap-3 sm:grid-cols-3">
-          <Field label={t('tunnel.fields.address')} error={errors['addresses']} required>
+          <Field
+            label={t('tunnel.fields.address')}
+            error={errors['addresses'] ?? errors['addresses.0.address']}
+            required
+          >
             {(props) => (
               <TechnicalInput
                 {...props}
@@ -1131,7 +1219,7 @@ function AddressingSection({
               />
             )}
           </Field>
-          <Field label={t('tunnel.fields.prefixLength')}>
+          <Field label={t('tunnel.fields.prefixLength')} error={errors['addresses.0.prefix_length']}>
             {(props) => (
               <TechnicalInput
                 {...props}
@@ -1150,7 +1238,7 @@ function AddressingSection({
               />
             )}
           </Field>
-          <Field label={t('tunnel.fields.peerAddress')}>
+          <Field label={t('tunnel.fields.peerAddress')} error={errors['addresses.0.peer_address']}>
             {(props) => (
               <TechnicalInput
                 {...props}

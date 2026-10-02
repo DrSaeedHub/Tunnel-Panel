@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // IPCommand is the LinkManager implemented by running `ip` with `-j` and
@@ -36,17 +37,19 @@ func NewIPCommand(bin string, runner exec.Runner) *IPCommand {
 func (c *IPCommand) Name() string { return ManagerIP }
 
 // Capabilities reports availability, which here means the binary was found.
+// What it reports is said in the panel's language, because the interface it
+// implements is not handed a request.
 func (c *IPCommand) Capabilities() Capabilities {
 	available := strings.TrimSpace(c.Bin) != ""
-	detail := "iproute2 command line with JSON output"
+	detail := i18n.P("iproute2 command line with JSON output")
 	if !available {
-		detail = "the ip binary was not found on this system"
+		detail = i18n.P("the ip binary was not found on this system")
 	}
 	types := map[string]TypeSupport{}
 	for _, kind := range TunnelKinds() {
 		note := ""
 		if IsIPv6Kind(kind) {
-			note = "served here because netlink library coverage of the IPv6 GRE variants is incomplete"
+			note = i18n.P("served here because netlink library coverage of the IPv6 GRE variants is incomplete")
 		}
 		types[kind] = TypeSupport{Supported: available, Manager: ManagerIP, Note: note}
 	}
@@ -62,15 +65,15 @@ func (c *IPCommand) Capabilities() Capabilities {
 	}
 }
 
-func (c *IPCommand) ready() error {
+func (c *IPCommand) ready(ctx context.Context) error {
 	if strings.TrimSpace(c.Bin) == "" {
-		return fmt.Errorf("%w: the ip binary was not found", ErrUnsupported)
+		return i18n.Errorf(ctx, "%w: the ip binary was not found", ErrUnsupported)
 	}
 	return nil
 }
 
 func (c *IPCommand) run(ctx context.Context, args ...string) (exec.Result, error) {
-	if err := c.ready(); err != nil {
+	if err := c.ready(ctx); err != nil {
 		return exec.Result{}, err
 	}
 	return c.Runner.Run(ctx, args)

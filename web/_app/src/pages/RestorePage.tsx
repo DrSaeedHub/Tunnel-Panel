@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Database, Upload, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
-import { csrfToken } from '@/lib/api'
+import { csrfToken, languageHeader } from '@/lib/api'
 import { apiUrl, panelUrl } from '@/lib/bootstrap'
 import { Button } from '@/components/ui/button'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
@@ -100,6 +100,8 @@ export default function RestorePage() {
       xhr.withCredentials = true
       const token = csrfToken()
       if (token) xhr.setRequestHeader('X-CSRF-Token', token)
+      // So a refusal comes back in the language this page is in.
+      for (const [name, value] of Object.entries(languageHeader())) xhr.setRequestHeader(name, value)
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) setUploaded(event.loaded / event.total)
@@ -270,7 +272,7 @@ export default function RestorePage() {
       ) : null}
 
       {error ? (
-        <p role="alert" className="rounded-lg bg-danger-muted p-3 text-sm text-danger">
+        <p role="alert" dir="auto" className="rounded-lg bg-danger-muted p-3 text-sm text-danger">
           {error}
         </p>
       ) : null}

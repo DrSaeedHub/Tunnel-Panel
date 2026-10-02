@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import i18n from 'i18next'
+
 import { apiUrl } from './bootstrap'
 
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting' | 'closed'
@@ -55,7 +57,9 @@ export function useEventStream<T = unknown>(path: string, options: Options<T>): 
 
     const connect = () => {
       if (disposed) return
-      source = new EventSource(apiUrl(path), { withCredentials: true })
+      // A stream cannot carry headers, so the interface language rides in the
+      // query; the panel says what it streams -- reasons, errors -- in it.
+      source = new EventSource(withLanguage(apiUrl(path)), { withCredentials: true })
 
       source.onopen = () => {
         retryDelay = MIN_RETRY_MS
@@ -102,4 +106,10 @@ export function useEventStream<T = unknown>(path: string, options: Options<T>): 
   }, [path, enabled])
 
   return state
+}
+
+/** Adds the interface language to a stream URL, which cannot send it as a header. */
+export function withLanguage(url: string): string {
+  if (!i18n.language) return url
+  return `${url}${url.includes('?') ? '&' : '?'}lang=${encodeURIComponent(i18n.language)}`
 }

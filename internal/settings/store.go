@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -26,7 +27,7 @@ func (e *ValidationError) Error() string {
 	if len(keys) == 1 {
 		return fmt.Sprintf("%s: %s", keys[0], e.Errors[keys[0]])
 	}
-	return fmt.Sprintf("%d settings are invalid", len(keys))
+	return i18n.P("%d settings are invalid", len(keys))
 }
 
 // Store holds the effective value of every setting: the declared default,
@@ -250,19 +251,20 @@ func (s *Store) StringMap(key string) map[string]string {
 }
 
 // Validate checks a batch of updates without applying them, returning one
-// message per rejected key. Cross-key rules are checked against the values that
-// would result, not against the values in force now.
-func (s *Store) Validate(updates map[string]any) (map[string]any, *ValidationError) {
+// message per rejected key, said in the language ctx carries. Cross-key rules
+// are checked against the values that would result, not against the values in
+// force now.
+func (s *Store) Validate(ctx context.Context, updates map[string]any) (map[string]any, *ValidationError) {
 	errs := map[string]string{}
 	coerced := make(map[string]any, len(updates))
 
 	for key, raw := range updates {
 		def, ok := Lookup(key)
 		if !ok {
-			errs[key] = "unknown setting"
+			errs[key] = i18n.T(ctx, "unknown setting")
 			continue
 		}
-		v, err := def.Coerce(raw)
+		v, err := def.coerce(ctx, raw)
 		if err != nil {
 			errs[key] = err.Error()
 			continue
@@ -276,7 +278,7 @@ func (s *Store) Validate(updates map[string]any) (map[string]any, *ValidationErr
 	for k, v := range coerced {
 		effective[k] = v
 	}
-	for key, msg := range crossKeyErrors(effective) {
+	for key, msg := range crossKeyErrors(ctx, effective) {
 		if _, already := errs[key]; already {
 			continue
 		}
@@ -296,7 +298,7 @@ func (s *Store) Validate(updates map[string]any) (map[string]any, *ValidationErr
 // crossKeyErrors holds the rules that involve more than one setting. Each
 // message is attached to the key most likely to be the one the operator meant
 // to change.
-func crossKeyErrors(v map[string]any) map[string]string {
+func crossKeyErrors(ctx context.Context, v map[string]any) map[string]string {
 	errs := map[string]string{}
 	num := func(key string) (float64, bool) {
 		switch n := v[key].(type) {
@@ -316,20 +318,20 @@ func crossKeyErrors(v map[string]any) map[string]string {
 		}
 	}
 	pair("monitor.degraded_loss_pct", "monitor.down_loss_pct",
-		"the Degraded loss threshold must not exceed the Down loss threshold")
+		i18n.T(ctx, "the Degraded loss threshold must not exceed the Down loss threshold"))
 	pair("metrics.disk_warn_pct", "metrics.disk_critical_pct",
-		"the disk warning threshold must not exceed the critical threshold")
+		i18n.T(ctx, "the disk warning threshold must not exceed the critical threshold"))
 	pair("diagnostics.mtu_probe_min", "diagnostics.mtu_probe_max",
-		"the MTU probe lower bound must not exceed the upper bound")
+		i18n.T(ctx, "the MTU probe lower bound must not exceed the upper bound"))
 	pair("diagnostics.manual_ping_count", "diagnostics.manual_ping_max_count",
-		"the default ping count must not exceed the maximum ping count")
+		i18n.T(ctx, "the default ping count must not exceed the maximum ping count"))
 	return errs
 }
 
 // Update validates and applies a batch atomically: either every key is written
 // or none is. It returns the keys that actually changed value.
 func (s *Store) Update(ctx context.Context, updates map[string]any, userID *int64) ([]string, error) {
-	coerced, verr := s.Validate(updates)
+	coerced, verr := s.Validate(ctx, updates)
 	if verr != nil {
 		return nil, verr
 	}
@@ -337,7 +339,7 @@ func (s *Store) Update(ctx context.Context, updates map[string]any, userID *int6
 	now := model.NowUTC()
 	tx, err := s.database.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("beginning settings transaction: %w", err)
+		return nil, i18n.Errorf(ctx, "beginning settings transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -358,14 +360,14 @@ func (s *Store) Update(ctx context.Context, updates map[string]any, userID *int6
 	for _, key := range keys {
 		encoded, err := json.Marshal(coerced[key])
 		if err != nil {
-			return nil, fmt.Errorf("encoding setting %s: %w", key, err)
+			return nil, i18n.Errorf(ctx, "encoding setting %s: %w", key, err)
 		}
 		if _, err := tx.ExecContext(ctx, stmt, key, string(encoded), userID, now); err != nil {
-			return nil, fmt.Errorf("storing setting %s: %w", key, err)
+			return nil, i18n.Errorf(ctx, "storing setting %s: %w", key, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("committing settings: %w", err)
+		return nil, i18n.Errorf(ctx, "committing settings: %w", err)
 	}
 
 	changed := s.apply(coerced)
@@ -382,7 +384,7 @@ func (s *Store) Reset(ctx context.Context, keys []string) ([]string, error) {
 	unknown := map[string]string{}
 	for _, k := range keys {
 		if _, ok := Lookup(k); !ok {
-			unknown[k] = "unknown setting"
+			unknown[k] = i18n.T(ctx, "unknown setting")
 		}
 	}
 	if len(unknown) > 0 {
@@ -391,17 +393,17 @@ func (s *Store) Reset(ctx context.Context, keys []string) ([]string, error) {
 
 	tx, err := s.database.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("beginning settings transaction: %w", err)
+		return nil, i18n.Errorf(ctx, "beginning settings transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
 	for _, k := range keys {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM AppSetting WHERE SettingKey = ?`, k); err != nil {
-			return nil, fmt.Errorf("resetting setting %s: %w", k, err)
+			return nil, i18n.Errorf(ctx, "resetting setting %s: %w", k, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("committing settings reset: %w", err)
+		return nil, i18n.Errorf(ctx, "committing settings reset: %w", err)
 	}
 
 	defaults := make(map[string]any, len(keys))

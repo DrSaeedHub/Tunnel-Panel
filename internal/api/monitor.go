@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
 )
@@ -15,7 +16,7 @@ func (s *Server) requireMonitor(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.monitor == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Monitoring is not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Monitoring is not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -44,7 +45,7 @@ func (s *Server) handleTunnelStatus(w http.ResponseWriter, r *http.Request) {
 			InterfaceName:  rec.InterfaceName,
 			MonitorStateID: model.MonitorStateUnknown,
 			State:          monitor.StateName(model.MonitorStateUnknown),
-			Reason:         "monitoring has not reported on this tunnel yet",
+			Reason:         i18n.T(r.Context(), "monitoring has not reported on this tunnel yet"),
 			UpdatedAt:      time.Now(),
 		}
 	}
@@ -70,7 +71,7 @@ func (s *Server) handleTunnelHistory(w http.ResponseWriter, r *http.Request) {
 		parsed, err := parseTimeParam(raw)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-				"The from parameter is not a time: "+err.Error(), "from", nil)
+				i18n.T(r.Context(), "The from parameter is not a time: %s", err.Error()), "from", nil)
 			return
 		}
 		query.From = parsed
@@ -79,7 +80,7 @@ func (s *Server) handleTunnelHistory(w http.ResponseWriter, r *http.Request) {
 		parsed, err := parseTimeParam(raw)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-				"The to parameter is not a time: "+err.Error(), "to", nil)
+				i18n.T(r.Context(), "The to parameter is not a time: %s", err.Error()), "to", nil)
 			return
 		}
 		query.To = parsed
@@ -170,7 +171,7 @@ func (s *Server) handleMonitorSummary(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleMonitorStream(w http.ResponseWriter, r *http.Request) {
 	stream, ok := newSSE(w)
 	if !ok {
-		streamNotSupported(w)
+		streamNotSupported(w, r)
 		return
 	}
 

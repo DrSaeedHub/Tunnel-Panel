@@ -3,11 +3,12 @@ package monitor
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sort"
 	"syscall"
 	"time"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // PingRequest is one on-demand measurement (§13.1).
@@ -99,11 +100,11 @@ func Ping(ctx context.Context, dialer Dialer, req PingRequest, onPacket func(Pin
 	if req.PacketSize < MinPacketSize {
 		req.PacketSize = MinPacketSize
 	}
-	if err := sameFamily(req.Source, req.Target); err != nil {
+	if err := sameFamily(ctx, req.Source, req.Target); err != nil {
 		return PingResult{}, err
 	}
 
-	target, isIPv6, err := targetAddr(req.Target)
+	target, isIPv6, err := targetAddr(ctx, req.Target)
 	if err != nil {
 		return PingResult{}, err
 	}
@@ -116,12 +117,12 @@ func Ping(ctx context.Context, dialer Dialer, req PingRequest, onPacket func(Pin
 
 	if req.DontFragment {
 		if err := conn.SetDontFragment(true); err != nil {
-			return PingResult{}, fmt.Errorf("setting the Don't-Fragment bit: %w", err)
+			return PingResult{}, i18n.Errorf(ctx, "setting the Don't-Fragment bit: %w", err)
 		}
 	}
 	if req.Ttl > 0 {
 		if err := conn.SetTTL(req.Ttl); err != nil {
-			return PingResult{}, fmt.Errorf("setting the hop limit: %w", err)
+			return PingResult{}, i18n.Errorf(ctx, "setting the hop limit: %w", err)
 		}
 	}
 
@@ -197,14 +198,14 @@ func Ping(ctx context.Context, dialer Dialer, req PingRequest, onPacket func(Pin
 
 			if _, err := conn.WriteTo(packet, target); err != nil {
 				// A send that fails is a decided probe: it never left.
-				kind, detail := "send_failed", "the probe could not be sent: "+err.Error()
+				kind, detail := "send_failed", i18n.T(ctx, "the probe could not be sent: %s", err)
 				if errors.Is(err, syscall.EMSGSIZE) {
 					// The kernel itself refused the packet for being larger than
 					// the outgoing interface allows without fragmenting. That is
 					// the answer the MTU search wants, not a lost packet.
 					result.TooLargeToSend = true
 					kind = "too_large"
-					detail = fmt.Sprintf("the kernel refused to send a %d-byte packet without fragmenting it", len(packet))
+					detail = i18n.T(ctx, "the kernel refused to send a %d-byte packet without fragmenting it", len(packet))
 				}
 				emit(PingPacket{
 					Sequence: sequence, Success: false, Size: len(packet), At: now,
@@ -240,13 +241,13 @@ func Ping(ctx context.Context, dialer Dialer, req PingRequest, onPacket func(Pin
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			expireAll(outstanding, &result, emit)
+			expireAll(ctx, outstanding, &result, emit)
 			return finish(result, rtts, answered, started), ctx.Err()
 		case reply := <-replies:
 			timer.Stop()
-			handleReply(reply, outstanding, answered, &rtts, &result, emit)
+			handleReply(ctx, reply, outstanding, answered, &rtts, &result, emit)
 		case <-timer.C:
-			expire(outstanding, &result, emit, time.Now())
+			expire(ctx, outstanding, &result, emit, time.Now())
 		}
 	}
 
@@ -255,7 +256,7 @@ func Ping(ctx context.Context, dialer Dialer, req PingRequest, onPacket func(Pin
 	for {
 		select {
 		case reply := <-replies:
-			handleReply(reply, outstanding, answered, &rtts, &result, emit)
+			handleReply(ctx, reply, outstanding, answered, &rtts, &result, emit)
 			continue
 		default:
 		}
@@ -267,7 +268,7 @@ func Ping(ctx context.Context, dialer Dialer, req PingRequest, onPacket func(Pin
 }
 
 // handleReply records one inbound message against its probe.
-func handleReply(reply Reply, outstanding map[int]*pending, answered map[string]bool,
+func handleReply(ctx context.Context, reply Reply, outstanding map[int]*pending, answered map[string]bool,
 	rtts *[]float64, result *PingResult, emit func(PingPacket)) {
 
 	entry, ok := outstanding[reply.Sequence]
@@ -306,12 +307,13 @@ func handleReply(reply Reply, outstanding map[int]*pending, answered map[string]
 	}
 	emit(PingPacket{
 		Sequence: reply.Sequence, Success: false, Size: entry.size, From: reply.From,
-		Error: reply.Detail, Kind: string(reply.Kind), At: now,
+		Error: reply.Describe(ctx), Kind: string(reply.Kind), At: now,
 	})
 }
 
 // expire gives up on probes whose timeout has passed.
-func expire(outstanding map[int]*pending, result *PingResult, emit func(PingPacket), now time.Time) {
+func expire(ctx context.Context, outstanding map[int]*pending, result *PingResult, emit func(PingPacket),
+	now time.Time) {
 	for sequence, entry := range outstanding {
 		if now.Before(entry.deadline) {
 			continue
@@ -319,7 +321,7 @@ func expire(outstanding map[int]*pending, result *PingResult, emit func(PingPack
 		delete(outstanding, sequence)
 		emit(PingPacket{
 			Sequence: sequence, Success: false, Size: entry.size, At: now,
-			Error: "no reply within the timeout", Kind: "timeout",
+			Error: i18n.T(ctx, "no reply within the timeout"), Kind: "timeout",
 		})
 	}
 }
@@ -337,13 +339,13 @@ func earliestDeadline(outstanding map[int]*pending) (time.Time, bool) {
 
 // expireAll gives up on every outstanding probe, which is what cancelling does:
 // the packets that were in flight are reported rather than silently dropped.
-func expireAll(outstanding map[int]*pending, result *PingResult, emit func(PingPacket)) {
+func expireAll(ctx context.Context, outstanding map[int]*pending, result *PingResult, emit func(PingPacket)) {
 	now := time.Now()
 	for sequence, entry := range outstanding {
 		delete(outstanding, sequence)
 		emit(PingPacket{
 			Sequence: sequence, Success: false, Size: entry.size, At: now,
-			Error: "the run was stopped before this probe was answered", Kind: "cancelled",
+			Error: i18n.T(ctx, "the run was stopped before this probe was answered"), Kind: "cancelled",
 		})
 	}
 }

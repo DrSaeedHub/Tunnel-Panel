@@ -10,7 +10,7 @@ package reconcile
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/persist"
@@ -198,7 +199,7 @@ func (s *Service) Report(ctx context.Context) (Report, error) {
 	}
 	links, err := s.Links.List(ctx)
 	if err != nil {
-		return Report{}, fmt.Errorf("reading interfaces: %w", err)
+		return Report{}, i18n.Errorf(ctx, "reading interfaces: %w", err)
 	}
 
 	observed := link.ByName(links)
@@ -217,7 +218,7 @@ func (s *Service) Report(ctx context.Context) (Report, error) {
 
 	for _, rec := range records {
 		managed[rec.InterfaceName] = true
-		report.Items = append(report.Items, s.classify(rec, observed[rec.InterfaceName],
+		report.Items = append(report.Items, s.classify(ctx, rec, observed[rec.InterfaceName],
 			observed != nil && hasLink(observed, rec.InterfaceName)))
 	}
 
@@ -246,7 +247,7 @@ func (s *Service) Report(ctx context.Context) (Report, error) {
 		if validate.IsReservedInterfaceName(l.Name) {
 			continue
 		}
-		report.Items = append(report.Items, s.classifyUnmanaged(l, ignored[l.Name]))
+		report.Items = append(report.Items, s.classifyUnmanaged(ctx, l, ignored[l.Name]))
 	}
 
 	sort.SliceStable(report.Items, func(i, j int) bool {
@@ -262,7 +263,7 @@ func (s *Service) Report(ctx context.Context) (Report, error) {
 	routes, findings, err := s.RouteReport(ctx)
 	if err != nil {
 		findings.Notes = append(findings.Notes,
-			"the forwarding rules could not be compared: "+err.Error())
+			i18n.T(ctx, "the forwarding rules could not be compared: %v", err))
 	}
 	if routes != nil {
 		report.Routes = routes
@@ -280,7 +281,7 @@ func hasLink(byName map[string]link.Link, name string) bool {
 }
 
 // classify decides the status of one stored tunnel.
-func (s *Service) classify(rec tunnel.Record, observed link.Link, exists bool) Item {
+func (s *Service) classify(ctx context.Context, rec tunnel.Record, observed link.Link, exists bool) Item {
 	id := rec.TunnelID
 	item := Item{
 		TunnelID: &id, InterfaceName: rec.InterfaceName,
@@ -298,10 +299,13 @@ func (s *Service) classify(rec tunnel.Record, observed link.Link, exists bool) I
 	if rec.ApplyStatusID == model.ApplyStatusInconsistent {
 		item.ReconcileStatusID = model.ReconcileStatusInconsistent
 		item.Status = StatusInconsistent
-		item.Detail = "the last change to this tunnel failed and could not be undone. The host may be " +
-			"half-configured; reapply, or clean it up by hand and then forget it."
 		if rec.LastApplyError != nil {
-			item.Detail += " The failure was: " + *rec.LastApplyError
+			item.Detail = i18n.T(ctx, "the last change to this tunnel failed and could not be undone. "+
+				"The host may be half-configured; reapply, or clean it up by hand and then forget it. "+
+				"The failure was: %s", *rec.LastApplyError)
+		} else {
+			item.Detail = i18n.T(ctx, "the last change to this tunnel failed and could not be undone. "+
+				"The host may be half-configured; reapply, or clean it up by hand and then forget it.")
 		}
 		return item
 	}
@@ -309,17 +313,17 @@ func (s *Service) classify(rec tunnel.Record, observed link.Link, exists bool) I
 	if !exists {
 		item.ReconcileStatusID = model.ReconcileStatusMissing
 		item.Status = StatusMissing
-		item.Detail = fmt.Sprintf("the panel has a tunnel called %s but no such interface exists on this "+
+		item.Detail = i18n.T(ctx, "the panel has a tunnel called %s but no such interface exists on this "+
 			"host. Reapply to build it again, or forget it to drop the record.", rec.InterfaceName)
 		return item
 	}
 
 	item.Observed = summarise(observed)
-	item.Diffs = compare(rec, observed)
+	item.Diffs = compare(ctx, rec, observed)
 	if len(item.Diffs) == 0 {
 		item.ReconcileStatusID = model.ReconcileStatusInSync
 		item.Status = StatusInSync
-		item.Detail = "the running interface matches the stored configuration"
+		item.Detail = i18n.T(ctx, "the running interface matches the stored configuration")
 		return item
 	}
 
@@ -329,13 +333,14 @@ func (s *Service) classify(rec tunnel.Record, observed link.Link, exists bool) I
 	for _, d := range item.Diffs {
 		fields = append(fields, d.Field)
 	}
-	item.Detail = "the running interface differs from the stored configuration in " + strings.Join(fields, ", ")
+	item.Detail = i18n.T(ctx, "the running interface differs from the stored configuration in %s",
+		strings.Join(fields, ", "))
 	return item
 }
 
 // classifyUnmanaged describes a tunnel interface the panel has no record of.
 // It is never destroyed automatically: something else on this host may own it.
-func (s *Service) classifyUnmanaged(l link.Link, ignored bool) Item {
+func (s *Service) classifyUnmanaged(ctx context.Context, l link.Link, ignored bool) Item {
 	item := Item{
 		InterfaceName:     l.Name,
 		ReconcileStatusID: model.ReconcileStatusUnmanaged,
@@ -346,12 +351,12 @@ func (s *Service) classifyUnmanaged(l link.Link, ignored bool) Item {
 	}
 	if ignored {
 		item.Actions = []string{ActionAdopt, ActionUnignore}
-		item.Detail = fmt.Sprintf("%s is a tunnel this panel does not manage, and you have asked for it "+
+		item.Detail = i18n.T(ctx, "%s is a tunnel this panel does not manage, and you have asked for it "+
 			"not to be reported. It is never changed or removed.", l.Name)
 		return item
 	}
 
-	item.Detail = fmt.Sprintf("%s is a tunnel on this host that the panel has no record of. Adopt it to "+
+	item.Detail = i18n.T(ctx, "%s is a tunnel on this host that the panel has no record of. Adopt it to "+
 		"manage it here, or ignore it if something else owns it. The panel never removes an interface "+
 		"it does not manage.", l.Name)
 
@@ -367,7 +372,7 @@ func (s *Service) classifyUnmanaged(l link.Link, ignored bool) Item {
 			legacy.KeepalivePath = keepalive
 		}
 		item.Legacy = &legacy
-		item.Detail = fmt.Sprintf("%s was created by the install script this panel replaces. Adopting it "+
+		item.Detail = i18n.T(ctx, "%s was created by the install script this panel replaces. Adopting it "+
 			"imports its parameters from the kernel; the interface is never renamed and never "+
 			"interrupted.", l.Name)
 	}
@@ -407,7 +412,7 @@ func keyInt(v *uint32) *int64 {
 
 // compare produces the exact field diffs between the stored tunnel and the
 // running interface.
-func compare(rec tunnel.Record, observed link.Link) []FieldDiff {
+func compare(ctx context.Context, rec tunnel.Record, observed link.Link) []FieldDiff {
 	desired := tunnel.SpecOf(rec)
 	var diffs []FieldDiff
 	add := func(field, want, got string) {
@@ -415,34 +420,36 @@ func compare(rec tunnel.Record, observed link.Link) []FieldDiff {
 			diffs = append(diffs, FieldDiff{Field: field, Desired: want, Actual: got})
 		}
 	}
-
 	add("tunnel_type", desired.Kind, observed.Kind)
 	add("mtu", strconv.Itoa(desired.Mtu), strconv.Itoa(observed.MTU))
 
 	if observed.Tunnel == nil {
 		diffs = append(diffs, FieldDiff{
-			Field: "tunnel_attributes", Desired: "present", Actual: "the interface reports none",
+			Field: "tunnel_attributes", Desired: i18n.T(ctx, "present"),
+			Actual: i18n.T(ctx, "the interface reports none"),
 		})
 	} else {
-		add("local_endpoint", desired.Local, observed.Tunnel.Local)
-		add("remote_endpoint", desired.Remote, observed.Tunnel.Remote)
-		add("ttl", strconv.Itoa(desired.Ttl), strconv.Itoa(observed.Tunnel.Ttl))
-		add("ikey", keyText(desired.IKey), keyText(observed.Tunnel.IKey))
-		add("okey", keyText(desired.OKey), keyText(observed.Tunnel.OKey))
-		add("has_input_checksum", yesNo(desired.HasInputChecksum), yesNo(observed.Tunnel.HasInputChecksum))
-		add("has_output_checksum", yesNo(desired.HasOutputChecksum), yesNo(observed.Tunnel.HasOutputChecksum))
-		add("has_input_sequence", yesNo(desired.HasInputSequence), yesNo(observed.Tunnel.HasInputSequence))
-		add("has_output_sequence", yesNo(desired.HasOutputSequence), yesNo(observed.Tunnel.HasOutputSequence))
+		t := observed.Tunnel
+		add("local_endpoint", desired.Local, t.Local)
+		add("remote_endpoint", desired.Remote, t.Remote)
+		add("ttl", strconv.Itoa(desired.Ttl), strconv.Itoa(t.Ttl))
+		add("ikey", keyText(ctx, desired.IKey), keyText(ctx, t.IKey))
+		add("okey", keyText(ctx, desired.OKey), keyText(ctx, t.OKey))
+		add("has_input_checksum", yesNo(ctx, desired.HasInputChecksum), yesNo(ctx, t.HasInputChecksum))
+		add("has_output_checksum", yesNo(ctx, desired.HasOutputChecksum), yesNo(ctx, t.HasOutputChecksum))
+		add("has_input_sequence", yesNo(ctx, desired.HasInputSequence), yesNo(ctx, t.HasInputSequence))
+		add("has_output_sequence", yesNo(ctx, desired.HasOutputSequence), yesNo(ctx, t.HasOutputSequence))
 	}
 
 	// The administrative state is compared through the flags, never through the
 	// operational state: a healthy GRE tunnel reports UNKNOWN (§2).
-	add("is_up", yesNo(rec.IsEnabled), yesNo(observed.IsUp))
+	add("is_up", yesNo(ctx, rec.IsEnabled), yesNo(ctx, observed.IsUp))
 
 	for _, want := range tunnel.AddressesOf(rec) {
 		if !observed.HasAddress(want) {
 			diffs = append(diffs, FieldDiff{
-				Field: "address " + want.String(), Desired: "present", Actual: "missing",
+				Field: "address " + want.String(), Desired: i18n.T(ctx, "present"),
+				Actual: i18n.T(ctx, "missing"),
 			})
 		}
 	}
@@ -459,25 +466,26 @@ func compare(rec tunnel.Record, observed link.Link) []FieldDiff {
 		}
 		if !found {
 			diffs = append(diffs, FieldDiff{
-				Field: "address " + got.String(), Desired: "not configured", Actual: "present",
+				Field: "address " + got.String(), Desired: i18n.T(ctx, "not configured"),
+				Actual: i18n.T(ctx, "present"),
 			})
 		}
 	}
 	return diffs
 }
 
-func keyText(key *uint32) string {
+func keyText(ctx context.Context, key *uint32) string {
 	if key == nil {
-		return "none"
+		return i18n.T(ctx, "none")
 	}
 	return strconv.FormatUint(uint64(*key), 10)
 }
 
-func yesNo(b bool) string {
+func yesNo(ctx context.Context, b bool) string {
 	if b {
-		return "yes"
+		return i18n.T(ctx, "yes")
 	}
-	return "no"
+	return i18n.T(ctx, "no")
 }
 
 // ---------------------------------------------------------------- actions
@@ -505,7 +513,7 @@ type IgnoreStore interface {
 // SetIgnored adds or removes an interface from the ignore list.
 func SetIgnored(ctx context.Context, store IgnoreStore, name string, ignored bool, userID *int64) ([]string, error) {
 	if err := validate.InterfaceName(name); err != nil {
-		return nil, fmt.Errorf("%q is not a valid interface name: %s", name, err.Error())
+		return nil, errors.New(validate.InterfaceNameMessage(ctx, name))
 	}
 
 	current := store.StringSlice("system.ignored_interfaces")

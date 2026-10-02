@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"os"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 )
@@ -177,9 +179,11 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		} {
 			kind := model.TunnelTypeKind(id)
 			entry := support[kind]
+			// The title is the protocol's own name and stays as it is; the
+			// note is the link manager's sentence about it.
 			types = append(types, tunnelTypeCapability{
 				TunnelTypeID: id, Title: strings.ToUpper(kind),
-				Supported: entry.Supported, LinkManager: entry.Manager, Note: entry.Note,
+				Supported: entry.Supported, LinkManager: entry.Manager, Note: i18n.Tr(ctx, entry.Note),
 			})
 		}
 	} else {
@@ -189,7 +193,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		} {
 			types = append(types, tunnelTypeCapability{
 				TunnelTypeID: id, Title: strings.ToUpper(model.TunnelTypeKind(id)),
-				Supported: false, Note: "tunnel management is not available on this instance",
+				Supported: false, Note: i18n.T(ctx, "tunnel management is not available on this instance"),
 			})
 		}
 	}
@@ -200,17 +204,20 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		systemdAvailable = s.persist.SystemdAvailable()
 		networkdAvailable = s.persist.NetworkdActive(ctx)
 	}
-	networkdNote := "systemd-networkd is running, so networkd persistence can be offered"
+	networkdNote := i18n.T(ctx, "systemd-networkd is running, so networkd persistence can be offered")
 	if !networkdAvailable {
-		networkdNote = "systemd-networkd is not active on this host, so networkd persistence is not offered"
+		networkdNote = i18n.T(ctx, "systemd-networkd is not active on this host, so networkd persistence "+
+			"is not offered")
 	}
 
+	// The titles are what the persistence select shows, so they are said too;
+	// the identifier is what a client keys on.
 	persistence := []persistenceCapability{
-		{model.PersistenceTypeSystemd, "Systemd", systemdAvailable,
-			"renders a systemd unit; the tunnel returns after a reboot"},
-		{model.PersistenceTypeNetworkd, "Networkd", networkdAvailable, networkdNote},
-		{model.PersistenceTypeRuntime, "Runtime", true,
-			"configures the running kernel only and does not survive a reboot"},
+		{model.PersistenceTypeSystemd, i18n.T(ctx, "Systemd"), systemdAvailable,
+			i18n.T(ctx, "renders a systemd unit; the tunnel returns after a reboot")},
+		{model.PersistenceTypeNetworkd, i18n.T(ctx, "Networkd"), networkdAvailable, networkdNote},
+		{model.PersistenceTypeRuntime, i18n.T(ctx, "Runtime"), true,
+			i18n.T(ctx, "configures the running kernel only and does not survive a reboot")},
 	}
 
 	managers := map[string]any{
@@ -233,7 +240,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		{Name: "ip", Path: s.cfg.IPBin, Available: s.cfg.IPBin != ""},
 		{Name: "systemctl", Path: s.cfg.SystemctlBin, Available: s.cfg.SystemctlBin != ""},
 	}
-	ruleBackend := s.ruleBackendCapability()
+	ruleBackend := s.ruleBackendCapabilityIn(ctx)
 	// Every netfilter tool that was resolved is reported, not only the chosen
 	// backend's, so an operator can see what else this host has.
 	for _, name := range []string{"nft", "iptables", "iptables-restore", "ip6tables", "ip6tables-restore"} {
@@ -259,20 +266,29 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 // ruleBackendCapability describes the netfilter backend this instance would
 // apply forwarding rules through. A server built without one — which only
 // happens in a test — reports an unavailable fake rather than pretending.
+//
+// It says its sentences in the panel's language; ruleBackendCapabilityIn is the
+// same in the language of a request.
 func (s *Server) ruleBackendCapability() ruleBackendCapability {
+	return s.ruleBackendCapabilityIn(context.Background())
+}
+
+// ruleBackendCapabilityIn is ruleBackendCapability with its reason and detail
+// said in the language ctx carries.
+func (s *Server) ruleBackendCapabilityIn(ctx context.Context) ruleBackendCapability {
 	detection := s.ruleBackend
 	if detection.Backend == nil {
 		return ruleBackendCapability{
 			Active: "none", Available: false,
-			Reason: "forwarding rules are not available on this instance",
+			Reason: i18n.T(ctx, "forwarding rules are not available on this instance"),
 		}
 	}
 	caps := detection.Backend.Capabilities()
 	out := ruleBackendCapability{
 		Active:           detection.Backend.Name(),
 		Available:        caps.Available,
-		Reason:           detection.Reason,
-		Detail:           caps.Detail,
+		Reason:           i18n.Tr(ctx, detection.Reason),
+		Detail:           i18n.Tr(ctx, caps.Detail),
 		Version:          caps.Version,
 		Namespace:        caps.Namespace,
 		Features:         caps.Features,

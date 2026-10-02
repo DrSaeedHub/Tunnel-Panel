@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/rules"
 )
 
@@ -150,11 +151,12 @@ func (p *ProcConntrack) path() string {
 	return filepath.Join(root, procConntrackPath)
 }
 
-// Available reports whether the table can be read here.
+// Available reports whether the table can be read here, and why not in the
+// panel's language when it cannot.
 func (p *ProcConntrack) Available() (bool, string) {
 	f, err := os.Open(p.path())
 	if err != nil {
-		return false, "connection tracking could not be read from " + p.path() + ": " + err.Error()
+		return false, i18n.P("connection tracking could not be read from %s: %s", p.path(), err.Error())
 	}
 	_ = f.Close()
 	return true, ""
@@ -164,7 +166,7 @@ func (p *ProcConntrack) Available() (bool, string) {
 func (p *ProcConntrack) Flows(ctx context.Context) ([]Flow, error) {
 	f, err := os.Open(p.path())
 	if err != nil {
-		return nil, fmt.Errorf("reading connection tracking: %w", err)
+		return nil, i18n.Errorf(ctx, "reading connection tracking: %w", err)
 	}
 	defer f.Close()
 
@@ -182,7 +184,7 @@ func (p *ProcConntrack) Flows(ctx context.Context) ([]Flow, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading connection tracking: %w", err)
+		return nil, i18n.Errorf(ctx, "reading connection tracking: %w", err)
 	}
 	return out, nil
 }

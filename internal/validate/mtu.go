@@ -1,8 +1,9 @@
 package validate
 
 import (
-	"fmt"
+	"context"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 )
 
@@ -113,43 +114,64 @@ func AdviseMtu(in TunnelInput, underlayDevice string, underlayMtu int) MtuAdvice
 	return advice
 }
 
+// overheadBreakdown names the terms in English. They are marked for translation
+// and said in the operator's language by said, once there is a request to take
+// the language from.
 func overheadBreakdown(in TunnelInput) []MtuTerm {
-	outer := MtuTerm{Name: "outer IPv4 header", Bytes: OuterIPv4Header}
+	outer := MtuTerm{Name: i18n.N("outer IPv4 header"), Bytes: OuterIPv4Header}
 	if in.IsIPv6() {
-		outer = MtuTerm{Name: "outer IPv6 header", Bytes: OuterIPv6Header}
+		outer = MtuTerm{Name: i18n.N("outer IPv6 header"), Bytes: OuterIPv6Header}
 	}
-	terms := []MtuTerm{outer, {Name: "GRE base header", Bytes: GreBaseHeader}}
+	terms := []MtuTerm{outer, {Name: i18n.N("GRE base header"), Bytes: GreBaseHeader}}
 	if in.HasKey() {
-		terms = append(terms, MtuTerm{Name: "GRE key", Bytes: GreKeyField})
+		terms = append(terms, MtuTerm{Name: i18n.N("GRE key"), Bytes: GreKeyField})
 	}
 	if in.HasInputChecksum || in.HasOutputChecksum {
-		terms = append(terms, MtuTerm{Name: "GRE checksum", Bytes: GreChecksumField})
+		terms = append(terms, MtuTerm{Name: i18n.N("GRE checksum"), Bytes: GreChecksumField})
 	}
 	if in.HasInputSequence || in.HasOutputSequence {
-		terms = append(terms, MtuTerm{Name: "GRE sequence number", Bytes: GreSequenceField})
+		terms = append(terms, MtuTerm{Name: i18n.N("GRE sequence number"), Bytes: GreSequenceField})
 	}
 	return terms
 }
 
+// said returns the advice with its breakdown named in the language ctx
+// carries.
+func (a MtuAdvice) said(ctx context.Context) MtuAdvice {
+	terms := make([]MtuTerm, len(a.Breakdown))
+	for i, term := range a.Breakdown {
+		terms[i] = MtuTerm{Name: i18n.Tr(ctx, term.Name), Bytes: term.Bytes}
+	}
+	a.Breakdown = terms
+	return a
+}
+
 // Warning turns a mismatched advisory into the warning the response carries.
 // It returns false when the requested MTU is the recommended one.
-func (a MtuAdvice) Warning() (Warning, bool) {
+//
+// With no request to take a language from, the warning is said in the panel's
+// own.
+func (a MtuAdvice) Warning() (Warning, bool) { return a.warning(context.Background()) }
+
+// warning is Warning said in the language ctx carries.
+func (a MtuAdvice) warning(ctx context.Context) (Warning, bool) {
 	if a.Recommended == 0 || a.Matches {
 		return Warning{}, false
 	}
-	direction := "above"
-	consequence := "packets at the tunnel MTU will need fragmenting or will be dropped"
+	message := i18n.T(ctx, "The MTU %d is above the %d computed from the %s underlay MTU of %d minus %d "+
+		"bytes of encapsulation overhead, so packets at the tunnel MTU will need fragmenting or will be "+
+		"dropped. The value you chose has been kept.",
+		a.Requested, a.Recommended, a.UnderlayDevice, a.UnderlayMtu, a.Overhead)
 	if a.Requested < a.Recommended {
-		direction = "below"
-		consequence = "the tunnel will carry smaller packets than the path allows"
+		message = i18n.T(ctx, "The MTU %d is below the %d computed from the %s underlay MTU of %d minus %d "+
+			"bytes of encapsulation overhead, so the tunnel will carry smaller packets than the path "+
+			"allows. The value you chose has been kept.",
+			a.Requested, a.Recommended, a.UnderlayDevice, a.UnderlayMtu, a.Overhead)
 	}
 	return Warning{
-		Code:  WarnMtuAdvisory,
-		Field: "mtu",
-		Message: fmt.Sprintf(
-			"The MTU %d is %s the %d computed from the %s underlay MTU of %d minus %d bytes of "+
-				"encapsulation overhead, so %s. The value you chose has been kept.",
-			a.Requested, direction, a.Recommended, a.UnderlayDevice, a.UnderlayMtu, a.Overhead, consequence),
+		Code:    WarnMtuAdvisory,
+		Field:   "mtu",
+		Message: message,
 		Details: map[string]any{
 			"requested":       a.Requested,
 			"recommended":     a.Recommended,

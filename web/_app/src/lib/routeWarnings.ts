@@ -45,7 +45,11 @@ export function describeRouteWarning(warning: Warning, t: TFunction, numbers: Nu
     case 'PORT_IN_USE': {
       const name = detail(warning, 'process_name')
       const pid = detail(warning, 'process_id')
-      const process = name ? isolate(pid ? `${name} (pid ${pid})` : name) : t(base + 'unknownProcess')
+      // The phrase comes from the locale like the sentence around it; it is a
+      // process name and a PID, so it is isolated as one left-to-right token.
+      const process = name
+        ? isolate(pid ? t(base + 'processWithId', { name, pid }) : name)
+        : t(base + 'unknownProcess')
       return t(base + warning.code, { process, port: isolate(detail(warning, 'port')) })
     }
     case 'IP_FORWARDING_DISABLED': {

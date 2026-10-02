@@ -15,10 +15,14 @@
 package sourcelist
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 	"unicode"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // MaxEntries bounds one list. It is high enough for a country's ranges and low
@@ -136,14 +140,18 @@ func Slugify(id int64, name string) string {
 	return fmt.Sprintf("src_%d_%s", id, slug)
 }
 
-// ValidateName reports why a name cannot be used, or nil.
-func ValidateName(name string) error {
+// ValidateName reports why a name cannot be used, or nil. With no request to
+// take a language from, the reason is said in the panel's own.
+func ValidateName(name string) error { return validateName(context.Background(), name) }
+
+// validateName is ValidateName said in the language ctx carries.
+func validateName(ctx context.Context, name string) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return fmt.Errorf("a source list needs a name")
+		return errors.New(i18n.T(ctx, "A source list needs a name."))
 	}
 	if len([]rune(trimmed)) > MaxNameLength {
-		return fmt.Errorf("a source list name may be at most %d characters", MaxNameLength)
+		return errors.New(i18n.T(ctx, "A source list name may be at most %d characters.", MaxNameLength))
 	}
 	return nil
 }

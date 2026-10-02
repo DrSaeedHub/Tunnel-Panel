@@ -14,14 +14,15 @@ package pairing
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"hash/crc32"
 	"io"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/validate"
 )
@@ -101,23 +102,26 @@ type Payload struct {
 // Encode renders a payload as a pairing code: JSON, gzipped, prefixed with a
 // CRC over the JSON, and base64url encoded (§14).
 func Encode(p Payload) (string, error) {
+	// No request is handed to Encode, so its errors are said in the panel's
+	// own language.
+	ctx := context.Background()
 	p.Version = Version
 
 	body, err := json.Marshal(p)
 	if err != nil {
-		return "", fmt.Errorf("encoding the pairing payload: %w", err)
+		return "", i18n.Errorf(ctx, "encoding the pairing payload: %w", err)
 	}
 
 	var compressed bytes.Buffer
 	writer, err := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
 	if err != nil {
-		return "", fmt.Errorf("preparing to compress the pairing payload: %w", err)
+		return "", i18n.Errorf(ctx, "preparing to compress the pairing payload: %w", err)
 	}
 	if _, err := writer.Write(body); err != nil {
-		return "", fmt.Errorf("compressing the pairing payload: %w", err)
+		return "", i18n.Errorf(ctx, "compressing the pairing payload: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("finishing the pairing payload: %w", err)
+		return "", i18n.Errorf(ctx, "finishing the pairing payload: %w", err)
 	}
 
 	// The checksum covers the JSON rather than the compressed bytes, so it
@@ -131,18 +135,27 @@ func Encode(p Payload) (string, error) {
 
 // Decode parses a pairing code. A code of an unknown version or with a bad
 // checksum is rejected with a message that says which (§14).
+//
+// What it says is said in the panel's language; DecodeContext says it in the
+// language of the request that handed the code over.
 func Decode(code string) (Payload, error) {
+	return DecodeContext(context.Background(), code)
+}
+
+// DecodeContext is Decode, with its errors said in the language ctx carries.
+func DecodeContext(ctx context.Context, code string) (Payload, error) {
 	trimmed := strings.TrimSpace(code)
 	if trimmed == "" {
-		return Payload{}, fmt.Errorf("the pairing code is empty")
+		return Payload{}, i18n.Errorf(ctx, "the pairing code is empty")
 	}
 
 	version, body, found := strings.Cut(trimmed, ".")
 	if !found {
-		return Payload{}, fmt.Errorf("this does not look like a pairing code: it should start with %q", Prefix)
+		return Payload{}, i18n.Errorf(ctx, "this does not look like a pairing code: it should start with %q",
+			Prefix)
 	}
 	if version != strings.TrimSuffix(Prefix, ".") {
-		return Payload{}, fmt.Errorf("this pairing code is version %q, and this panel understands %q. "+
+		return Payload{}, i18n.Errorf(ctx, "this pairing code is version %q, and this panel understands %q. "+
 			"Update the panel on whichever server produced it, or copy the parameters by hand",
 			version, strings.TrimSuffix(Prefix, "."))
 	}
@@ -152,47 +165,49 @@ func Decode(code string) (Payload, error) {
 		// Accept the padded form too: some clipboards and chat clients add it.
 		framed, err = base64.URLEncoding.DecodeString(body)
 		if err != nil {
-			return Payload{}, fmt.Errorf("the pairing code is not valid: it was truncated or altered in transit")
+			return Payload{}, i18n.Errorf(ctx, "the pairing code is not valid: it was truncated or "+
+				"altered in transit")
 		}
 	}
 	if len(framed) < 5 {
-		return Payload{}, fmt.Errorf("the pairing code is too short to be complete")
+		return Payload{}, i18n.Errorf(ctx, "the pairing code is too short to be complete")
 	}
 
 	want := binary.BigEndian.Uint32(framed[:4])
 	reader, err := gzip.NewReader(bytes.NewReader(framed[4:]))
 	if err != nil {
-		return Payload{}, fmt.Errorf("the pairing code is not valid: its contents could not be read")
+		return Payload{}, i18n.Errorf(ctx, "the pairing code is not valid: its contents could not be read")
 	}
 	defer reader.Close()
 
 	decoded, err := io.ReadAll(io.LimitReader(reader, maxDecodedSize+1))
 	if err != nil {
-		return Payload{}, fmt.Errorf("the pairing code is not valid: its contents could not be read")
+		return Payload{}, i18n.Errorf(ctx, "the pairing code is not valid: its contents could not be read")
 	}
 	if len(decoded) > maxDecodedSize {
-		return Payload{}, fmt.Errorf("the pairing code expands to more than %d bytes and was refused", maxDecodedSize)
+		return Payload{}, i18n.Errorf(ctx, "the pairing code expands to more than %d bytes and was refused",
+			maxDecodedSize)
 	}
 
 	if got := crc32.ChecksumIEEE(decoded); got != want {
-		return Payload{}, fmt.Errorf("the pairing code failed its checksum, so it was truncated or "+
+		return Payload{}, i18n.Errorf(ctx, "the pairing code failed its checksum, so it was truncated or "+
 			"altered in transit. Copy it again in full (expected %08x, got %08x)", want, got)
 	}
 
 	var p Payload
 	if err := json.Unmarshal(decoded, &p); err != nil {
-		return Payload{}, fmt.Errorf("the pairing code does not contain a tunnel: %w", err)
+		return Payload{}, i18n.Errorf(ctx, "the pairing code does not contain a tunnel: %w", err)
 	}
 	if p.Version != Version {
-		return Payload{}, fmt.Errorf("the pairing code declares version %d, and this panel understands %d",
-			p.Version, Version)
+		return Payload{}, i18n.Errorf(ctx, "the pairing code declares version %d, and this panel "+
+			"understands %d", p.Version, Version)
 	}
 	if model.TunnelTypeKind(p.TunnelTypeID) == "" {
-		return Payload{}, fmt.Errorf("the pairing code names tunnel type %d, which this panel does not know",
-			p.TunnelTypeID)
+		return Payload{}, i18n.Errorf(ctx, "the pairing code names tunnel type %d, which this panel does "+
+			"not know", p.TunnelTypeID)
 	}
 	if model.SideSlot(p.TunnelSideID) == "" {
-		return Payload{}, fmt.Errorf("the pairing code names side %d, which is not one of the two ends",
+		return Payload{}, i18n.Errorf(ctx, "the pairing code names side %d, which is not one of the two ends",
 			p.TunnelSideID)
 	}
 	return p, nil

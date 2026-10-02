@@ -101,7 +101,9 @@ export function SourceListsSection() {
                     ) : null}
                   </p>
                   {list.description ? (
-                    <p className="mt-0.5 text-xs text-muted-foreground">{list.description}</p>
+                    <p dir="auto" className="mt-0.5 text-xs text-muted-foreground">
+                      {list.description}
+                    </p>
                   ) : null}
                   {list.entries?.length ? (
                     <Technical className="mt-1 block truncate text-2xs text-muted-foreground">
@@ -288,7 +290,7 @@ function SourceListDialog({
           {error ? (
             <p className="flex items-start gap-2 rounded-md border border-danger/30 bg-danger-muted p-3 text-xs text-danger">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
-              {error}
+              <span dir="auto">{error}</span>
             </p>
           ) : null}
         </DialogBody>

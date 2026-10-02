@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/netip"
 	"strconv"
@@ -10,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/drs/gre-panel/internal/alloc"
+	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/validate"
 )
@@ -21,6 +24,20 @@ type poolResponse struct {
 	Capacity alloc.PoolCapacity `json:"capacity"`
 	// InUse counts how many of its subnets are taken.
 	InUse int `json:"in_use"`
+}
+
+// sayPool returns pool with a seeded title and description said in the
+// language ctx carries. What an operator wrote is left exactly as it is, and
+// nothing is stored: the row keeps its English, so the next reader is answered
+// in theirs.
+func sayPool(ctx context.Context, pool alloc.Pool) alloc.Pool {
+	if db.IsSeededPoolText(pool.Title) {
+		pool.Title = i18n.Tr(ctx, pool.Title)
+	}
+	if db.IsSeededPoolText(pool.Description) {
+		pool.Description = i18n.Tr(ctx, pool.Description)
+	}
+	return pool
 }
 
 func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +57,7 @@ func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]poolResponse, 0, len(pools))
 	for _, pool := range pools {
-		item := poolResponse{Pool: pool, Capacity: alloc.Describe(pool, prefixLen)}
+		item := poolResponse{Pool: sayPool(ctx, pool), Capacity: alloc.Describe(pool, prefixLen)}
 		if prefix, err := pool.Prefix(); err == nil {
 			for addr := range used {
 				if prefix.Contains(addr) {
@@ -69,7 +86,7 @@ type poolRequest struct {
 // validatePool checks a pool before it is stored. The public-range flag is
 // measured from the range rather than taken from the request: whether a block
 // is globally routable is a fact, not a preference.
-func validatePool(req poolRequest) (alloc.Pool, *validate.Errors) {
+func validatePool(ctx context.Context, req poolRequest) (alloc.Pool, *validate.Errors) {
 	errs := &validate.Errors{}
 	pool := alloc.Pool{
 		Title:        strings.TrimSpace(req.AddressPoolTitle),
@@ -83,12 +100,12 @@ func validatePool(req poolRequest) (alloc.Pool, *validate.Errors) {
 	}
 
 	if pool.Title == "" {
-		errs.Add("address_pool_title", CodeValidationFailed, "A pool needs a name.", nil)
+		errs.Add("address_pool_title", CodeValidationFailed, i18n.T(ctx, "A pool needs a name."), nil)
 	}
 	prefix, err := netip.ParsePrefix(pool.Cidr)
 	if err != nil {
 		errs.Add("cidr", validate.CodeInvalidAddress,
-			"The range must be written in CIDR form, such as 172.17.0.0/16.", nil)
+			i18n.T(ctx, "The range must be written in CIDR form, such as 172.17.0.0/16."), nil)
 		return pool, errs
 	}
 	pool.Cidr = prefix.Masked().String()
@@ -103,25 +120,26 @@ func validatePool(req poolRequest) (alloc.Pool, *validate.Errors) {
 		}
 	}
 	if _, err := alloc.Capacity(prefix.Masked(), pool.PrefixLength); err != nil {
-		errs.Add("prefix_length", validate.CodeInvalidPrefixLen, capitalise(err.Error())+".", nil)
+		errs.Add("prefix_length", validate.CodeInvalidPrefixLen, sentence(ctx, err.Error()), nil)
 	}
 	return pool, errs
 }
 
 func (s *Server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	ctx := r.Context()
 	var req poolRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 
-	pool, errs := validatePool(req)
+	pool, errs := validatePool(ctx, req)
 	if !errs.Empty() {
 		s.writeDomainError(w, r, errs)
 		return
 	}
 
-	id, err := s.tunnels.Repo().InsertPool(r.Context(), pool)
+	id, err := s.tunnels.Repo().InsertPool(ctx, pool)
 	if err != nil {
 		s.writeDomainError(w, r, err)
 		return
@@ -130,7 +148,7 @@ func (s *Server) handleCreatePool(w http.ResponseWriter, r *http.Request) {
 
 	s.auditTunnel(r, model.AuditActionPoolChange, pool.Title, req, nil, nil, start)
 	writeJSON(w, http.StatusCreated, poolResponse{
-		Pool:     pool,
+		Pool:     sayPool(ctx, pool),
 		Capacity: alloc.Describe(pool, pool.PrefixLength),
 	})
 }
@@ -141,12 +159,13 @@ func (s *Server) handleGetPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, poolResponse{
-		Pool: pool, Capacity: alloc.Describe(pool, pool.PrefixLength),
+		Pool: sayPool(r.Context(), pool), Capacity: alloc.Describe(pool, pool.PrefixLength),
 	})
 }
 
 func (s *Server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	ctx := r.Context()
 	existing, ok := s.poolFromPath(w, r)
 	if !ok {
 		return
@@ -156,20 +175,31 @@ func (s *Server) handleUpdatePool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pool, errs := validatePool(req)
+	pool, errs := validatePool(ctx, req)
 	if !errs.Empty() {
 		s.writeDomainError(w, r, errs)
 		return
 	}
 	pool.AddressPoolID = existing.AddressPoolID
 
-	if err := s.tunnels.Repo().UpdatePool(r.Context(), pool); err != nil {
+	// A form filled from this pool sends its seeded text back as it was shown,
+	// in the operator's language. Storing that would fix the pool in one
+	// language for good, so what the operator did not change keeps its English.
+	shown := sayPool(ctx, existing)
+	if pool.Title == shown.Title {
+		pool.Title = existing.Title
+	}
+	if pool.Description == shown.Description {
+		pool.Description = existing.Description
+	}
+
+	if err := s.tunnels.Repo().UpdatePool(ctx, pool); err != nil {
 		s.writeDomainError(w, r, err)
 		return
 	}
 	s.auditTunnel(r, model.AuditActionPoolChange, pool.Title, req, nil, nil, start)
 	writeJSON(w, http.StatusOK, poolResponse{
-		Pool: pool, Capacity: alloc.Describe(pool, pool.PrefixLength),
+		Pool: sayPool(ctx, pool), Capacity: alloc.Describe(pool, pool.PrefixLength),
 	})
 }
 
@@ -182,7 +212,7 @@ func (s *Server) handleDeletePool(w http.ResponseWriter, r *http.Request) {
 	if err := s.tunnels.Repo().DeletePool(r.Context(), pool.AddressPoolID); err != nil {
 		// A pool a tunnel still points at is a conflict the operator can resolve,
 		// not an internal failure.
-		writeError(w, http.StatusConflict, CodeConflict, capitalise(err.Error())+".", "", nil)
+		writeError(w, http.StatusConflict, CodeConflict, sentence(r.Context(), err.Error()), "", nil)
 		return
 	}
 	s.auditTunnel(r, model.AuditActionPoolChange, pool.Title, map[string]any{"deleted": pool.Cidr},
@@ -207,7 +237,7 @@ func (s *Server) handleNextFreePool(w http.ResponseWriter, r *http.Request) {
 
 	allocation, err := s.tunnels.Alloc().NextFree(r.Context(), pool, prefixLen)
 	if err != nil {
-		writeError(w, http.StatusConflict, CodeAllocation, capitalise(err.Error())+".",
+		writeError(w, http.StatusConflict, CodeAllocation, sentence(r.Context(), err.Error()),
 			"address_pool_id", map[string]any{"address_pool_id": pool.AddressPoolID})
 		return
 	}
@@ -223,7 +253,7 @@ func (s *Server) poolFromPath(w http.ResponseWriter, r *http.Request) (alloc.Poo
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"The pool identifier in the path is not a number.", "id", nil)
+			i18n.T(r.Context(), "The pool identifier in the path is not a number."), "id", nil)
 		return alloc.Pool{}, false
 	}
 	pool, err := s.tunnels.Repo().PoolByID(r.Context(), id)

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/quota"
 	"github.com/drs/gre-panel/internal/validate"
@@ -20,7 +21,7 @@ func (s *Server) requireQuota(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.quota == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Traffic limits are not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Traffic limits are not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -52,10 +53,12 @@ type quotaRequest struct {
 	DirectionID int64 `json:"direction_id"`
 }
 
-func (s *Server) quotaSubject(w http.ResponseWriter, req quotaRequest) (quota.Subject, bool) {
+func (s *Server) quotaSubject(w http.ResponseWriter, r *http.Request, req quotaRequest) (quota.Subject, bool) {
+	ctx := r.Context()
 	scope, err := quota.ParseScope(req.Scope)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, err.Error(), "scope", nil)
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, i18n.Tr(ctx, err.Error()),
+			"scope", nil)
 		return quota.Subject{}, false
 	}
 	subject := quota.Subject{ScopeID: scope, TunnelID: req.TunnelID,
@@ -65,20 +68,20 @@ func (s *Server) quotaSubject(w http.ResponseWriter, req quotaRequest) (quota.Su
 	case model.QuotaScopeTunnel:
 		if req.TunnelID <= 0 {
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-				"A tunnel limit needs the tunnel's id.", "tunnel_id", nil)
+				i18n.T(ctx, "A tunnel limit needs the tunnel's id."), "tunnel_id", nil)
 			return subject, false
 		}
 	case model.QuotaScopeRule:
 		if req.RouteRuleID <= 0 {
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-				"A rule limit needs the rule's id.", "route_rule_id", nil)
+				i18n.T(ctx, "A rule limit needs the rule's id."), "route_rule_id", nil)
 			return subject, false
 		}
 	case model.QuotaScopeDestination:
 		if req.RouteRuleID <= 0 || req.Address == "" ||
 			req.Port < validate.MinPort || req.Port > validate.MaxPort {
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-				"A destination limit needs the rule's id and the destination's address and port.",
+				i18n.T(ctx, "A destination limit needs the rule's id and the destination's address and port."),
 				"address", nil)
 			return subject, false
 		}
@@ -93,7 +96,7 @@ func (s *Server) handleSetQuota(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	subject, ok := s.quotaSubject(w, req)
+	subject, ok := s.quotaSubject(w, r, req)
 	if !ok {
 		return
 	}
@@ -118,7 +121,7 @@ func (s *Server) handleResetQuota(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	subject, ok := s.quotaSubject(w, req)
+	subject, ok := s.quotaSubject(w, r, req)
 	if !ok {
 		return
 	}

@@ -3,13 +3,13 @@ package diag
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -79,7 +79,7 @@ func (s *Service) TCPCheck(ctx context.Context, tunnelID int64, params TCPParams
 		target = peer
 	}
 	if target == "" {
-		return TCPResult{}, fmt.Errorf(
+		return TCPResult{}, i18n.Errorf(ctx,
 			"no peer address is recorded for this tunnel; give an explicit target")
 	}
 
@@ -88,7 +88,7 @@ func (s *Service) TCPCheck(ctx context.Context, tunnelID int64, params TCPParams
 		port = s.panelPort()
 	}
 	if port <= 0 || port > 65535 {
-		return TCPResult{}, fmt.Errorf("%d is not a port to knock on", port)
+		return TCPResult{}, i18n.Errorf(ctx, "%d is not a port to knock on", port)
 	}
 
 	timeout := time.Duration(params.TimeoutSeconds * float64(time.Second))
@@ -129,7 +129,7 @@ func tcpProbe(ctx context.Context, source, target string, port int, timeout time
 		conn.Close()
 		result.Answered, result.Accepted = true, true
 		result.LatencyMs = float64(elapsed.Microseconds()) / 1000
-		result.Detail = fmt.Sprintf("%s answered on port %d in %.1f ms: the tunnel carries traffic "+
+		result.Detail = i18n.T(ctx, "%s answered on port %d in %.1f ms: the tunnel carries traffic "+
 			"in both directions.", target, port, result.LatencyMs)
 		return result
 	}
@@ -142,18 +142,18 @@ func tcpProbe(ctx context.Context, source, target string, port int, timeout time
 	if errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(err.Error(), "refused") {
 		result.Answered, result.Refused = true, true
 		result.LatencyMs = float64(elapsed.Microseconds()) / 1000
-		result.Detail = fmt.Sprintf("%s refused the connection on port %d in %.1f ms. Nothing is "+
+		result.Detail = i18n.T(ctx, "%s refused the connection on port %d in %.1f ms. Nothing is "+
 			"listening there, which is not a fault: the refusal itself proves the tunnel carried the "+
 			"packet and carried the answer back.", target, port, result.LatencyMs)
 		return result
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) || isTimeoutError(err) {
-		result.Detail = fmt.Sprintf("%s did not answer on port %d within %s. Nothing came back at "+
+		result.Detail = i18n.T(ctx, "%s did not answer on port %d within %s. Nothing came back at "+
 			"all, which is what a tunnel that is not carrying traffic looks like.", target, port, timeout)
 		return result
 	}
-	result.Detail = fmt.Sprintf("the connection to %s on port %d could not be made: %s",
+	result.Detail = i18n.T(ctx, "the connection to %s on port %d could not be made: %s",
 		target, port, err.Error())
 	return result
 }

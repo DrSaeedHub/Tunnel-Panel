@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Fake is an in-memory Backend. It renders exactly what the real backends
@@ -54,8 +55,8 @@ func (f *Fake) Capabilities() Capabilities {
 	rendersLike := f.Renderer.Name()
 	caps.Name = BackendFake
 	caps.Available = true
-	caps.Detail = "in-memory backend used for preview and tests; it renders exactly what " +
-		rendersLike + " would apply and then changes nothing on this host"
+	caps.Detail = i18n.P("in-memory backend used for preview and tests; it renders exactly what "+
+		"%s would apply and then changes nothing on this host", rendersLike)
 	return caps
 }
 

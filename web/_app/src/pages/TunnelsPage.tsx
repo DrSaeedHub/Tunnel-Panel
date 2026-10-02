@@ -546,13 +546,21 @@ function TunnelRow({
                 value={t(`tunnel.persistence.${persistenceKey(tunnel.persistence_type_id)}`)}
                 plain
               />
+              {/* Which directions carry the field, in words: these were the
+                  English "in" and "out" in every language. */}
               <Detail
                 label={t('tunnel.fields.checksum')}
-                value={`${tunnel.has_input_checksum ? 'in' : '—'} / ${tunnel.has_output_checksum ? 'out' : '—'}`}
+                value={`${tunnel.has_input_checksum ? t('tunnel.direction.in') : '—'} / ${
+                  tunnel.has_output_checksum ? t('tunnel.direction.out') : '—'
+                }`}
+                plain
               />
               <Detail
                 label={t('tunnel.fields.sequence')}
-                value={`${tunnel.has_input_sequence ? 'in' : '—'} / ${tunnel.has_output_sequence ? 'out' : '—'}`}
+                value={`${tunnel.has_input_sequence ? t('tunnel.direction.in') : '—'} / ${
+                  tunnel.has_output_sequence ? t('tunnel.direction.out') : '—'
+                }`}
+                plain
               />
               <Detail
                 label={t('tunnel.fields.pmtudisc')}
@@ -568,7 +576,9 @@ function TunnelRow({
               {tunnel.last_apply_error ? (
                 <div className="sm:col-span-2 lg:col-span-4">
                   <dt className="text-muted-foreground">{t('apply.lastError')}</dt>
-                  <dd className="text-danger">{tunnel.last_apply_error}</dd>
+                  <dd dir="auto" className="text-danger">
+                    {tunnel.last_apply_error}
+                  </dd>
                 </div>
               ) : null}
             </dl>

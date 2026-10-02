@@ -2,7 +2,6 @@ package route
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/lock"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/persist"
@@ -242,13 +242,21 @@ type ApplyError struct {
 	Stderr     string       `json:"stderr,omitempty"`
 	Verify     VerifyReport `json:"verification"`
 	RolledBack bool         `json:"rolled_back"`
+
+	// lang is the language of the request that failed, which Error says itself
+	// in: it becomes the API's message. Empty means the panel's language.
+	lang string
 }
 
 func (e *ApplyError) Error() string {
-	if e.Step != "" {
-		return fmt.Sprintf("%s failed at %s: %s", e.Operation, e.Step, e.Cause)
+	lang := e.lang
+	if lang == "" {
+		lang = i18n.Panel()
 	}
-	return fmt.Sprintf("%s failed: %s", e.Operation, e.Cause)
+	if e.Step != "" {
+		return i18n.In(lang, "%s failed at %s: %s", e.Operation, e.Step, e.Cause)
+	}
+	return i18n.In(lang, "%s failed: %s", e.Operation, e.Cause)
 }
 
 // InconsistentError is returned when an apply failed and putting the previous
@@ -260,11 +268,19 @@ type InconsistentError struct {
 	ApplyError    string   `json:"apply_error"`
 	RollbackError string   `json:"rollback_error"`
 	Remediation   []string `json:"remediation"`
+
+	// lang is the language of the request that failed; empty means the
+	// panel's language.
+	lang string
 }
 
 func (e *InconsistentError) Error() string {
-	return fmt.Sprintf("the forwarding rules could not be applied and the previous ruleset could not be "+
-		"put back either: %s (rollback also failed: %s)", e.ApplyError, e.RollbackError)
+	lang := e.lang
+	if lang == "" {
+		lang = i18n.Panel()
+	}
+	return i18n.In(lang, "the forwarding rules could not be applied and the previous ruleset could "+
+		"not be put back either: %s (rollback also failed: %s)", e.ApplyError, e.RollbackError)
 }
 
 // ---------------------------------------------------------------- previews
@@ -319,7 +335,7 @@ func (s *Service) previewOf(ctx context.Context, operation string, desired, prev
 		backend: s.preview, backendName: s.backend.Name(), renderer: s.planner.renderer,
 		store: s.planner.store, systemctlBin: s.planner.systemctlBin, sysctlPath: s.planner.sysctlPath,
 	}
-	plan, err := previewPlanner.Plan(planInput{
+	plan, err := previewPlanner.Plan(ctx, planInput{
 		operation: operation, desired: desired, previous: previous, subject: subject,
 		forwardingOn: status.IPv4Forwarding, ipv6ForwardingOn: status.IPv6Forwarding,
 		byteAccountingOn: status.ByteAccounting, countBytes: s.countsConnectionBytes(),
@@ -338,7 +354,7 @@ func (s *Service) previewOf(ctx context.Context, operation string, desired, prev
 		return Preview{}, err
 	}
 
-	out := Preview{Plan: plan, Warnings: append(warnings, s.previewForwardingWarnings(status, desired)...)}
+	out := Preview{Plan: plan, Warnings: append(warnings, s.previewForwardingWarnings(ctx, status, desired)...)}
 	if subject != nil {
 		out.Route = *subject
 	}
@@ -737,7 +753,7 @@ func (s *Service) Duplicate(ctx context.Context, id int64, req Request) (Result,
 			Backend: s.backend.Name()},
 		Verify: VerifyReport{Ok: true, Checks: []VerifyCheck{{
 			Name: CheckRulesPresent, Ok: true, Skipped: true,
-			Detail: "the copy is disabled, so it installs no rules yet",
+			Detail: i18n.T(ctx, "the copy is disabled, so it installs no rules yet"),
 		}}},
 	}, nil
 }
@@ -760,7 +776,7 @@ func (s *Service) freeTitle(ctx context.Context, original string) (string, error
 			return candidate, nil
 		}
 	}
-	return "", errors.New("route: every copy name is taken; rename the original first")
+	return "", i18n.Errorf(ctx, "route: every copy name is taken; rename the original first")
 }
 
 // ---------------------------------------------------------------- pipeline
@@ -783,7 +799,7 @@ func (s *Service) applyRecords(ctx context.Context, operation string, subject *R
 	desired, previous []Record, warnings []validate.Warning, trace *audit.Trace) (Result, error) {
 
 	status := s.forwardingStatus(ctx, desired)
-	plan, err := s.planner.Plan(planInput{
+	plan, err := s.planner.Plan(ctx, planInput{
 		operation: operation, desired: desired, previous: previous, subject: subject,
 		forwardingOn: status.IPv4Forwarding, ipv6ForwardingOn: status.IPv6Forwarding,
 		byteAccountingOn: status.ByteAccounting, countBytes: s.countsConnectionBytes(),
@@ -811,7 +827,7 @@ func (s *Service) applyRecords(ctx context.Context, operation string, subject *R
 	if applyErr == nil {
 		report = s.Verify(ctx, desired, plan)
 		if !report.Ok {
-			applyErr = fmt.Errorf("verification failed: %s", strings.Join(report.Failures, "; "))
+			applyErr = i18n.Errorf(ctx, "verification failed: %s", strings.Join(report.Failures, "; "))
 		}
 	}
 
@@ -846,6 +862,7 @@ func (s *Service) applyRecords(ctx context.Context, operation string, subject *R
 			ApplyError:    applyErr.Error(),
 			RollbackError: rollbackErr.Error(),
 			Remediation:   s.remediation(),
+			lang:          i18n.Language(ctx),
 		}
 	}
 
@@ -854,6 +871,7 @@ func (s *Service) applyRecords(ctx context.Context, operation string, subject *R
 		Operation: operation, Cause: applyErr.Error(), Stderr: stderrOf(applyErr),
 		Verify: report, RolledBack: true,
 		Title: titleOf(subject),
+		lang:  i18n.Language(ctx),
 	}
 }
 
@@ -955,7 +973,7 @@ func (s *Service) runStep(ctx context.Context, step Step) error {
 
 	case StepApplyRuleset:
 		if step.Payload == nil {
-			return errors.New("the plan step has no ruleset to apply")
+			return i18n.Errorf(ctx, "the plan step has no ruleset to apply")
 		}
 		return s.backend.Apply(ctx, *step.Payload)
 
@@ -1030,7 +1048,9 @@ func (s *Service) autoEnablesForwarding() bool {
 //
 // So a preview warns only when forwarding will still be off after the apply,
 // which is when the panel is set to leave it alone.
-func (s *Service) previewForwardingWarnings(status ForwardingStatus, desired []Record) []validate.Warning {
+func (s *Service) previewForwardingWarnings(ctx context.Context, status ForwardingStatus,
+	desired []Record) []validate.Warning {
+
 	out := make([]validate.Warning, 0, len(status.Warnings))
 	for _, w := range status.Warnings {
 		if w.Code != WarnForwardingDisabled {
@@ -1045,16 +1065,16 @@ func (s *Service) previewForwardingWarnings(status ForwardingStatus, desired []R
 	case !status.IPv4Forwarding:
 		out = append(out, validate.Warning{
 			Code: WarnForwardingDisabled, Field: SysctlIPv4Forward,
-			Message: "IP forwarding is off on this server, and the panel is set not to turn it on. " +
-				"The rule will be installed, but it carries no traffic until forwarding is turned on.",
+			Message: i18n.T(ctx, "IP forwarding is off on this server, and the panel is set not to turn "+
+				"it on. The rule will be installed, but it carries no traffic until forwarding is turned on."),
 			Details: map[string]any{"family": "ipv4", "stage": "preview"},
 		})
 	case ruleset.HasIPv6() && !status.IPv6Forwarding:
 		out = append(out, validate.Warning{
 			Code: WarnForwardingDisabled, Field: SysctlIPv6Forward,
-			Message: "IPv6 forwarding is off on this server, and the panel is set not to turn it on. " +
-				"The IPv6 rules will be installed, but they carry no traffic until IPv6 forwarding is " +
-				"turned on.",
+			Message: i18n.T(ctx, "IPv6 forwarding is off on this server, and the panel is set not to "+
+				"turn it on. The IPv6 rules will be installed, but they carry no traffic until IPv6 "+
+				"forwarding is turned on."),
 			Details: map[string]any{"family": "ipv6", "stage": "preview"},
 		})
 	}

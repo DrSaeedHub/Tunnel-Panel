@@ -483,6 +483,8 @@ export default {
       note: 'Note',
       keepalive: 'Keepalive',
       monitorTarget: 'Probe target',
+      monitorWindowSize: 'Probe window',
+      monitorStateChangeSamples: 'Probes before a state change',
     },
     help: {
       localEndpoint: 'The public address of this server, where the peer sends its traffic.',
@@ -516,6 +518,8 @@ export default {
       Networkd: 'systemd-networkd files describe the tunnel.',
       Runtime: 'The kernel is configured now; nothing survives a reboot.',
     },
+    // Which way a checksum or sequence number is carried.
+    direction: { in: 'in', out: 'out' },
   },
 
   tunnelForm: {
@@ -561,6 +565,17 @@ export default {
       breakdown: 'Overhead breakdown',
       unknownUnderlay: 'The underlay interface could not be determined, so there is no recommendation.',
       useRecommended: 'Use {{value}}',
+      term: '{{name}}: {{bytes}} bytes',
+      // Keyed by the exact name the backend gives each overhead term
+      // (overheadBreakdown in internal/validate/mtu.go).
+      terms: {
+        'outer IPv4 header': 'Outer IPv4 header',
+        'outer IPv6 header': 'Outer IPv6 header',
+        'GRE base header': 'GRE base header',
+        'GRE key': 'GRE key',
+        'GRE checksum': 'GRE checksum',
+        'GRE sequence number': 'GRE sequence number',
+      },
     },
     preview: {
       title: 'Preview',
@@ -700,6 +715,18 @@ export default {
         MTU_PROBLEM: 'Large packets are not getting through',
         LOCAL_FIREWALL_BLOCK: 'A firewall on this server is blocking GRE',
       },
+      // What each piece of evidence looked at, by the analyser's own name for
+      // it (internal/diag/analyze.go).
+      evidenceName: {
+        interface: 'Interface',
+        flags: 'Interface flags',
+        underlay: 'Path to the other server',
+        counters: 'Interface counters',
+        tunnel_probe: 'Probes through the tunnel',
+        firewall: 'Firewall',
+        capture: 'Packet capture',
+        packet_size: 'Packet size',
+      },
     },
     ping: {
       title: 'Manual probe',
@@ -777,7 +804,19 @@ export default {
       refused: 'Refused — which is an answer',
       silent: 'Nothing came back',
     },
-    runs: { title: 'Recent runs', empty: 'No diagnostics have been run yet.' },
+    runs: {
+      title: 'Recent runs',
+      empty: 'No diagnostics have been run yet.',
+      // By the backend's name for the kind of run, with its hyphens as
+      // underscores (diag.TypeName).
+      type: {
+        ping: 'Manual probe',
+        mtu_probe: 'Path MTU probe',
+        traceroute: 'Traceroute',
+        analyze: 'Analysis',
+        tcp: 'Connection check',
+      },
+    },
   },
 
   settings: {
@@ -924,7 +963,18 @@ export default {
       apply: 'Apply this backup',
       applied: 'The backup was applied.',
       noActions: 'This backup would change nothing.',
-      action: { apply: 'apply', skip: 'skip', create: 'create', update: 'update', error: 'failed' },
+      // What an import does to each item, by the phrase the backend reports
+      // (internal/api/backup.go) with its spaces as underscores.
+      action: {
+        skip: 'Skip',
+        would_apply: 'Would apply',
+        applied: 'Applied',
+        would_create: 'Would create',
+        created: 'Created',
+        would_fail: 'Would fail',
+        failed: 'Failed',
+      },
+      kind: { setting: 'Setting', pool: 'Address pool', tunnel: 'Tunnel' },
     },
     pools: {
       title: 'Address pools',
@@ -1502,6 +1552,7 @@ export default {
     PORT_IN_USE_FORCED:
       '{{process}} is listening on port {{port}}. You chose to apply anyway: that service stops receiving traffic on this port as soon as the rule is applied.',
     unknownProcess: 'A process this panel cannot identify',
+    processWithId: '{{name}} (pid {{pid}})',
     LOOPBACK_DESTINATION:
       '{{address}} is a loopback address. Forwarding to it needs route_localnet turned on for the incoming interface, which the panel will not do: it exposes every service bound to localhost on that interface.',
     LOOPBACK_DESTINATION_FORCED:
@@ -1671,6 +1722,7 @@ export default {
       tunnel: 'Tunnel',
       jump_rules: 'Chain jumps',
       stalled_flows: 'Stalled connections',
+      enabled: 'Rule on or off',
     },
   },
 

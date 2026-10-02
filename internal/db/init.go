@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -119,31 +120,51 @@ type seededPool struct {
 // panel replaces used as if they were private. Using them is address squatting
 // and blackholes those destinations from this server, so they ship disabled and
 // flagged, kept only so tunnels created by that script can be adopted.
+//
+// Their titles and descriptions are stored in English and marked with i18n.N:
+// the Pools screen says them in the operator's language for as long as the
+// stored text is still what was seeded, and shows an operator's own wording
+// exactly as it was written.
 var SeededPools = []seededPool{
 	{
-		id: 10, title: "Private 172.17.0.0/16", cidr: "172.17.0.0/16", prefixLength: 30,
+		id: 10, title: i18n.N("Private 172.17.0.0/16"), cidr: "172.17.0.0/16", prefixLength: 30,
 		isPublicRange: false, isEnabled: true,
-		description: "Default RFC 1918 range. Matches the range the legacy install script used by default.",
+		description: i18n.N("Default RFC 1918 range. Matches the range the legacy install script used by " +
+			"default."),
 	},
 	{
-		id: 20, title: "Private 10.10.0.0/16", cidr: "10.10.0.0/16", prefixLength: 30,
+		id: 20, title: i18n.N("Private 10.10.0.0/16"), cidr: "10.10.0.0/16", prefixLength: 30,
 		isPublicRange: false, isEnabled: true,
-		description: "Alternative RFC 1918 range, for installations where 172.17.0.0/16 is already in use.",
+		description: i18n.N("Alternative RFC 1918 range, for installations where 172.17.0.0/16 is already " +
+			"in use."),
 	},
 	{
-		id: 30, title: "Legacy 109.194.0.0/16", cidr: "109.194.0.0/16", prefixLength: 30,
+		id: 30, title: i18n.N("Legacy 109.194.0.0/16"), cidr: "109.194.0.0/16", prefixLength: 30,
 		isPublicRange: true, isEnabled: false,
-		description: "Compatibility only. This is a globally routable block: assigning it to a tunnel " +
-			"squats on someone else's address space and blackholes those destinations from this server. " +
-			"Enable only to adopt tunnels that already use it.",
+		description: i18n.N("Compatibility only. This is a globally routable block: assigning it to a " +
+			"tunnel squats on someone else's address space and blackholes those destinations from this " +
+			"server. Enable only to adopt tunnels that already use it."),
 	},
 	{
-		id: 40, title: "Legacy 87.107.0.0/16", cidr: "87.107.0.0/16", prefixLength: 30,
+		id: 40, title: i18n.N("Legacy 87.107.0.0/16"), cidr: "87.107.0.0/16", prefixLength: 30,
 		isPublicRange: true, isEnabled: false,
-		description: "Compatibility only. This is a globally routable block: assigning it to a tunnel " +
-			"squats on someone else's address space and blackholes those destinations from this server. " +
-			"Enable only to adopt tunnels that already use it.",
+		description: i18n.N("Compatibility only. This is a globally routable block: assigning it to a " +
+			"tunnel squats on someone else's address space and blackholes those destinations from this " +
+			"server. Enable only to adopt tunnels that already use it."),
 	},
+}
+
+// IsSeededPoolText reports whether text is one of the titles or descriptions
+// the pools are seeded with. Only those are said in the operator's language;
+// a pool an operator named, or renamed, keeps the words they chose, even when
+// they happen to match a sentence said somewhere else.
+func IsSeededPoolText(text string) bool {
+	for _, p := range SeededPools {
+		if text == p.title || text == p.description {
+			return true
+		}
+	}
+	return false
 }
 
 func seedAddressPools(ctx context.Context, x *sql.DB) error {

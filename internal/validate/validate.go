@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/settings"
@@ -52,59 +53,78 @@ func New(links link.LinkManager, repo Repository, set Settings, adoptPath string
 // LocalEndpoint = "not-an-ip" it fails here, before the kernel or the database
 // has been consulted at all, so no code path exists along which a malformed
 // endpoint could reach a systemd unit.
-func ValidateStatic(in TunnelInput) *Errors { return validateStatic(in, false) }
+//
+// With no request to take a language from, its messages are said in the
+// panel's own; ValidateStaticContext says them in the request's.
+func ValidateStatic(in TunnelInput) *Errors { return validateStatic(context.Background(), in, false) }
+
+// ValidateStaticContext is ValidateStatic with its messages said in the
+// language ctx carries.
+func ValidateStaticContext(ctx context.Context, in TunnelInput) *Errors {
+	return validateStatic(ctx, in, false)
+}
 
 // ValidateSupplied applies the same static rules to the fields a request
 // actually carries, skipping the ones the panel is about to fill in from the
 // settings. It exists so that a malformed endpoint is rejected before anything
 // at all happens — including the kernel read that allocating a subnet needs.
 // The full static pass runs again once the defaults are in place.
-func ValidateSupplied(in TunnelInput) *Errors { return validateStatic(in, true) }
+//
+// Like ValidateStatic it speaks the panel's language; ValidateSuppliedContext
+// speaks the request's.
+func ValidateSupplied(in TunnelInput) *Errors { return validateStatic(context.Background(), in, true) }
 
-func validateStatic(in TunnelInput, partial bool) *Errors {
+// ValidateSuppliedContext is ValidateSupplied with its messages said in the
+// language ctx carries.
+func ValidateSuppliedContext(ctx context.Context, in TunnelInput) *Errors {
+	return validateStatic(ctx, in, true)
+}
+
+func validateStatic(ctx context.Context, in TunnelInput, partial bool) *Errors {
 	errs := &Errors{}
 
-	validateType(in, errs, partial)
+	validateType(ctx, in, errs, partial)
 	if !partial || strings.TrimSpace(in.InterfaceName) != "" {
-		validateName(in, errs)
+		validateName(ctx, in, errs)
 	}
-	validateEndpoints(in, errs, partial)
-	validateNumbers(in, errs, partial)
-	validateAddressSyntax(in, errs)
+	validateEndpoints(ctx, in, errs, partial)
+	validateNumbers(ctx, in, errs, partial)
+	validateAddressSyntax(ctx, in, errs)
 
 	return errs
 }
 
 // validateType checks the three lookup references. When partial is set, a zero
 // identifier means "the panel will fill this in" rather than "invalid".
-func validateType(in TunnelInput, errs *Errors, partial bool) {
+func validateType(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
 	unset := func(id int64) bool { return partial && id == 0 }
 
 	if !unset(in.TunnelTypeID) && model.TunnelTypeKind(in.TunnelTypeID) == "" {
-		errs.Addf("tunnel_type_id", CodeInvalidType, "%d is not a known tunnel type", in.TunnelTypeID)
+		errs.Add("tunnel_type_id", CodeInvalidType,
+			i18n.T(ctx, "%d is not a known tunnel type", in.TunnelTypeID), nil)
 	}
 	if !unset(in.TunnelSideID) && model.SideSlot(in.TunnelSideID) == "" {
-		errs.Addf("tunnel_side_id", CodeInvalidSide,
-			"%d is not a known side; a tunnel has exactly two ends, A and B", in.TunnelSideID)
+		errs.Add("tunnel_side_id", CodeInvalidSide,
+			i18n.T(ctx, "%d is not a known side; a tunnel has exactly two ends, A and B", in.TunnelSideID), nil)
 	}
 	if !unset(in.PersistenceTypeID) {
 		switch in.PersistenceTypeID {
 		case model.PersistenceTypeSystemd, model.PersistenceTypeNetworkd, model.PersistenceTypeRuntime:
 		default:
-			errs.Addf("persistence_type_id", CodeInvalidPersistence,
-				"%d is not a known persistence type", in.PersistenceTypeID)
+			errs.Add("persistence_type_id", CodeInvalidPersistence,
+				i18n.T(ctx, "%d is not a known persistence type", in.PersistenceTypeID), nil)
 		}
 	}
 }
 
-func validateName(in TunnelInput, errs *Errors) {
-	if err := InterfaceName(in.InterfaceName); err != nil {
-		errs.Addf("interface_name", CodeInvalidName, "The interface name %s.", err.Error())
+func validateName(ctx context.Context, in TunnelInput, errs *Errors) {
+	if message := InterfaceNameMessage(ctx, in.InterfaceName); message != "" {
+		errs.Add("interface_name", CodeInvalidName, message, nil)
 		return
 	}
 	if IsReservedInterfaceName(in.InterfaceName) {
 		errs.Add("interface_name", CodeNameReserved,
-			fmt.Sprintf("%q is a device the kernel creates for itself and cannot be used for a tunnel.",
+			i18n.T(ctx, "%q is a device the kernel creates for itself and cannot be used for a tunnel.",
 				in.InterfaceName),
 			map[string]any{"reserved": ReservedInterfaceNames})
 	}
@@ -112,32 +132,46 @@ func validateName(in TunnelInput, errs *Errors) {
 
 // validateEndpoints applies §7.2. Every address is parsed with net/netip and
 // anything unparseable is rejected outright.
-func validateEndpoints(in TunnelInput, errs *Errors, partial bool) {
+func validateEndpoints(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
 	wantIPv6 := in.IsIPv6()
 	// With no tunnel type chosen yet there is nothing to match the family
 	// against; the full pass checks it once the default is in place.
 	checkFamily := !partial || in.TunnelTypeID != 0
 
-	local, localOK := parseEndpoint(in.LocalEndpoint, "local_endpoint", "local", wantIPv6, checkFamily, in.BindDevice, errs)
-	remote, remoteOK := parseEndpoint(in.RemoteEndpoint, "remote_endpoint", "remote", wantIPv6, checkFamily, in.BindDevice, errs)
+	local, localOK := parseEndpoint(ctx, in.LocalEndpoint, "local_endpoint", false, wantIPv6, checkFamily, in.BindDevice, errs)
+	remote, remoteOK := parseEndpoint(ctx, in.RemoteEndpoint, "remote_endpoint", true, wantIPv6, checkFamily, in.BindDevice, errs)
 
 	if localOK && remoteOK && local == remote {
 		errs.Add("remote_endpoint", CodeEndpointsIdentical,
-			"The local and remote endpoints are the same address. A tunnel connects two different hosts.", nil)
+			i18n.T(ctx, "The local and remote endpoints are the same address. A tunnel connects two "+
+				"different hosts."), nil)
 	}
 }
 
+// bySide picks the sentence about the endpoint being checked. Each endpoint has
+// a sentence of its own rather than one sentence with "local" or "remote"
+// dropped into it, because the word does not sit in the same place in every
+// language.
+func bySide(remote bool, local, remoteSentence string) string {
+	if remote {
+		return remoteSentence
+	}
+	return local
+}
+
 // parseEndpoint parses and rejects one endpoint per §7.2.
-func parseEndpoint(value, field, label string, wantIPv6, checkFamily bool, bindDevice string, errs *Errors) (netip.Addr, bool) {
+func parseEndpoint(ctx context.Context, value, field string, remote, wantIPv6, checkFamily bool, bindDevice string, errs *Errors) (netip.Addr, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
-		errs.Addf(field, CodeInvalidEndpoint, "The %s endpoint is required.", label)
+		errs.Add(field, CodeInvalidEndpoint, bySide(remote,
+			i18n.T(ctx, "The local endpoint is required."),
+			i18n.T(ctx, "The remote endpoint is required.")), nil)
 		return netip.Addr{}, false
 	}
 	addr, err := netip.ParseAddr(trimmed)
 	if err != nil {
 		errs.Add(field, CodeInvalidEndpoint,
-			fmt.Sprintf("%q is not an IP address.", value),
+			i18n.T(ctx, "%q is not an IP address.", value),
 			map[string]any{"value": value})
 		return netip.Addr{}, false
 	}
@@ -145,26 +179,33 @@ func parseEndpoint(value, field, label string, wantIPv6, checkFamily bool, bindD
 
 	switch {
 	case addr.IsUnspecified():
-		errs.Addf(field, CodeInvalidEndpoint,
-			"The %s endpoint may not be the unspecified address %s.", label, addr)
+		errs.Add(field, CodeInvalidEndpoint, bySide(remote,
+			i18n.T(ctx, "The local endpoint may not be the unspecified address %s.", addr),
+			i18n.T(ctx, "The remote endpoint may not be the unspecified address %s.", addr)), nil)
 		return addr, false
 	case addr.IsLoopback():
-		errs.Addf(field, CodeInvalidEndpoint,
-			"The %s endpoint may not be a loopback address.", label)
+		errs.Add(field, CodeInvalidEndpoint, bySide(remote,
+			i18n.T(ctx, "The local endpoint may not be a loopback address."),
+			i18n.T(ctx, "The remote endpoint may not be a loopback address.")), nil)
 		return addr, false
 	case addr.IsMulticast():
-		errs.Addf(field, CodeInvalidEndpoint,
-			"The %s endpoint may not be a multicast address.", label)
+		errs.Add(field, CodeInvalidEndpoint, bySide(remote,
+			i18n.T(ctx, "The local endpoint may not be a multicast address."),
+			i18n.T(ctx, "The remote endpoint may not be a multicast address.")), nil)
 		return addr, false
 	case IsReservedAddress(addr):
-		errs.Addf(field, CodeInvalidEndpoint,
-			"The %s endpoint %s is in a reserved range and cannot carry a tunnel.", label, addr)
+		errs.Add(field, CodeInvalidEndpoint, bySide(remote,
+			i18n.T(ctx, "The local endpoint %s is in a reserved range and cannot carry a tunnel.", addr),
+			i18n.T(ctx, "The remote endpoint %s is in a reserved range and cannot carry a tunnel.", addr)), nil)
 		return addr, false
 	case addr.IsLinkLocalUnicast() && strings.TrimSpace(bindDevice) == "":
 		// A link-local address is only meaningful together with the interface it
 		// is scoped to, so it is accepted only when a bind device is given.
-		errs.Addf(field, CodeInvalidEndpoint,
-			"The %s endpoint %s is link-local, which is only usable when a bind device is set.", label, addr)
+		errs.Add(field, CodeInvalidEndpoint, bySide(remote,
+			i18n.T(ctx, "The local endpoint %s is link-local, which is only usable when a bind device "+
+				"is set.", addr),
+			i18n.T(ctx, "The remote endpoint %s is link-local, which is only usable when a bind device "+
+				"is set.", addr)), nil)
 		return addr, false
 	}
 
@@ -172,62 +213,69 @@ func parseEndpoint(value, field, label string, wantIPv6, checkFamily bool, bindD
 		return addr, true
 	}
 	if wantIPv6 && addr.Is4() {
-		errs.Add(field, CodeEndpointFamily,
-			fmt.Sprintf("The %s endpoint %s is IPv4, but this tunnel type carries its underlay over IPv6.",
-				label, addr), nil)
+		errs.Add(field, CodeEndpointFamily, bySide(remote,
+			i18n.T(ctx, "The local endpoint %s is IPv4, but this tunnel type carries its underlay over "+
+				"IPv6.", addr),
+			i18n.T(ctx, "The remote endpoint %s is IPv4, but this tunnel type carries its underlay over "+
+				"IPv6.", addr)), nil)
 		return addr, false
 	}
 	if !wantIPv6 && addr.Is6() {
-		errs.Add(field, CodeEndpointFamily,
-			fmt.Sprintf("The %s endpoint %s is IPv6, but this tunnel type carries its underlay over IPv4.",
-				label, addr), nil)
+		errs.Add(field, CodeEndpointFamily, bySide(remote,
+			i18n.T(ctx, "The local endpoint %s is IPv6, but this tunnel type carries its underlay over "+
+				"IPv4.", addr),
+			i18n.T(ctx, "The remote endpoint %s is IPv6, but this tunnel type carries its underlay over "+
+				"IPv4.", addr)), nil)
 		return addr, false
 	}
 	return addr, true
 }
 
-func validateNumbers(in TunnelInput, errs *Errors, partial bool) {
+func validateNumbers(ctx context.Context, in TunnelInput, errs *Errors, partial bool) {
 	// A zero MTU or TTL in a partial request means the request did not state one,
 	// so the setting supplies it; the full pass checks the resulting value.
 	if (!partial || in.Mtu != 0) && (in.Mtu < MinMtu || in.Mtu > MaxMtu) {
-		errs.Addf("mtu", CodeInvalidMtu, "The MTU must be between %d and %d.", MinMtu, MaxMtu)
+		errs.Add("mtu", CodeInvalidMtu, i18n.T(ctx, "The MTU must be between %d and %d.", MinMtu, MaxMtu), nil)
 	}
 	if in.Ttl < 0 || in.Ttl > MaxTtl {
-		errs.Addf("ttl", CodeInvalidTtl, "The TTL must be between 0 and %d, where 0 means inherit.", MaxTtl)
+		errs.Add("ttl", CodeInvalidTtl,
+			i18n.T(ctx, "The TTL must be between 0 and %d, where 0 means inherit.", MaxTtl), nil)
 	}
 	if in.HopLimit != nil && (*in.HopLimit < 0 || *in.HopLimit > MaxTtl) {
-		errs.Addf("hop_limit", CodeInvalidTtl,
-			"The hop limit must be between 0 and %d, where 0 means inherit.", MaxTtl)
+		errs.Add("hop_limit", CodeInvalidTtl,
+			i18n.T(ctx, "The hop limit must be between 0 and %d, where 0 means inherit.", MaxTtl), nil)
 	}
 	if in.Tos != "" && !tosRe.MatchString(in.Tos) {
 		errs.Add("tos", CodeInvalidTos,
-			`The type of service must be "inherit" or a value such as 0x10 or 16.`, nil)
+			i18n.T(ctx, `The type of service must be "inherit" or a value such as 0x10 or 16.`), nil)
 	}
 	if in.IKey != nil && (*in.IKey < 0 || *in.IKey > MaxGreKey) {
-		errs.Addf("ikey", CodeInvalidKey, "A GRE key must be between 0 and %d.", int64(MaxGreKey))
+		errs.Add("ikey", CodeInvalidKey, i18n.T(ctx, "A GRE key must be between 0 and %d.", int64(MaxGreKey)), nil)
 	}
 	if in.OKey != nil && (*in.OKey < 0 || *in.OKey > MaxGreKey) {
-		errs.Addf("okey", CodeInvalidKey, "A GRE key must be between 0 and %d.", int64(MaxGreKey))
+		errs.Add("okey", CodeInvalidKey, i18n.T(ctx, "A GRE key must be between 0 and %d.", int64(MaxGreKey)), nil)
 	}
 	if in.FwMark != nil && (*in.FwMark < 0 || *in.FwMark > MaxFwMark) {
-		errs.Addf("fwmark", CodeInvalidFwMark, "A firewall mark must be between 0 and %d.", int64(MaxFwMark))
+		errs.Add("fwmark", CodeInvalidFwMark,
+			i18n.T(ctx, "A firewall mark must be between 0 and %d.", int64(MaxFwMark)), nil)
 	}
 	if in.TxQueueLength != nil && (*in.TxQueueLength < 0 || *in.TxQueueLength > MaxQueueLength) {
-		errs.Addf("tx_queue_length", CodeInvalidQueueLength,
-			"The transmit queue length must be between 0 and %d.", MaxQueueLength)
+		errs.Add("tx_queue_length", CodeInvalidQueueLength,
+			i18n.T(ctx, "The transmit queue length must be between 0 and %d.", MaxQueueLength), nil)
 	}
 	// The legacy script welded the tunnel number to the third octet and so could
 	// not exceed 255. That limit belongs to an addressing scheme, not to tunnels,
 	// so the general rule is the full 16-bit range; a pool that cannot hold the
 	// number rejects it separately, against the pool (§7.3).
 	if in.TunnelNumber != nil && (*in.TunnelNumber < 0 || *in.TunnelNumber > MaxTunnelNumber) {
-		errs.Addf("tunnel_number", CodeInvalidNumber,
-			"The tunnel number must be between 0 and %d.", MaxTunnelNumber)
+		errs.Add("tunnel_number", CodeInvalidNumber,
+			i18n.T(ctx, "The tunnel number must be between 0 and %d.", MaxTunnelNumber), nil)
 	}
 	if in.EncapLimit != nil && (*in.EncapLimit < 0 || *in.EncapLimit > 255) {
-		errs.Add("encap_limit", CodeInvalidNumber, "The encapsulation limit must be between 0 and 255.", nil)
+		errs.Add("encap_limit", CodeInvalidNumber,
+			i18n.T(ctx, "The encapsulation limit must be between 0 and 255."), nil)
 	}
-	validateMonitorOverrides(in, errs)
+	validateMonitorOverrides(ctx, in, errs)
 }
 
 // validateMonitorOverrides holds a per-tunnel override to the same bounds as
@@ -238,7 +286,7 @@ func validateNumbers(in TunnelInput, errs *Errors, partial bool) {
 // page would refuse, and the two must not be able to drift apart when one of
 // them is changed. A field the schema does not describe is left alone rather
 // than guessed at.
-func validateMonitorOverrides(in TunnelInput, errs *Errors) {
+func validateMonitorOverrides(ctx context.Context, in TunnelInput, errs *Errors) {
 	for _, o := range in.MonitorOverrides() {
 		if o.Value == nil {
 			continue // null means inherit, which is always allowed
@@ -249,85 +297,76 @@ func validateMonitorOverrides(in TunnelInput, errs *Errors) {
 		}
 		value := *o.Value
 		if o.Whole && value != math.Trunc(value) {
-			errs.Addf(o.Field, CodeInvalidMonitorOverride, "%s must be a whole number.", capitalise(def.Description))
+			errs.Add(o.Field, CodeInvalidMonitorOverride, i18n.T(ctx, "This must be a whole number."), nil)
 			continue
 		}
-		if min := def.Constraints.Min; min != nil && value < *min {
-			errs.Addf(o.Field, CodeInvalidMonitorOverride,
-				"This must be between %s and %s, the same range as the global setting it overrides, or empty to inherit it.",
-				formatBound(*min), formatBound(orInf(def.Constraints.Max)))
-			continue
-		}
-		if max := def.Constraints.Max; max != nil && value > *max {
-			errs.Addf(o.Field, CodeInvalidMonitorOverride,
-				"This must be between %s and %s, the same range as the global setting it overrides, or empty to inherit it.",
-				formatBound(orNegInf(def.Constraints.Min)), formatBound(*max))
+		min, max := def.Constraints.Min, def.Constraints.Max
+		if (min != nil && value < *min) || (max != nil && value > *max) {
+			errs.Add(o.Field, CodeInvalidMonitorOverride, overrideRange(ctx, min, max), nil)
 		}
 	}
 }
 
-func orInf(v *float64) float64 {
-	if v == nil {
-		return math.Inf(1)
+// overrideRange says the range an override has to fall in. A setting bounded
+// on one side only has a sentence of its own rather than "between 1 and no
+// maximum".
+func overrideRange(ctx context.Context, min, max *float64) string {
+	switch {
+	case min != nil && max != nil:
+		return i18n.T(ctx, "This must be between %s and %s, the same range as the global setting it "+
+			"overrides, or empty to inherit it.", formatBound(*min), formatBound(*max))
+	case min != nil:
+		return i18n.T(ctx, "This must be at least %s, the same as the global setting it overrides, or "+
+			"empty to inherit it.", formatBound(*min))
+	default:
+		return i18n.T(ctx, "This must be at most %s, the same as the global setting it overrides, or "+
+			"empty to inherit it.", formatBound(*max))
 	}
-	return *v
-}
-
-func orNegInf(v *float64) float64 {
-	if v == nil {
-		return math.Inf(-1)
-	}
-	return *v
 }
 
 // formatBound prints a bound the way the settings page does: as a whole number
 // when it is one, so an operator is not told the minimum is "0.2000000".
 func formatBound(v float64) string {
-	if math.IsInf(v, 1) {
-		return "no maximum"
-	}
-	if math.IsInf(v, -1) {
-		return "no minimum"
-	}
 	return strconv.FormatFloat(v, 'g', -1, 64)
 }
 
 // validateAddressSyntax applies the parsing half of §7.4.
-func validateAddressSyntax(in TunnelInput, errs *Errors) {
+func validateAddressSyntax(ctx context.Context, in TunnelInput, errs *Errors) {
 	seen := map[string]bool{}
 	for i, addr := range in.Addresses {
 		field := fmt.Sprintf("addresses.%d.address", i)
 		prefix, err := ParsePrefix(addr.Address, addr.PrefixLength)
 		if err != nil {
-			errs.Add(field, CodeInvalidAddress, capitalise(err.Error())+".", nil)
+			errs.Add(field, CodeInvalidAddress, prefixMessage(ctx, addr.Address, addr.PrefixLength), nil)
 			continue
 		}
 		if prefix.Addr().IsMulticast() {
-			errs.Add(field, CodeInvalidAddress, "A tunnel address may not be a multicast address.", nil)
+			errs.Add(field, CodeInvalidAddress,
+				i18n.T(ctx, "A tunnel address may not be a multicast address."), nil)
 			continue
 		}
 		// /31 is explicitly permitted for IPv4 point-to-point links (RFC 3021),
 		// which is exactly what a tunnel is; /32 needs an explicit peer.
 		if prefix.Addr().Is4() && prefix.Bits() == 32 && strings.TrimSpace(addr.PeerAddress) == "" {
 			errs.Add(fmt.Sprintf("addresses.%d.prefix_length", i), CodeInvalidPrefixLen,
-				"A /32 address needs an explicit peer address, or use /31 for a two-address "+
-					"point-to-point link or /30 for the classic four-address form.", nil)
+				i18n.T(ctx, "A /32 address needs an explicit peer address, or use /31 for a two-address "+
+					"point-to-point link or /30 for the classic four-address form."), nil)
 		}
 		if addr.PeerAddress != "" {
 			peer, err := netip.ParseAddr(strings.TrimSpace(addr.PeerAddress))
 			if err != nil {
 				errs.Add(fmt.Sprintf("addresses.%d.peer_address", i), CodeInvalidAddress,
-					fmt.Sprintf("%q is not an IP address.", addr.PeerAddress), nil)
+					i18n.T(ctx, "%q is not an IP address.", addr.PeerAddress), nil)
 			} else if peer.Unmap().Is4() != prefix.Addr().Is4() {
 				errs.Add(fmt.Sprintf("addresses.%d.peer_address", i), CodeInvalidAddress,
-					"The peer address is not in the same address family as the address.", nil)
+					i18n.T(ctx, "The peer address is not in the same address family as the address."), nil)
 			}
 		}
 
 		key := prefix.String()
 		if seen[key] {
 			errs.Add(field, CodeAddressConflict,
-				fmt.Sprintf("%s is listed more than once on this tunnel.", key), nil)
+				i18n.T(ctx, "%s is listed more than once on this tunnel.", key), nil)
 		}
 		seen[key] = true
 	}
@@ -338,7 +377,7 @@ func (v *Validator) CollectState(ctx context.Context) (State, error) {
 	var st State
 	links, err := v.Links.List(ctx)
 	if err != nil {
-		return st, fmt.Errorf("reading interfaces: %w", err)
+		return st, i18n.Errorf(ctx, "reading interfaces: %w", err)
 	}
 	st.Links = links
 
@@ -353,7 +392,7 @@ func (v *Validator) CollectState(ctx context.Context) (State, error) {
 	if v.Repo != nil {
 		tunnels, err := v.Repo.ExistingTunnels(ctx)
 		if err != nil {
-			return st, fmt.Errorf("reading stored tunnels: %w", err)
+			return st, i18n.Errorf(ctx, "reading stored tunnels: %w", err)
 		}
 		st.Tunnels = tunnels
 	}
@@ -363,7 +402,7 @@ func (v *Validator) CollectState(ctx context.Context) (State, error) {
 // Validate runs both phases. Static rules run first and short-circuit: nothing
 // is read from the kernel or the database until the input itself is sound.
 func (v *Validator) Validate(ctx context.Context, in TunnelInput) (Result, error) {
-	if errs := ValidateStatic(in); !errs.Empty() {
+	if errs := validateStatic(ctx, in, false); !errs.Empty() {
 		return Result{}, errs
 	}
 	st, err := v.CollectState(ctx)
@@ -380,29 +419,29 @@ func (v *Validator) ValidateAgainst(ctx context.Context, in TunnelInput, st Stat
 	var result Result
 	errs := &Errors{}
 
-	if err := v.checkNameCollision(in, st, errs); err != nil {
+	if err := v.checkNameCollision(ctx, in, st, errs); err != nil {
 		return result, err
 	}
-	v.checkEndpointConflicts(in, st, errs, &result)
-	v.checkAddressConflicts(in, st, errs, &result)
-	v.checkLocalEndpointPresent(in, st, errs, &result)
+	v.checkEndpointConflicts(ctx, in, st, errs, &result)
+	v.checkAddressConflicts(ctx, in, st, errs, &result)
+	v.checkLocalEndpointPresent(ctx, in, st, errs, &result)
 	v.checkPool(ctx, in, errs)
 
 	if !errs.Empty() {
 		return result, errs
 	}
 
-	result.Mtu = v.adviseMtu(in, st)
-	if w, ok := result.Mtu.Warning(); ok {
+	result.Mtu = v.adviseMtu(ctx, in, st)
+	if w, ok := result.Mtu.warning(ctx); ok {
 		result.AddWarning(w)
 	}
-	v.addKeyWarnings(in, &result)
+	v.addKeyWarnings(ctx, in, &result)
 	if in.PersistenceTypeID == model.PersistenceTypeRuntime {
 		result.AddWarning(Warning{
 			Code:  WarnRuntimeOnly,
 			Field: "persistence_type_id",
-			Message: "This tunnel is configured in the running kernel only. It will not exist after a " +
-				"reboot. Choose systemd or networkd persistence if it should come back.",
+			Message: i18n.T(ctx, "This tunnel is configured in the running kernel only. It will not exist "+
+				"after a reboot. Choose systemd or networkd persistence if it should come back."),
 		})
 	}
 	return result, nil
@@ -411,14 +450,14 @@ func (v *Validator) ValidateAgainst(ctx context.Context, in TunnelInput, st Stat
 // checkNameCollision applies the live half of §7.1 and the adoption rule of
 // §7.5. A tunnel that already exists and matches the request is not a conflict
 // to be renamed around; it is a candidate for adoption.
-func (v *Validator) checkNameCollision(in TunnelInput, st State, errs *Errors) error {
+func (v *Validator) checkNameCollision(ctx context.Context, in TunnelInput, st State, errs *Errors) error {
 	for _, existing := range st.Tunnels {
 		if existing.TunnelID == in.TunnelID {
 			continue
 		}
 		if existing.InterfaceName == in.InterfaceName {
 			errs.Add("interface_name", CodeNameConflict,
-				fmt.Sprintf("A tunnel named %q already exists in the panel.", in.InterfaceName),
+				i18n.T(ctx, "A tunnel named %q already exists in the panel.", in.InterfaceName),
 				map[string]any{"tunnel_id": existing.TunnelID})
 			return nil
 		}
@@ -436,15 +475,15 @@ func (v *Validator) checkNameCollision(in TunnelInput, st State, errs *Errors) e
 	if observed.IsTunnel() {
 		return &AdoptableError{
 			InterfaceName: in.InterfaceName,
-			Reason: "An interface of this name already exists on this system and is a tunnel, but the " +
-				"panel has no record of it. Adopt it to import its parameters instead of creating a " +
-				"second one.",
+			Reason: i18n.T(ctx, "An interface of this name already exists on this system and is a tunnel, "+
+				"but the panel has no record of it. Adopt it to import its parameters instead of creating "+
+				"a second one."),
 			AdoptPath: v.AdoptPath,
 			Observed:  observedSummary(observed),
 		}
 	}
 	errs.Add("interface_name", CodeNameConflict,
-		fmt.Sprintf("The interface %q already exists on this system and is not a tunnel.", in.InterfaceName),
+		i18n.T(ctx, "The interface %q already exists on this system and is not a tunnel.", in.InterfaceName),
 		map[string]any{"kind": observed.Kind, "index": observed.Index})
 	return nil
 }
@@ -488,7 +527,7 @@ func observedSummary(l link.Link) map[string]any {
 // checkEndpointConflicts applies §7.5: the tuple that actually collides at the
 // kernel level is (local, remote, ikey, okey), and it collides in either
 // direction.
-func (v *Validator) checkEndpointConflicts(in TunnelInput, st State, errs *Errors, result *Result) {
+func (v *Validator) checkEndpointConflicts(ctx context.Context, in TunnelInput, st State, errs *Errors, result *Result) {
 	for _, existing := range st.Tunnels {
 		if existing.TunnelID == in.TunnelID {
 			continue
@@ -497,7 +536,7 @@ func (v *Validator) checkEndpointConflicts(in TunnelInput, st State, errs *Error
 			continue
 		}
 		errs.Add("remote_endpoint", CodeEndpointConflict,
-			fmt.Sprintf("The tunnel %q already uses this combination of endpoints and keys. "+
+			i18n.T(ctx, "The tunnel %q already uses this combination of endpoints and keys. "+
 				"The kernel identifies a GRE tunnel by exactly that, so a second one would collide.",
 				existing.InterfaceName),
 			map[string]any{"tunnel_id": existing.TunnelID, "interface_name": existing.InterfaceName})
@@ -517,7 +556,7 @@ func (v *Validator) checkEndpointConflicts(in TunnelInput, st State, errs *Error
 			continue
 		}
 		errs.Add("remote_endpoint", CodeEndpointConflict,
-			fmt.Sprintf("The interface %q on this system already uses this combination of endpoints "+
+			i18n.T(ctx, "The interface %q on this system already uses this combination of endpoints "+
 				"and keys, though the panel does not manage it. Adopt it or change the key.", l.Name),
 			map[string]any{"interface_name": l.Name, "adopt_path": v.AdoptPath})
 		return
@@ -564,7 +603,7 @@ func sameKey(a, b *int64) bool {
 // checkAddressConflicts applies the live half of §7.4: an address already on
 // another interface, a subnet overlapping an existing route, and a globally
 // routable range.
-func (v *Validator) checkAddressConflicts(in TunnelInput, st State, errs *Errors, result *Result) {
+func (v *Validator) checkAddressConflicts(ctx context.Context, in TunnelInput, st State, errs *Errors, result *Result) {
 	allowPublic := v.settingBool("addressing.allow_public_ranges", false)
 	checkOverlap := v.settingBool("addressing.check_route_overlap", true)
 
@@ -582,7 +621,7 @@ func (v *Validator) checkAddressConflicts(in TunnelInput, st State, errs *Errors
 			for _, existing := range l.Addresses {
 				if existing.Address == prefix.Addr().String() {
 					errs.Add(field, CodeAddressConflict,
-						fmt.Sprintf("%s is already assigned to the interface %q.", existing.Address, l.Name),
+						i18n.T(ctx, "%s is already assigned to the interface %q.", existing.Address, l.Name),
 						map[string]any{"interface_name": l.Name})
 				}
 			}
@@ -595,7 +634,7 @@ func (v *Validator) checkAddressConflicts(in TunnelInput, st State, errs *Errors
 			for _, stored := range existing.Addresses {
 				if strings.EqualFold(strings.TrimSpace(stored.Address), prefix.Addr().String()) {
 					errs.Add(field, CodeAddressConflict,
-						fmt.Sprintf("%s is already assigned to the tunnel %q.", stored.Address, existing.InterfaceName),
+						i18n.T(ctx, "%s is already assigned to the tunnel %q.", stored.Address, existing.InterfaceName),
 						map[string]any{"tunnel_id": existing.TunnelID})
 				}
 			}
@@ -607,13 +646,13 @@ func (v *Validator) checkAddressConflicts(in TunnelInput, st State, errs *Errors
 				if in.Force {
 					result.AddWarning(Warning{
 						Code: WarnRouteOverlap, Field: field,
-						Message: fmt.Sprintf("The subnet %s overlaps the existing route %s via %s. "+
+						Message: i18n.T(ctx, "The subnet %s overlaps the existing route %s via %s. "+
 							"You chose to proceed anyway.", network, route.Destination, route.Device),
 						Details: map[string]any{"route": route.Destination, "device": route.Device},
 					})
 				} else {
 					errs.Add(field, CodeRouteOverlap,
-						fmt.Sprintf("The subnet %s overlaps the existing route %s via %s. Choose another "+
+						i18n.T(ctx, "The subnet %s overlaps the existing route %s via %s. Choose another "+
 							"subnet, or set force to proceed.", network, route.Destination, route.Device),
 						map[string]any{"route": route.Destination, "device": route.Device})
 				}
@@ -622,14 +661,20 @@ func (v *Validator) checkAddressConflicts(in TunnelInput, st State, errs *Errors
 
 		if IsPublicRange(prefix.Addr()) {
 			details := map[string]any{"subnet": network.String()}
-			message := fmt.Sprintf("The subnet %s is globally routable. Assigning it to a tunnel squats "+
-				"on address space belonging to someone else and blackholes those destinations from this "+
-				"server.", network)
 			if allowPublic || in.Force {
-				result.AddWarning(Warning{Code: WarnPublicRange, Field: field, Message: message, Details: details})
+				result.AddWarning(Warning{
+					Code: WarnPublicRange, Field: field, Details: details,
+					Message: i18n.T(ctx, "The subnet %s is globally routable. Assigning it to a tunnel "+
+						"squats on address space belonging to someone else and blackholes those "+
+						"destinations from this server.", network),
+				})
 			} else {
-				errs.Add(field, CodePublicRange, message+" Enable addressing.allow_public_ranges or set "+
-					"force to proceed.", details)
+				errs.Add(field, CodePublicRange,
+					i18n.T(ctx, "The subnet %s is globally routable. Assigning it to a tunnel squats on "+
+						"address space belonging to someone else and blackholes those destinations from "+
+						"this server. Enable addressing.allow_public_ranges or set force to proceed.",
+						network),
+					details)
 			}
 		}
 	}
@@ -662,12 +707,13 @@ func (v *Validator) checkPool(ctx context.Context, in TunnelInput, errs *Errors)
 	}
 	pool, err := v.Repo.PoolByID(ctx, *in.AddressPoolID)
 	if err != nil {
-		errs.Addf("address_pool_id", CodeUnknownPool, "Address pool %d does not exist.", *in.AddressPoolID)
+		errs.Add("address_pool_id", CodeUnknownPool,
+			i18n.T(ctx, "Address pool %d does not exist.", *in.AddressPoolID), nil)
 		return
 	}
 	if !pool.IsEnabled {
-		errs.Addf("address_pool_id", CodeUnknownPool,
-			"The address pool %q is disabled. Enable it before allocating from it.", pool.Title)
+		errs.Add("address_pool_id", CodeUnknownPool,
+			i18n.T(ctx, "The address pool %q is disabled. Enable it before allocating from it.", pool.Title), nil)
 	}
 }
 
@@ -682,12 +728,15 @@ func (v *Validator) checkPool(ctx context.Context, in TunnelInput, errs *Errors)
 // to read. The setting had no consumer at all, so turning it off changed
 // nothing and the panel went on measuring an interface it had been told to
 // ignore.
-func (v *Validator) adviseMtu(in TunnelInput, st State) MtuAdvice {
+//
+// The advice goes back to the operator, so its breakdown is said in the
+// request's language.
+func (v *Validator) adviseMtu(ctx context.Context, in TunnelInput, st State) MtuAdvice {
 	if !v.settingBool("tunnel.auto_mtu_from_underlay", true) {
-		return AdviseMtu(in, "", 0)
+		return AdviseMtu(in, "", 0).said(ctx)
 	}
 	device, mtu := underlayOf(in, st)
-	return AdviseMtu(in, device, mtu)
+	return AdviseMtu(in, device, mtu).said(ctx)
 }
 
 // underlayOf finds the interface the local endpoint lives on, falling back to
@@ -722,7 +771,7 @@ func underlayOf(in TunnelInput, st State) (string, int) {
 // floating and failover addresses are legitimate — but proceeding takes force,
 // since the far more common cause is a typo, and the resulting tunnel comes up
 // and carries nothing.
-func (v *Validator) checkLocalEndpointPresent(in TunnelInput, st State, errs *Errors, result *Result) {
+func (v *Validator) checkLocalEndpointPresent(ctx context.Context, in TunnelInput, st State, errs *Errors, result *Result) {
 	local, err := netip.ParseAddr(strings.TrimSpace(in.LocalEndpoint))
 	if err != nil {
 		return // already reported by the static phase
@@ -736,42 +785,45 @@ func (v *Validator) checkLocalEndpointPresent(in TunnelInput, st State, errs *Er
 		}
 	}
 
-	message := fmt.Sprintf("The local endpoint %s is not currently assigned to any interface on this "+
-		"server. That is legitimate for a floating or failover address, but if it is a typo the "+
-		"tunnel will come up and carry no traffic.", local)
 	details := map[string]any{"local_endpoint": local.String()}
-
 	if in.Force {
 		result.AddWarning(Warning{
-			Code: WarnLocalEndpointNotFound, Field: "local_endpoint",
-			Message: message + " You chose to proceed anyway.", Details: details,
+			Code: WarnLocalEndpointNotFound, Field: "local_endpoint", Details: details,
+			Message: i18n.T(ctx, "The local endpoint %s is not currently assigned to any interface on "+
+				"this server. That is legitimate for a floating or failover address, but if it is a typo "+
+				"the tunnel will come up and carry no traffic. You chose to proceed anyway.", local),
 		})
 		return
 	}
-	errs.Add("local_endpoint", CodeInvalidEndpoint, message+" Set force to proceed.", details)
+	errs.Add("local_endpoint", CodeInvalidEndpoint,
+		i18n.T(ctx, "The local endpoint %s is not currently assigned to any interface on this server. "+
+			"That is legitimate for a floating or failover address, but if it is a typo the tunnel will "+
+			"come up and carry no traffic. Set force to proceed.", local),
+		details)
 }
 
 // addKeyWarnings reports the two key mistakes that produce a tunnel which comes
 // up locally and carries nothing.
-func (v *Validator) addKeyWarnings(in TunnelInput, result *Result) {
+func (v *Validator) addKeyWarnings(ctx context.Context, in TunnelInput, result *Result) {
 	switch {
 	case in.IKey == nil && in.OKey == nil:
 		result.AddWarning(Warning{
 			Code: WarnNoKey, Field: "ikey",
-			Message: "This tunnel has no GRE key. That is valid, but both ends must agree, and a keyed " +
-				"tunnel is easier to tell apart from another one between the same two addresses.",
+			Message: i18n.T(ctx, "This tunnel has no GRE key. That is valid, but both ends must agree, and "+
+				"a keyed tunnel is easier to tell apart from another one between the same two addresses."),
 		})
 	case !sameKey(in.IKey, in.OKey):
 		result.AddWarning(Warning{
 			Code: WarnKeyMismatch, Field: "okey",
-			Message: "The inbound and outbound GRE keys differ. That is supported, but the far end must " +
-				"mirror them exactly: its inbound key must equal this outbound key and the reverse.",
+			Message: i18n.T(ctx, "The inbound and outbound GRE keys differ. That is supported, but the far "+
+				"end must mirror them exactly: its inbound key must equal this outbound key and the "+
+				"reverse."),
 		})
 	}
 	if in.IKey != nil && *in.IKey == LegacyDefaultKey && in.OKey != nil && *in.OKey == LegacyDefaultKey {
 		result.AddWarning(Warning{
 			Code: WarnLegacyDefaultKey, Field: "ikey",
-			Message: fmt.Sprintf("The GRE key %d is the one the install script this panel replaces "+
+			Message: i18n.T(ctx, "The GRE key %d is the one the install script this panel replaces "+
 				"shipped to every user. Change it unless you are matching an existing tunnel.",
 				int64(LegacyDefaultKey)),
 		})
@@ -787,13 +839,6 @@ func (v *Validator) settingBool(key string, def bool) bool {
 		return def
 	}
 	return v.Settings.Bool(key)
-}
-
-func capitalise(s string) string {
-	if s == "" {
-		return s
-	}
-	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // AsErrors extracts the field-level failures from an error, if it carries any.

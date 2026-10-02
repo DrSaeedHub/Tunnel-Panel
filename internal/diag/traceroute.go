@@ -2,9 +2,9 @@ package diag
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
 )
@@ -70,7 +70,7 @@ func (s *Service) Traceroute(ctx context.Context, tunnelID int64, params Tracero
 		result.Target = params.Target
 	}
 	if result.Source == "" || result.Target == "" {
-		return Run{}, result, fmt.Errorf("there is no address pair to trace between")
+		return Run{}, result, i18n.Errorf(ctx, "there is no address pair to trace between")
 	}
 
 	maxHops := params.MaxHops
@@ -130,7 +130,8 @@ func (s *Service) Traceroute(ctx context.Context, tunnelID int64, params Tracero
 		if len(hop.Addresses) == 0 && !hop.Reached {
 			hop.Timeout = true
 			if hop.Detail == "" {
-				hop.Detail = "no answer, which is common: many routers do not reply to a hop limit expiring"
+				hop.Detail = i18n.T(ctx, "no answer, which is common: many routers do not reply to a hop "+
+					"limit expiring")
 			}
 		}
 		result.Hops = append(result.Hops, hop)
@@ -141,9 +142,9 @@ func (s *Service) Traceroute(ctx context.Context, tunnelID int64, params Tracero
 	}
 
 	if result.Reached {
-		result.Detail = fmt.Sprintf("%s answered after %d hops.", result.Target, len(result.Hops))
+		result.Detail = i18n.T(ctx, "%s answered after %d hops.", result.Target, len(result.Hops))
 	} else {
-		result.Detail = fmt.Sprintf("%s did not answer within %d hops. That does not prove the path is "+
+		result.Detail = i18n.T(ctx, "%s did not answer within %d hops. That does not prove the path is "+
 			"broken: routers commonly drop the probes a trace depends on, and GRE can work while ICMP "+
 			"is filtered.", result.Target, maxHops)
 	}

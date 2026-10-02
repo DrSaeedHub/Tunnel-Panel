@@ -8,6 +8,7 @@ import (
 
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/auth"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -67,17 +68,18 @@ type sessionResponse struct {
 // exists (§18).
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	ctx := r.Context()
 
-	exists, err := s.auth.HasUser(r.Context())
+	exists, err := s.auth.HasUser(ctx)
 	if err != nil {
 		s.log.Error("checking setup state failed", "error", err)
 		writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-			"The panel could not read its database.", "", nil)
+			i18n.T(ctx, "The panel could not read its database."), "", nil)
 		return
 	}
 	if exists {
 		writeError(w, http.StatusConflict, CodeSetupComplete,
-			"An operator account already exists. Sign in instead.", "", nil)
+			i18n.T(ctx, "An operator account already exists. Sign in instead."), "", nil)
 		return
 	}
 
@@ -86,9 +88,9 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := s.auth.Setup(r.Context(), req.Username, req.Password)
+	user, err := s.auth.Setup(ctx, req.Username, req.Password)
 	if err != nil {
-		s.writeCredentialPolicyError(w, err)
+		s.writeCredentialPolicyError(w, r, err)
 		return
 	}
 
@@ -111,31 +113,32 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	clientIP := ClientIP(r)
 
-	user, err := s.auth.Authenticate(r.Context(), req.Username, req.Password, clientIP)
+	ctx := r.Context()
+	user, err := s.auth.Authenticate(ctx, req.Username, req.Password, clientIP)
 	if err != nil {
-		s.auditFailedLogin(r.Context(), req.Username, clientIP, err, time.Since(start))
+		s.auditFailedLogin(ctx, req.Username, clientIP, err, time.Since(start))
 
 		var locked *auth.LockedError
 		switch {
 		case errors.As(err, &locked):
 			writeError(w, http.StatusTooManyRequests, CodeAccountLocked,
-				"Too many failed sign-in attempts. Try again later.", "",
+				i18n.T(ctx, "Too many failed sign-in attempts. Try again later."), "",
 				map[string]any{"locked_until": model.FormatTime(locked.Until)})
 		case errors.Is(err, auth.ErrRateLimited):
 			writeError(w, http.StatusTooManyRequests, CodeRateLimited,
-				"Too many sign-in attempts. Try again in a minute.", "", nil)
+				i18n.T(ctx, "Too many sign-in attempts. Try again in a minute."), "", nil)
 		case errors.Is(err, auth.ErrAccountInactive):
 			writeError(w, http.StatusForbidden, CodeAccountInactive,
-				"This account is not active.", "", nil)
+				i18n.T(ctx, "This account is not active."), "", nil)
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			// Deliberately identical for an unknown username and a wrong
 			// password: telling them apart would enumerate accounts (§18).
 			writeError(w, http.StatusUnauthorized, CodeInvalidCredentials,
-				"Invalid username or password.", "", nil)
+				i18n.T(ctx, "Invalid username or password."), "", nil)
 		default:
 			s.log.Error("authentication failed", "error", err)
 			writeError(w, http.StatusInternalServerError, CodeInternal,
-				"The sign-in could not be completed.", "", nil)
+				i18n.T(ctx, "The sign-in could not be completed."), "", nil)
 		}
 		return
 	}
@@ -155,42 +158,54 @@ func (s *Server) auditFailedLogin(ctx context.Context, username, clientIP string
 		TargetType: "AppUser", TargetID: username,
 		Request:      map[string]any{"username": username},
 		IsSuccess:    false,
-		ErrorMessage: cause.Error(),
+		ErrorMessage: failedLoginMessage(ctx, cause),
 		Duration:     took, ClientIP: clientIP,
 	})
+}
+
+// failedLoginMessage is why a sign-in failed, as the history page shows it: in
+// the language of the request that failed. A lockout carries its time, so it is
+// said here rather than taken from the error's own English.
+func failedLoginMessage(ctx context.Context, cause error) string {
+	var locked *auth.LockedError
+	if errors.As(cause, &locked) {
+		return i18n.T(ctx, "account is locked until %s", model.FormatTime(locked.Until))
+	}
+	return i18n.Tr(ctx, cause.Error())
 }
 
 // handleRefresh exchanges a valid refresh token for a new session. The refresh
 // token is read from its cookie, so a script that somehow ran on the page
 // cannot mint itself a fresh session.
 func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	token := auth.CookieValue(r, auth.CookieRefresh)
 	if token == "" {
 		token = auth.BearerToken(r)
 	}
 	if token == "" {
 		writeError(w, http.StatusUnauthorized, CodeUnauthenticated,
-			"No refresh token was supplied.", "", nil)
+			i18n.T(ctx, "No refresh token was supplied."), "", nil)
 		return
 	}
 
-	user, _, err := s.auth.ResolveToken(r.Context(), token, auth.UseRefresh)
+	user, _, err := s.auth.ResolveToken(ctx, token, auth.UseRefresh)
 	if err != nil {
 		s.cookies.Clear(w, r)
 		switch {
 		case errors.Is(err, auth.ErrTokenSuperseded):
 			writeError(w, http.StatusUnauthorized, CodeUnauthenticated,
-				"This session ended when the password was changed. Sign in again.", "", nil)
+				i18n.T(ctx, "This session ended when the password was changed. Sign in again."), "", nil)
 		case errors.Is(err, auth.ErrAccountInactive):
 			writeError(w, http.StatusForbidden, CodeAccountInactive,
-				"This account is not active.", "", nil)
+				i18n.T(ctx, "This account is not active."), "", nil)
 		case errors.Is(err, auth.ErrTokenInvalid), errors.Is(err, auth.ErrTokenWrongUse):
 			writeError(w, http.StatusUnauthorized, CodeUnauthenticated,
-				"The refresh token is not valid. Sign in again.", "", nil)
+				i18n.T(ctx, "The refresh token is not valid. Sign in again."), "", nil)
 		default:
 			s.log.Error("resolving refresh token failed", "error", err)
 			writeError(w, http.StatusInternalServerError, CodeInternal,
-				"The session could not be refreshed.", "", nil)
+				i18n.T(ctx, "The session could not be refreshed."), "", nil)
 		}
 		return
 	}
@@ -226,7 +241,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 // so a fresh session is issued in the same response.
 func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	user := UserFromContext(r.Context())
+	ctx := r.Context()
+	user := UserFromContext(ctx)
 
 	var req updateMeRequest
 	if !decodeJSON(w, r, &req) {
@@ -234,7 +250,7 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Username == nil && req.NewPassword == nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"Supply a new username, a new password, or both.", "", nil)
+			i18n.T(ctx, "Supply a new username, a new password, or both."), "", nil)
 		return
 	}
 
@@ -244,28 +260,28 @@ func (s *Server) handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log.Error("verifying current password failed", "error", err, "user_id", user.UserID)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The change could not be completed.", "", nil)
+			i18n.T(ctx, "The change could not be completed."), "", nil)
 		return
 	}
 	if !ok {
 		writeError(w, http.StatusUnauthorized, CodeInvalidCredentials,
-			"The current password is not correct.", "current_password", nil)
+			i18n.T(ctx, "The current password is not correct."), "current_password", nil)
 		return
 	}
 
 	updated := user
 	if req.Username != nil {
-		updated, err = s.auth.ChangeUsername(r.Context(), user.UserID, *req.Username)
+		updated, err = s.auth.ChangeUsername(ctx, user.UserID, *req.Username)
 		if err != nil {
-			s.writeCredentialPolicyError(w, err)
+			s.writeCredentialPolicyError(w, r, err)
 			return
 		}
 	}
 	passwordChanged := false
 	if req.NewPassword != nil {
-		updated, err = s.auth.ChangePassword(r.Context(), user.UserID, req.CurrentPassword, *req.NewPassword)
+		updated, err = s.auth.ChangePassword(ctx, user.UserID, req.CurrentPassword, *req.NewPassword)
 		if err != nil {
-			s.writeCredentialPolicyError(w, err)
+			s.writeCredentialPolicyError(w, r, err)
 			return
 		}
 		passwordChanged = true
@@ -295,14 +311,14 @@ func (s *Server) writeSession(w http.ResponseWriter, r *http.Request, user *mode
 	if err != nil {
 		s.log.Error("issuing session failed", "error", err, "user_id", user.UserID)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The session could not be created.", "", nil)
+			i18n.T(r.Context(), "The session could not be created."), "", nil)
 		return
 	}
 	csrf, err := auth.NewCSRFToken()
 	if err != nil {
 		s.log.Error("generating CSRF token failed", "error", err)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The session could not be created.", "", nil)
+			i18n.T(r.Context(), "The session could not be created."), "", nil)
 		return
 	}
 
@@ -318,27 +334,38 @@ func (s *Server) writeSession(w http.ResponseWriter, r *http.Request, user *mode
 // writeCredentialPolicyError maps the credential and account errors onto the
 // envelope, keeping the field pointer accurate so the frontend can highlight
 // the offending input.
-func (s *Server) writeCredentialPolicyError(w http.ResponseWriter, err error) {
+//
+// The policy errors stay sentinels the service compares with errors.Is; they
+// become sentences here. The two length limits carry a number, so they are said
+// whole with it; the rest were marked where they are defined and are said
+// through Tr.
+func (s *Server) writeCredentialPolicyError(w http.ResponseWriter, r *http.Request, err error) {
+	ctx := r.Context()
 	switch {
-	case errors.Is(err, auth.ErrPasswordTooShort), errors.Is(err, auth.ErrPasswordTooLong),
-		errors.Is(err, auth.ErrPasswordWeak):
+	case errors.Is(err, auth.ErrPasswordTooShort):
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			capitalise(err.Error())+".", "password", nil)
+			i18n.T(ctx, "Password must be at least %d characters.", auth.MinPasswordLength), "password", nil)
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
+			i18n.T(ctx, "Password must be at most %d characters.", auth.MaxPasswordLength), "password", nil)
+	case errors.Is(err, auth.ErrPasswordWeak):
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
+			sentence(ctx, err.Error()), "password", nil)
 	case errors.Is(err, auth.ErrInvalidUsername):
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			capitalise(err.Error())+".", "username", nil)
+			sentence(ctx, err.Error()), "username", nil)
 	case errors.Is(err, auth.ErrUsernameTaken):
 		writeError(w, http.StatusConflict, CodeConflict,
-			"That username is already in use.", "username", nil)
+			i18n.T(ctx, "That username is already in use."), "username", nil)
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, CodeInvalidCredentials,
-			"The current password is not correct.", "current_password", nil)
+			i18n.T(ctx, "The current password is not correct."), "current_password", nil)
 	case errors.Is(err, auth.ErrSetupComplete):
 		writeError(w, http.StatusConflict, CodeSetupComplete,
-			"An operator account already exists. Sign in instead.", "", nil)
+			i18n.T(ctx, "An operator account already exists. Sign in instead."), "", nil)
 	default:
 		s.log.Error("account operation failed", "error", err)
 		writeError(w, http.StatusInternalServerError, CodeInternal,
-			"The request could not be completed.", "", nil)
+			i18n.T(ctx, "The request could not be completed."), "", nil)
 	}
 }

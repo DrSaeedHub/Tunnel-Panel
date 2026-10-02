@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Machine-readable error codes. The frontend switches on these, so they are
@@ -180,9 +182,11 @@ func (e *Errors) First() FieldError {
 	return e.Fields[0]
 }
 
+// Error has no request to say itself in, so it is said in the panel's
+// language; the messages it joins were already said in the request's.
 func (e *Errors) Error() string {
 	if e.Empty() {
-		return "no validation errors"
+		return i18n.P("no validation errors")
 	}
 	if len(e.Fields) == 1 {
 		return e.Fields[0].Error()
@@ -191,7 +195,7 @@ func (e *Errors) Error() string {
 	for _, f := range e.Fields {
 		parts = append(parts, f.Error())
 	}
-	return fmt.Sprintf("%d fields are invalid: %s", len(e.Fields), strings.Join(parts, "; "))
+	return i18n.P("%d fields are invalid: %s", len(e.Fields), strings.Join(parts, "; "))
 }
 
 // OrNil returns the collection as an error, or nil when nothing was rejected.
@@ -224,6 +228,6 @@ type AdoptableError struct {
 }
 
 func (e *AdoptableError) Error() string {
-	return fmt.Sprintf("%s already exists on this system but is not managed by the panel; adopt it instead",
+	return i18n.P("%s already exists on this system but is not managed by the panel; adopt it instead",
 		e.InterfaceName)
 }

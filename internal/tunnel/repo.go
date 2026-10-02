@@ -4,17 +4,25 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/drs/gre-panel/internal/alloc"
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/validate"
 )
 
 // ErrNotFound is returned when no live tunnel or pool has that identifier.
 var ErrNotFound = errors.New("tunnel: not found")
+
+// notFoundError is ErrNotFound said as a whole sentence, in the language of the
+// request that asked. It is what the API answers a missing tunnel or pool with,
+// and errors.Is still recognises it as ErrNotFound.
+type notFoundError struct{ sentence string }
+
+func (e *notFoundError) Error() string { return e.sentence }
+func (e *notFoundError) Unwrap() error { return ErrNotFound }
 
 // Record is a tunnel row together with its addresses, which are always read and
 // written as one unit because a tunnel without its addresses is not a usable
@@ -148,7 +156,7 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	rows, err := r.db.Read.QueryContext(ctx,
 		`SELECT `+tunnelColumns+` FROM Tunnel WHERE IsDeleted = 0 ORDER BY TunnelID`)
 	if err != nil {
-		return nil, fmt.Errorf("listing tunnels: %w", err)
+		return nil, i18n.Errorf(ctx, "listing tunnels: %w", err)
 	}
 	defer rows.Close()
 
@@ -156,12 +164,12 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	for rows.Next() {
 		t, err := scanTunnel(rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("reading a tunnel row: %w", err)
+			return nil, i18n.Errorf(ctx, "reading a tunnel row: %w", err)
 		}
 		out = append(out, Record{Tunnel: t})
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing tunnels: %w", err)
+		return nil, i18n.Errorf(ctx, "listing tunnels: %w", err)
 	}
 
 	addresses, err := r.allAddresses(ctx)
@@ -180,10 +188,10 @@ func (r *Repo) ByID(ctx context.Context, id int64) (Record, error) {
 		`SELECT `+tunnelColumns+` FROM Tunnel WHERE TunnelID = ? AND IsDeleted = 0`, id)
 	t, err := scanTunnel(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Record{}, fmt.Errorf("%w: tunnel %d", ErrNotFound, id)
+		return Record{}, &notFoundError{i18n.T(ctx, "tunnel %d was not found", id)}
 	}
 	if err != nil {
-		return Record{}, fmt.Errorf("reading tunnel %d: %w", id, err)
+		return Record{}, i18n.Errorf(ctx, "reading tunnel %d: %w", id, err)
 	}
 
 	addresses, err := r.addressesFor(ctx, id)
@@ -199,10 +207,10 @@ func (r *Repo) ByInterfaceName(ctx context.Context, name string) (Record, error)
 		`SELECT `+tunnelColumns+` FROM Tunnel WHERE InterfaceName = ? AND IsDeleted = 0`, name)
 	t, err := scanTunnel(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Record{}, fmt.Errorf("%w: tunnel %q", ErrNotFound, name)
+		return Record{}, &notFoundError{i18n.T(ctx, "tunnel %q was not found", name)}
 	}
 	if err != nil {
-		return Record{}, fmt.Errorf("reading tunnel %q: %w", name, err)
+		return Record{}, i18n.Errorf(ctx, "reading tunnel %q: %w", name, err)
 	}
 	addresses, err := r.addressesFor(ctx, t.TunnelID)
 	if err != nil {
@@ -218,10 +226,10 @@ func (r *Repo) addressesFor(ctx context.Context, tunnelID int64) ([]model.Tunnel
 		FROM TunnelAddress WHERE TunnelID = ? AND IsDeleted = 0 ORDER BY SortOrder, TunnelAddressID`,
 		tunnelID)
 	if err != nil {
-		return nil, fmt.Errorf("reading the addresses of tunnel %d: %w", tunnelID, err)
+		return nil, i18n.Errorf(ctx, "reading the addresses of tunnel %d: %w", tunnelID, err)
 	}
 	defer rows.Close()
-	return scanAddresses(rows)
+	return scanAddresses(ctx, rows)
 }
 
 func (r *Repo) allAddresses(ctx context.Context) (map[int64][]model.TunnelAddress, error) {
@@ -230,11 +238,11 @@ func (r *Repo) allAddresses(ctx context.Context) (map[int64][]model.TunnelAddres
 		       IsPrimary, SortOrder, CreatedDate, UpdatedDate, IsDeleted
 		FROM TunnelAddress WHERE IsDeleted = 0 ORDER BY TunnelID, SortOrder, TunnelAddressID`)
 	if err != nil {
-		return nil, fmt.Errorf("reading tunnel addresses: %w", err)
+		return nil, i18n.Errorf(ctx, "reading tunnel addresses: %w", err)
 	}
 	defer rows.Close()
 
-	list, err := scanAddresses(rows)
+	list, err := scanAddresses(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +253,7 @@ func (r *Repo) allAddresses(ctx context.Context) (map[int64][]model.TunnelAddres
 	return out, nil
 }
 
-func scanAddresses(rows *sql.Rows) ([]model.TunnelAddress, error) {
+func scanAddresses(ctx context.Context, rows *sql.Rows) ([]model.TunnelAddress, error) {
 	out := []model.TunnelAddress{}
 	for rows.Next() {
 		var a model.TunnelAddress
@@ -253,7 +261,7 @@ func scanAddresses(rows *sql.Rows) ([]model.TunnelAddress, error) {
 		var isPrimary, isDeleted int64
 		if err := rows.Scan(&a.TunnelAddressID, &a.TunnelID, &a.Address, &a.PrefixLength, &peer,
 			&a.AddressFamilyID, &isPrimary, &a.SortOrder, &a.CreatedDate, &a.UpdatedDate, &isDeleted); err != nil {
-			return nil, fmt.Errorf("reading a tunnel address: %w", err)
+			return nil, i18n.Errorf(ctx, "reading a tunnel address: %w", err)
 		}
 		a.PeerAddress = nullString(peer)
 		a.IsPrimary = isPrimary != 0
@@ -300,7 +308,7 @@ func (r *Repo) Insert(ctx context.Context, in validate.TunnelInput, isManaged, i
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, fmt.Errorf("beginning the tunnel transaction: %w", err)
+		return 0, i18n.Errorf(ctx, "beginning the tunnel transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -332,18 +340,18 @@ func (r *Repo) Insert(ctx context.Context, in validate.TunnelInput, isManaged, i
 		in.MonitorStateChangeSamples,
 		model.ApplyStatusPending, now, now)
 	if err != nil {
-		return 0, fmt.Errorf("storing the tunnel: %w", err)
+		return 0, i18n.Errorf(ctx, "storing the tunnel: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return 0, fmt.Errorf("reading the new tunnel identifier: %w", err)
+		return 0, i18n.Errorf(ctx, "reading the new tunnel identifier: %w", err)
 	}
 
 	if err := insertAddresses(ctx, tx, id, in.Addresses, now); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("committing the tunnel: %w", err)
+		return 0, i18n.Errorf(ctx, "committing the tunnel: %w", err)
 	}
 	return id, nil
 }
@@ -353,7 +361,7 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning the tunnel transaction: %w", err)
+		return i18n.Errorf(ctx, "beginning the tunnel transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -384,10 +392,10 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 		in.MonitorDegradedRttMs, in.MonitorStateChangeSamples,
 		now, id)
 	if err != nil {
-		return fmt.Errorf("updating tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "updating tunnel %d: %w", id, err)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return fmt.Errorf("%w: tunnel %d", ErrNotFound, id)
+		return &notFoundError{i18n.T(ctx, "tunnel %d was not found", id)}
 	}
 
 	// Addresses are replaced wholesale rather than diffed: the request states the
@@ -395,13 +403,13 @@ func (r *Repo) Update(ctx context.Context, id int64, in validate.TunnelInput, is
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE TunnelAddress SET IsDeleted = 1, UpdatedDate = ? WHERE TunnelID = ? AND IsDeleted = 0`,
 		now, id); err != nil {
-		return fmt.Errorf("clearing the addresses of tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "clearing the addresses of tunnel %d: %w", id, err)
 	}
 	if err := insertAddresses(ctx, tx, id, in.Addresses, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing the tunnel: %w", err)
+		return i18n.Errorf(ctx, "committing the tunnel: %w", err)
 	}
 	return nil
 }
@@ -420,7 +428,7 @@ func insertAddresses(ctx context.Context, tx *sql.Tx, tunnelID int64, addresses 
 		}
 		if _, err := tx.ExecContext(ctx, stmt, tunnelID, addr.Address, addr.PrefixLength,
 			emptyToNull(addr.PeerAddress), family, boolInt(addr.IsPrimary || i == 0), i, now, now); err != nil {
-			return fmt.Errorf("storing the address %s: %w", addr.Address, err)
+			return i18n.Errorf(ctx, "storing the address %s: %w", addr.Address, err)
 		}
 	}
 	return nil
@@ -432,22 +440,22 @@ func (r *Repo) SoftDelete(ctx context.Context, id int64) error {
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning the delete transaction: %w", err)
+		return i18n.Errorf(ctx, "beginning the delete transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE Tunnel SET IsDeleted = 1, IsEnabled = 0, UpdatedDate = ? WHERE TunnelID = ?`,
 		now, id); err != nil {
-		return fmt.Errorf("deleting tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "deleting tunnel %d: %w", id, err)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE TunnelAddress SET IsDeleted = 1, UpdatedDate = ? WHERE TunnelID = ?`,
 		now, id); err != nil {
-		return fmt.Errorf("deleting the addresses of tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "deleting the addresses of tunnel %d: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("committing the delete: %w", err)
+		return i18n.Errorf(ctx, "committing the delete: %w", err)
 	}
 	return nil
 }
@@ -473,7 +481,7 @@ func (r *Repo) SetApplyStatus(ctx context.Context, id, statusID int64, applyErr 
 			UpdatedDate = ?
 		WHERE TunnelID = ?`, statusID, message, applied, now, id)
 	if err != nil {
-		return fmt.Errorf("recording the apply status of tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "recording the apply status of tunnel %d: %w", id, err)
 	}
 	return nil
 }
@@ -484,7 +492,7 @@ func (r *Repo) SetEnabled(ctx context.Context, id int64, enabled bool) error {
 		`UPDATE Tunnel SET IsEnabled = ?, UpdatedDate = ? WHERE TunnelID = ? AND IsDeleted = 0`,
 		boolInt(enabled), model.NowUTC(), id)
 	if err != nil {
-		return fmt.Errorf("recording the enabled state of tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "recording the enabled state of tunnel %d: %w", id, err)
 	}
 	return nil
 }
@@ -497,7 +505,7 @@ func (r *Repo) Pools(ctx context.Context) ([]alloc.Pool, error) {
 		SELECT AddressPoolID, AddressPoolTitle, Cidr, PrefixLength, IsPublicRange, IsEnabled, Description
 		FROM AddressPool WHERE IsDeleted = 0 ORDER BY AddressPoolID`)
 	if err != nil {
-		return nil, fmt.Errorf("listing address pools: %w", err)
+		return nil, i18n.Errorf(ctx, "listing address pools: %w", err)
 	}
 	defer rows.Close()
 
@@ -507,7 +515,7 @@ func (r *Repo) Pools(ctx context.Context) ([]alloc.Pool, error) {
 		var isPublic, isEnabled int64
 		if err := rows.Scan(&p.AddressPoolID, &p.Title, &p.Cidr, &p.PrefixLength,
 			&isPublic, &isEnabled, &p.Description); err != nil {
-			return nil, fmt.Errorf("reading an address pool: %w", err)
+			return nil, i18n.Errorf(ctx, "reading an address pool: %w", err)
 		}
 		p.IsPublicRange = isPublic != 0
 		p.IsEnabled = isEnabled != 0
@@ -526,10 +534,10 @@ func (r *Repo) PoolByID(ctx context.Context, id int64) (alloc.Pool, error) {
 	var isPublic, isEnabled int64
 	err := row.Scan(&p.AddressPoolID, &p.Title, &p.Cidr, &p.PrefixLength, &isPublic, &isEnabled, &p.Description)
 	if errors.Is(err, sql.ErrNoRows) {
-		return alloc.Pool{}, fmt.Errorf("%w: address pool %d", ErrNotFound, id)
+		return alloc.Pool{}, &notFoundError{i18n.T(ctx, "address pool %d was not found", id)}
 	}
 	if err != nil {
-		return alloc.Pool{}, fmt.Errorf("reading address pool %d: %w", id, err)
+		return alloc.Pool{}, i18n.Errorf(ctx, "reading address pool %d: %w", id, err)
 	}
 	p.IsPublicRange = isPublic != 0
 	p.IsEnabled = isEnabled != 0
@@ -560,7 +568,7 @@ func (r *Repo) InsertPool(ctx context.Context, p alloc.Pool) (int64, error) {
 		p.Title, p.Cidr, p.PrefixLength, boolInt(p.IsPublicRange), boolInt(p.IsEnabled),
 		p.Description, now, now)
 	if err != nil {
-		return 0, fmt.Errorf("storing the address pool: %w", err)
+		return 0, i18n.Errorf(ctx, "storing the address pool: %w", err)
 	}
 	return res.LastInsertId()
 }
@@ -575,10 +583,10 @@ func (r *Repo) UpdatePool(ctx context.Context, p alloc.Pool) error {
 		p.Title, p.Cidr, p.PrefixLength, boolInt(p.IsPublicRange), boolInt(p.IsEnabled),
 		p.Description, model.NowUTC(), p.AddressPoolID)
 	if err != nil {
-		return fmt.Errorf("updating address pool %d: %w", p.AddressPoolID, err)
+		return i18n.Errorf(ctx, "updating address pool %d: %w", p.AddressPoolID, err)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return fmt.Errorf("%w: address pool %d", ErrNotFound, p.AddressPoolID)
+		return &notFoundError{i18n.T(ctx, "address pool %d was not found", p.AddressPoolID)}
 	}
 	return nil
 }
@@ -590,20 +598,20 @@ func (r *Repo) DeletePool(ctx context.Context, id int64) error {
 	var count int
 	if err := r.db.Read.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM Tunnel WHERE AddressPoolID = ? AND IsDeleted = 0`, id).Scan(&count); err != nil {
-		return fmt.Errorf("checking whether address pool %d is in use: %w", id, err)
+		return i18n.Errorf(ctx, "checking whether address pool %d is in use: %w", id, err)
 	}
 	if count > 0 {
-		return fmt.Errorf("address pool %d is used by %d tunnel(s); change or remove those first", id, count)
+		return i18n.Errorf(ctx, "address pool %d is used by %d tunnel(s); change or remove those first", id, count)
 	}
 
 	res, err := r.db.Write.ExecContext(ctx,
 		`UPDATE AddressPool SET IsDeleted = 1, UpdatedDate = ? WHERE AddressPoolID = ? AND IsDeleted = 0`,
 		model.NowUTC(), id)
 	if err != nil {
-		return fmt.Errorf("deleting address pool %d: %w", id, err)
+		return i18n.Errorf(ctx, "deleting address pool %d: %w", id, err)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return fmt.Errorf("%w: address pool %d", ErrNotFound, id)
+		return &notFoundError{i18n.T(ctx, "address pool %d was not found", id)}
 	}
 	return nil
 }
@@ -620,7 +628,7 @@ func (r *Repo) UsedAddresses(ctx context.Context) ([]string, error) {
 		JOIN Tunnel t ON t.TunnelID = a.TunnelID AND t.IsDeleted = 0
 		WHERE a.IsDeleted = 0 AND a.PeerAddress IS NOT NULL`)
 	if err != nil {
-		return nil, fmt.Errorf("reading assigned addresses: %w", err)
+		return nil, i18n.Errorf(ctx, "reading assigned addresses: %w", err)
 	}
 	defer rows.Close()
 
@@ -628,7 +636,7 @@ func (r *Repo) UsedAddresses(ctx context.Context) ([]string, error) {
 	for rows.Next() {
 		var address string
 		if err := rows.Scan(&address); err != nil {
-			return nil, fmt.Errorf("reading an assigned address: %w", err)
+			return nil, i18n.Errorf(ctx, "reading an assigned address: %w", err)
 		}
 		out = append(out, address)
 	}
@@ -694,10 +702,10 @@ func (r *Repo) SetMonitorEnabled(ctx context.Context, id int64, enabled *bool) e
 		`UPDATE Tunnel SET IsMonitorEnabled = ?, UpdatedDate = ? WHERE TunnelID = ? AND IsDeleted = 0`,
 		value, model.NowUTC(), id)
 	if err != nil {
-		return fmt.Errorf("recording the monitoring state of tunnel %d: %w", id, err)
+		return i18n.Errorf(ctx, "recording the monitoring state of tunnel %d: %w", id, err)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return fmt.Errorf("%w: tunnel %d", ErrNotFound, id)
+		return &notFoundError{i18n.T(ctx, "tunnel %d was not found", id)}
 	}
 	return nil
 }

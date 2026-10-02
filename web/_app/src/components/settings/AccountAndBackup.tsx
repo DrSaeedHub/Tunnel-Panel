@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useMutation } from '@tanstack/react-query'
 import { Download, Upload } from 'lucide-react'
@@ -128,6 +129,17 @@ export function AccountSection() {
 }
 
 /**
+ * What an import did, or would do, to one item.
+ *
+ * The backend spells these as phrases ("would create", "skip"); the label is
+ * keyed by the phrase with its spaces as underscores. One added there before
+ * its translation lands here is shown as the backend wrote it.
+ */
+export function importActionLabel(action: string, t: TFunction): string {
+  return t(`settings.backup.action.${action.trim().replace(/\s+/g, '_')}`, { defaultValue: action })
+}
+
+/**
  * Export and import of the panel's configuration.
  *
  * An import is previewed first: the backend's dry run lists every action it
@@ -212,13 +224,30 @@ export function BackupSection() {
               {preview.length ? (
                 <ul className="max-h-56 divide-y divide-border overflow-auto rounded-md border border-border scrollbar-thin">
                   {preview.map((action, index) => (
-                    <li key={`${action.kind}-${action.target}-${index}`} className="flex items-baseline gap-2 p-2 text-2xs">
+                    <li
+                      key={`${action.kind}-${action.target}-${index}`}
+                      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 p-2 text-2xs"
+                    >
                       <Badge tone={action.error ? 'danger' : action.action === 'skip' ? 'neutral' : 'accent'}>
-                        {action.action}
+                        {importActionLabel(action.action, t)}
                       </Badge>
-                      <span className="text-muted-foreground">{action.kind}</span>
+                      <span className="text-muted-foreground">
+                        {t(`settings.backup.kind.${action.kind}`, { defaultValue: action.kind })}
+                      </span>
                       <Technical className="text-2xs">{action.target}</Technical>
-                      {action.detail ? <span className="text-muted-foreground">· {action.detail}</span> : null}
+                      {action.detail ? (
+                        <span className="text-muted-foreground">
+                          · <bdi>{action.detail}</bdi>
+                        </span>
+                      ) : null}
+                      {/* Why the item would fail, or was skipped. It was in
+                          every response and rendered nowhere, so "would fail"
+                          came with no reason at all. */}
+                      {action.error ? (
+                        <span dir="auto" className="w-full text-danger">
+                          {action.error}
+                        </span>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

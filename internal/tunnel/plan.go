@@ -1,9 +1,11 @@
 package tunnel
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/persist"
@@ -353,7 +355,7 @@ type planner struct {
 // exercise — it proves the unit actually works now, rather than discovering at
 // the next reboot that it never did. The legacy script enabled units it had
 // never successfully run.
-func (p *planner) PlanCreate(rec Record, keepalive KeepaliveFor, takeover bool) Plan {
+func (p *planner) PlanCreate(ctx context.Context, rec Record, keepalive KeepaliveFor, takeover bool) Plan {
 	spec := SpecOf(rec)
 	addresses := AddressesOf(rec)
 	plan := Plan{
@@ -361,25 +363,25 @@ func (p *planner) PlanCreate(rec Record, keepalive KeepaliveFor, takeover bool) 
 		Interface: rec.InterfaceName,
 		TunnelID:  rec.TunnelID,
 		Verification: []string{
-			"the interface exists and is of the requested type",
-			"the local endpoint, remote endpoint, TTL, MTU and keys match what was asked for",
-			"every requested address is present with the right prefix length",
-			"the flags include UP and LOWER_UP",
+			i18n.T(ctx, "the interface exists and is of the requested type"),
+			i18n.T(ctx, "the local endpoint, remote endpoint, TTL, MTU and keys match what was asked for"),
+			i18n.T(ctx, "every requested address is present with the right prefix length"),
+			i18n.T(ctx, "the flags include UP and LOWER_UP"),
 		},
 	}
 
 	switch rec.PersistenceTypeID {
 	case model.PersistenceTypeSystemd:
-		p.planSystemdCreate(&plan, rec, spec, addresses, keepalive, takeover)
+		p.planSystemdCreate(ctx, &plan, rec, spec, addresses, keepalive, takeover)
 	case model.PersistenceTypeNetworkd:
-		p.planNetworkdCreate(&plan, rec, spec, addresses, takeover)
+		p.planNetworkdCreate(ctx, &plan, rec, spec, addresses, takeover)
 	default:
-		p.planRuntimeCreate(&plan, spec, addresses)
+		p.planRuntimeCreate(ctx, &plan, spec, addresses)
 	}
 	return plan
 }
 
-func (p *planner) planSystemdCreate(plan *Plan, rec Record, spec link.TunnelSpec,
+func (p *planner) planSystemdCreate(ctx context.Context, plan *Plan, rec Record, spec link.TunnelSpec,
 	addresses []link.Address, keepalive KeepaliveFor, takeover bool) {
 
 	name := rec.InterfaceName
@@ -389,12 +391,12 @@ func (p *planner) planSystemdCreate(plan *Plan, rec Record, spec link.TunnelSpec
 
 	plan.AddFile(FileSystemdUnit, unitPath, body)
 	plan.Add(Step{
-		Kind: StepFileWrite, Description: "write the systemd unit " + unit,
+		Kind: StepFileWrite, Description: i18n.T(ctx, "write the systemd unit %s", unit),
 		Path: unitPath, Content: body, FileKind: FileSystemdUnit, Unit: unit,
 		Interface: name, Takeover: takeover,
 	})
 	plan.AddRollback(Step{
-		Kind: StepFileRemove, Description: "remove the systemd unit " + unit,
+		Kind: StepFileRemove, Description: i18n.T(ctx, "remove the systemd unit %s", unit),
 		Path: unitPath, Unit: unit, Interface: name, Takeover: takeover, Tolerate: true,
 	})
 
@@ -405,57 +407,57 @@ func (p *planner) planSystemdCreate(plan *Plan, rec Record, spec link.TunnelSpec
 
 		plan.AddFile(FileKeepaliveUnit, keepalivePath, keepaliveBody)
 		plan.Add(Step{
-			Kind: StepFileWrite, Description: "write the keepalive unit " + keepaliveUnit,
+			Kind: StepFileWrite, Description: i18n.T(ctx, "write the keepalive unit %s", keepaliveUnit),
 			Path: keepalivePath, Content: keepaliveBody, FileKind: FileKeepaliveUnit,
 			Unit: keepaliveUnit, Interface: name, Takeover: takeover,
 		})
 		plan.AddRollback(Step{
-			Kind: StepFileRemove, Description: "remove the keepalive unit " + keepaliveUnit,
+			Kind: StepFileRemove, Description: i18n.T(ctx, "remove the keepalive unit %s", keepaliveUnit),
 			Path: keepalivePath, Unit: keepaliveUnit, Interface: name, Tolerate: true,
 		})
 	}
 
 	// daemon-reload, never daemon-reexec.
 	plan.Add(Step{
-		Kind: StepDaemonReload, Description: "reload the systemd unit files",
+		Kind: StepDaemonReload, Description: i18n.T(ctx, "reload the systemd unit files"),
 		Argv: persist.DaemonReloadArgs(p.systemctlBin),
 	})
 	plan.Add(Step{
-		Kind: StepUnitEnable, Description: "enable " + unit + " so the tunnel returns after a reboot",
+		Kind: StepUnitEnable, Description: i18n.T(ctx, "enable %s so the tunnel returns after a reboot", unit),
 		Unit: unit, Interface: name, Argv: persist.EnableArgs(p.systemctlBin, unit),
 	})
 	plan.AddRollback(Step{
-		Kind: StepUnitDisable, Description: "disable " + unit,
+		Kind: StepUnitDisable, Description: i18n.T(ctx, "disable %s", unit),
 		Unit: unit, Interface: name, Argv: persist.DisableArgs(p.systemctlBin, unit), Tolerate: true,
 	})
 	plan.Add(Step{
-		Kind: StepUnitStart, Description: "start " + unit + ", which creates and configures the interface",
+		Kind: StepUnitStart, Description: i18n.T(ctx, "start %s, which creates and configures the interface", unit),
 		Unit: unit, Interface: name, Argv: persist.StartArgs(p.systemctlBin, unit),
 	})
 	plan.AddRollback(Step{
-		Kind: StepUnitStop, Description: "stop " + unit,
+		Kind: StepUnitStop, Description: i18n.T(ctx, "stop %s", unit),
 		Unit: unit, Interface: name, Argv: persist.StopArgs(p.systemctlBin, unit), Tolerate: true,
 	})
 
 	if keepalive.Enabled {
 		keepaliveUnit := persist.KeepaliveUnitName(name)
 		plan.Add(Step{
-			Kind: StepUnitEnable, Description: "enable " + keepaliveUnit,
+			Kind: StepUnitEnable, Description: i18n.T(ctx, "enable %s", keepaliveUnit),
 			Unit: keepaliveUnit, Interface: name,
 			Argv: persist.EnableArgs(p.systemctlBin, keepaliveUnit),
 		})
 		plan.Add(Step{
-			Kind: StepUnitStart, Description: "start " + keepaliveUnit,
+			Kind: StepUnitStart, Description: i18n.T(ctx, "start %s", keepaliveUnit),
 			Unit: keepaliveUnit, Interface: name,
 			Argv: persist.StartArgs(p.systemctlBin, keepaliveUnit),
 		})
 		plan.AddRollback(Step{
-			Kind: StepUnitStop, Description: "stop " + keepaliveUnit,
+			Kind: StepUnitStop, Description: i18n.T(ctx, "stop %s", keepaliveUnit),
 			Unit: keepaliveUnit, Interface: name,
 			Argv: persist.StopArgs(p.systemctlBin, keepaliveUnit), Tolerate: true,
 		})
 		plan.AddRollback(Step{
-			Kind: StepUnitDisable, Description: "disable " + keepaliveUnit,
+			Kind: StepUnitDisable, Description: i18n.T(ctx, "disable %s", keepaliveUnit),
 			Unit: keepaliveUnit, Interface: name,
 			Argv: persist.DisableArgs(p.systemctlBin, keepaliveUnit), Tolerate: true,
 		})
@@ -464,18 +466,18 @@ func (p *planner) planSystemdCreate(plan *Plan, rec Record, spec link.TunnelSpec
 	// The rollback ends by removing the interface, so a failed create leaves the
 	// host exactly as it was found.
 	plan.AddRollback(Step{
-		Kind: StepLinkDelete, Description: "delete the interface " + name,
+		Kind: StepLinkDelete, Description: i18n.T(ctx, "delete the interface %s", name),
 		Interface: name, Argv: link.DeleteArgs(p.ipBin, name), Tolerate: true,
 	})
 	plan.AddRollback(Step{
-		Kind: StepDaemonReload, Description: "reload the systemd unit files",
+		Kind: StepDaemonReload, Description: i18n.T(ctx, "reload the systemd unit files"),
 		Argv: persist.DaemonReloadArgs(p.systemctlBin), Tolerate: true,
 	})
 
-	plan.Verification = append(plan.Verification, "the systemd unit is enabled and active")
+	plan.Verification = append(plan.Verification, i18n.T(ctx, "the systemd unit is enabled and active"))
 }
 
-func (p *planner) planNetworkdCreate(plan *Plan, rec Record, spec link.TunnelSpec,
+func (p *planner) planNetworkdCreate(ctx context.Context, plan *Plan, rec Record, spec link.TunnelSpec,
 	addresses []link.Address, takeover bool) {
 
 	name := rec.InterfaceName
@@ -484,7 +486,7 @@ func (p *planner) planNetworkdCreate(plan *Plan, rec Record, spec link.TunnelSpe
 	// immediately and deterministically; the networkd files are what bring it
 	// back after a reboot. Reloading networkd afterwards makes it adopt the
 	// device that is already there rather than racing to create it.
-	p.planRuntimeCreate(plan, spec, addresses)
+	p.planRuntimeCreate(ctx, plan, spec, addresses)
 
 	netdevPath := p.store.NetdevPath(name)
 	netdevBody := p.renderer.Netdev(spec)
@@ -495,62 +497,62 @@ func (p *planner) planNetworkdCreate(plan *Plan, rec Record, spec link.TunnelSpe
 	plan.AddFile(FileNetwork, networkPath, networkBody)
 
 	plan.Add(Step{
-		Kind: StepFileWrite, Description: "write " + persist.NetdevName(name),
+		Kind: StepFileWrite, Description: i18n.T(ctx, "write %s", persist.NetdevName(name)),
 		Path: netdevPath, Content: netdevBody, FileKind: FileNetdev, Interface: name, Takeover: takeover,
 	})
 	plan.AddRollback(Step{
-		Kind: StepFileRemove, Description: "remove " + persist.NetdevName(name),
+		Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", persist.NetdevName(name)),
 		Path: netdevPath, Interface: name, Tolerate: true,
 	})
 	plan.Add(Step{
-		Kind: StepFileWrite, Description: "write " + persist.NetworkName(name),
+		Kind: StepFileWrite, Description: i18n.T(ctx, "write %s", persist.NetworkName(name)),
 		Path: networkPath, Content: networkBody, FileKind: FileNetwork, Interface: name, Takeover: takeover,
 	})
 	plan.AddRollback(Step{
-		Kind: StepFileRemove, Description: "remove " + persist.NetworkName(name),
+		Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", persist.NetworkName(name)),
 		Path: networkPath, Interface: name, Tolerate: true,
 	})
 	plan.Add(Step{
-		Kind: StepNetworkdReload, Description: "reload systemd-networkd",
+		Kind: StepNetworkdReload, Description: i18n.T(ctx, "reload systemd-networkd"),
 		Argv: p.networkdReloadArgs(), Tolerate: true,
 	})
 }
 
-func (p *planner) planRuntimeCreate(plan *Plan, spec link.TunnelSpec, addresses []link.Address) {
+func (p *planner) planRuntimeCreate(ctx context.Context, plan *Plan, spec link.TunnelSpec, addresses []link.Address) {
 	name := spec.Name
 
 	plan.Add(Step{
-		Kind: StepLinkCreate, Description: "create the interface " + name,
+		Kind: StepLinkCreate, Description: i18n.T(ctx, "create the interface %s", name),
 		Interface: name, Spec: &spec, Argv: link.CreateArgs(p.ipBin, spec),
 	})
 	plan.AddRollback(Step{
-		Kind: StepLinkDelete, Description: "delete the interface " + name,
+		Kind: StepLinkDelete, Description: i18n.T(ctx, "delete the interface %s", name),
 		Interface: name, Argv: link.DeleteArgs(p.ipBin, name), Tolerate: true,
 	})
 
 	for i := range addresses {
 		addr := addresses[i]
 		plan.Add(Step{
-			Kind: StepAddressAdd, Description: fmt.Sprintf("add %s to %s", addr, name),
+			Kind: StepAddressAdd, Description: i18n.T(ctx, "add %s to %s", addr, name),
 			Interface: name, Address: &addr, Argv: link.AddAddressArgs(p.ipBin, name, addr),
 		})
 	}
 	if spec.Mtu > 0 {
 		plan.Add(Step{
-			Kind: StepLinkSetMtu, Description: fmt.Sprintf("set the MTU of %s to %d", name, spec.Mtu),
+			Kind: StepLinkSetMtu, Description: i18n.T(ctx, "set the MTU of %s to %d", name, spec.Mtu),
 			Interface: name, Mtu: spec.Mtu, Argv: link.SetMTUArgs(p.ipBin, name, spec.Mtu),
 		})
 	}
 	if spec.TxQueueLength != nil {
 		plan.Add(Step{
 			Kind:        StepLinkSetTxQueue,
-			Description: fmt.Sprintf("set the transmit queue length of %s to %d", name, *spec.TxQueueLength),
+			Description: i18n.T(ctx, "set the transmit queue length of %s to %d", name, *spec.TxQueueLength),
 			Interface:   name, TxQueueLength: *spec.TxQueueLength,
 			Argv: link.SetTxQueueLenArgs(p.ipBin, name, *spec.TxQueueLength),
 		})
 	}
 	plan.Add(Step{
-		Kind: StepLinkUp, Description: "bring " + name + " up",
+		Kind: StepLinkUp, Description: i18n.T(ctx, "bring %s up", name),
 		Interface: name, Argv: link.SetUpArgs(p.ipBin, name),
 	})
 }
@@ -567,15 +569,15 @@ func (p *planner) networkdReloadArgs() []string {
 // Every step is tolerant, because delete must be idempotent when the interface
 // or the unit is already gone, and must report exactly what was and was not
 // found rather than failing on the first absence.
-func (p *planner) PlanDelete(rec Record, hadKeepalive, takeover bool) Plan {
+func (p *planner) PlanDelete(ctx context.Context, rec Record, hadKeepalive, takeover bool) Plan {
 	name := rec.InterfaceName
 	plan := Plan{
 		Operation: OpDelete,
 		Interface: name,
 		TunnelID:  rec.TunnelID,
 		Verification: []string{
-			"the interface is gone",
-			"no unit file the panel wrote is left behind",
+			i18n.T(ctx, "the interface is gone"),
+			i18n.T(ctx, "no unit file the panel wrote is left behind"),
 		},
 	}
 
@@ -584,50 +586,50 @@ func (p *planner) PlanDelete(rec Record, hadKeepalive, takeover bool) Plan {
 		if hadKeepalive {
 			keepaliveUnit := persist.KeepaliveUnitName(name)
 			plan.Add(Step{
-				Kind: StepUnitStop, Description: "stop " + keepaliveUnit,
+				Kind: StepUnitStop, Description: i18n.T(ctx, "stop %s", keepaliveUnit),
 				Unit: keepaliveUnit, Interface: name,
 				Argv: persist.StopArgs(p.systemctlBin, keepaliveUnit), Tolerate: true,
 			})
 			plan.Add(Step{
-				Kind: StepUnitDisable, Description: "disable " + keepaliveUnit,
+				Kind: StepUnitDisable, Description: i18n.T(ctx, "disable %s", keepaliveUnit),
 				Unit: keepaliveUnit, Interface: name,
 				Argv: persist.DisableArgs(p.systemctlBin, keepaliveUnit), Tolerate: true,
 			})
 			plan.Add(Step{
-				Kind: StepFileRemove, Description: "remove " + keepaliveUnit,
+				Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", keepaliveUnit),
 				Path: p.store.KeepaliveUnitPath(name), Unit: keepaliveUnit,
 				Interface: name, Takeover: takeover, Tolerate: true,
 			})
 		}
 		plan.Add(Step{
-			Kind: StepUnitStop, Description: "stop " + unit,
+			Kind: StepUnitStop, Description: i18n.T(ctx, "stop %s", unit),
 			Unit: unit, Interface: name, Argv: persist.StopArgs(p.systemctlBin, unit), Tolerate: true,
 		})
 		plan.Add(Step{
-			Kind: StepUnitDisable, Description: "disable " + unit,
+			Kind: StepUnitDisable, Description: i18n.T(ctx, "disable %s", unit),
 			Unit: unit, Interface: name, Argv: persist.DisableArgs(p.systemctlBin, unit), Tolerate: true,
 		})
 		plan.Add(Step{
-			Kind: StepFileRemove, Description: "remove " + unit,
+			Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", unit),
 			Path: p.store.UnitPath(name), Unit: unit, Interface: name, Takeover: takeover, Tolerate: true,
 		})
 		plan.Add(Step{
-			Kind: StepDaemonReload, Description: "reload the systemd unit files",
+			Kind: StepDaemonReload, Description: i18n.T(ctx, "reload the systemd unit files"),
 			Argv: persist.DaemonReloadArgs(p.systemctlBin), Tolerate: true,
 		})
 	}
 
 	if rec.PersistenceTypeID == model.PersistenceTypeNetworkd {
 		plan.Add(Step{
-			Kind: StepFileRemove, Description: "remove " + persist.NetdevName(name),
+			Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", persist.NetdevName(name)),
 			Path: p.store.NetdevPath(name), Interface: name, Takeover: takeover, Tolerate: true,
 		})
 		plan.Add(Step{
-			Kind: StepFileRemove, Description: "remove " + persist.NetworkName(name),
+			Kind: StepFileRemove, Description: i18n.T(ctx, "remove %s", persist.NetworkName(name)),
 			Path: p.store.NetworkPath(name), Interface: name, Takeover: takeover, Tolerate: true,
 		})
 		plan.Add(Step{
-			Kind: StepNetworkdReload, Description: "reload systemd-networkd",
+			Kind: StepNetworkdReload, Description: i18n.T(ctx, "reload systemd-networkd"),
 			Argv: p.networkdReloadArgs(), Tolerate: true,
 		})
 	}
@@ -636,7 +638,7 @@ func (p *planner) PlanDelete(rec Record, hadKeepalive, takeover bool) Plan {
 	// removed it already, and an interface that is already gone is the requested
 	// end state rather than a failure.
 	plan.Add(Step{
-		Kind: StepLinkDelete, Description: "delete the interface " + name,
+		Kind: StepLinkDelete, Description: i18n.T(ctx, "delete the interface %s", name),
 		Interface: name, Argv: link.DeleteArgs(p.ipBin, name), Tolerate: true,
 	})
 	return plan
@@ -703,13 +705,13 @@ func DiffTunnel(current Record, desired validate.TunnelInput) []Diff {
 
 // RequiresRecreate reports whether any of the changes needs the interface
 // deleted and rebuilt, and why (§9.6).
-func RequiresRecreate(diffs []Diff) (bool, []string) {
+func RequiresRecreate(ctx context.Context, diffs []Diff) (bool, []string) {
 	var reasons []string
 	for _, d := range diffs {
 		if d.InPlace {
 			continue
 		}
-		reasons = append(reasons, fmt.Sprintf("%s changes from %s to %s, which the kernel cannot alter "+
+		reasons = append(reasons, i18n.T(ctx, "%s changes from %s to %s, which the kernel cannot alter "+
 			"on a running tunnel", d.Field, quoteEmpty(d.From), quoteEmpty(d.To)))
 	}
 	return len(reasons) > 0, reasons
@@ -756,12 +758,12 @@ func boolText(b bool) string {
 // length and the addresses — are applied in place. Anything else needs the
 // interface deleted and rebuilt, which the preview states explicitly and which
 // the request has to confirm.
-func (p *planner) PlanUpdate(current Record, desired Record, keepalive KeepaliveFor,
+func (p *planner) PlanUpdate(ctx context.Context, current Record, desired Record, keepalive KeepaliveFor,
 	diffs []Diff, takeover bool) Plan {
 
-	recreate, reasons := RequiresRecreate(diffs)
+	recreate, reasons := RequiresRecreate(ctx, diffs)
 	if recreate {
-		plan := p.PlanCreate(desired, keepalive, takeover)
+		plan := p.PlanCreate(ctx, desired, keepalive, takeover)
 		plan.Operation = OpUpdate
 		plan.TunnelID = current.TunnelID
 		plan.RequiresRecreate = true
@@ -770,10 +772,10 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 		// Rebuilding means removing what is there first. The teardown steps go in
 		// front of the create steps, and the rollback rebuilds the tunnel as it
 		// was, so a failed update leaves the previous tunnel running.
-		teardown := p.PlanDelete(current, keepalive.Enabled, takeover)
+		teardown := p.PlanDelete(ctx, current, keepalive.Enabled, takeover)
 		plan.Steps = append(teardown.Steps, plan.Steps...)
 
-		restore := p.PlanCreate(current, keepalive, takeover)
+		restore := p.PlanCreate(ctx, current, keepalive, takeover)
 		plan.Rollback = append(plan.Rollback, restore.Steps...)
 		return plan
 	}
@@ -784,9 +786,9 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 		Interface: name,
 		TunnelID:  current.TunnelID,
 		Verification: []string{
-			"every changed parameter matches what was asked for",
-			"every requested address is present with the right prefix length",
-			"the flags include UP and LOWER_UP",
+			i18n.T(ctx, "every changed parameter matches what was asked for"),
+			i18n.T(ctx, "every requested address is present with the right prefix length"),
+			i18n.T(ctx, "the flags include UP and LOWER_UP"),
 		},
 	}
 
@@ -795,12 +797,12 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 
 	if current.Mtu != desired.Mtu {
 		plan.Add(Step{
-			Kind: StepLinkSetMtu, Description: fmt.Sprintf("set the MTU of %s to %d", name, desired.Mtu),
+			Kind: StepLinkSetMtu, Description: i18n.T(ctx, "set the MTU of %s to %d", name, desired.Mtu),
 			Interface: name, Mtu: int(desired.Mtu),
 			Argv: link.SetMTUArgs(p.ipBin, name, int(desired.Mtu)),
 		})
 		plan.AddRollback(Step{
-			Kind: StepLinkSetMtu, Description: fmt.Sprintf("restore the MTU of %s to %d", name, current.Mtu),
+			Kind: StepLinkSetMtu, Description: i18n.T(ctx, "restore the MTU of %s to %d", name, current.Mtu),
 			Interface: name, Mtu: int(current.Mtu),
 			Argv: link.SetMTUArgs(p.ipBin, name, int(current.Mtu)),
 		})
@@ -810,7 +812,7 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 		length := int(*desired.TxQueueLength)
 		plan.Add(Step{
 			Kind:        StepLinkSetTxQueue,
-			Description: fmt.Sprintf("set the transmit queue length of %s to %d", name, length),
+			Description: i18n.T(ctx, "set the transmit queue length of %s to %d", name, length),
 			Interface:   name, TxQueueLength: length,
 			Argv: link.SetTxQueueLenArgs(p.ipBin, name, length),
 		})
@@ -818,7 +820,7 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 			previous := int(*current.TxQueueLength)
 			plan.AddRollback(Step{
 				Kind:        StepLinkSetTxQueue,
-				Description: fmt.Sprintf("restore the transmit queue length of %s to %d", name, previous),
+				Description: i18n.T(ctx, "restore the transmit queue length of %s to %d", name, previous),
 				Interface:   name, TxQueueLength: previous,
 				Argv: link.SetTxQueueLenArgs(p.ipBin, name, previous),
 			})
@@ -828,22 +830,22 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 	for _, addr := range removedAddresses(currentAddresses, desiredAddresses) {
 		removed := addr
 		plan.Add(Step{
-			Kind: StepAddressRemove, Description: fmt.Sprintf("remove %s from %s", removed, name),
+			Kind: StepAddressRemove, Description: i18n.T(ctx, "remove %s from %s", removed, name),
 			Interface: name, Address: &removed, Argv: link.DelAddressArgs(p.ipBin, name, removed),
 		})
 		plan.AddRollback(Step{
-			Kind: StepAddressAdd, Description: fmt.Sprintf("restore %s on %s", removed, name),
+			Kind: StepAddressAdd, Description: i18n.T(ctx, "restore %s on %s", removed, name),
 			Interface: name, Address: &removed, Argv: link.AddAddressArgs(p.ipBin, name, removed),
 		})
 	}
 	for _, addr := range removedAddresses(desiredAddresses, currentAddresses) {
 		added := addr
 		plan.Add(Step{
-			Kind: StepAddressAdd, Description: fmt.Sprintf("add %s to %s", added, name),
+			Kind: StepAddressAdd, Description: i18n.T(ctx, "add %s to %s", added, name),
 			Interface: name, Address: &added, Argv: link.AddAddressArgs(p.ipBin, name, added),
 		})
 		plan.AddRollback(Step{
-			Kind: StepAddressRemove, Description: fmt.Sprintf("remove %s from %s", added, name),
+			Kind: StepAddressRemove, Description: i18n.T(ctx, "remove %s from %s", added, name),
 			Interface: name, Address: &added, Argv: link.DelAddressArgs(p.ipBin, name, added),
 		})
 	}
@@ -851,20 +853,20 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 	if current.IsEnabled != desired.IsEnabled {
 		if desired.IsEnabled {
 			plan.Add(Step{
-				Kind: StepLinkUp, Description: "bring " + name + " up",
+				Kind: StepLinkUp, Description: i18n.T(ctx, "bring %s up", name),
 				Interface: name, Argv: link.SetUpArgs(p.ipBin, name),
 			})
 			plan.AddRollback(Step{
-				Kind: StepLinkDown, Description: "bring " + name + " down again",
+				Kind: StepLinkDown, Description: i18n.T(ctx, "bring %s down again", name),
 				Interface: name, Argv: link.SetDownArgs(p.ipBin, name),
 			})
 		} else {
 			plan.Add(Step{
-				Kind: StepLinkDown, Description: "bring " + name + " down",
+				Kind: StepLinkDown, Description: i18n.T(ctx, "bring %s down", name),
 				Interface: name, Argv: link.SetDownArgs(p.ipBin, name),
 			})
 			plan.AddRollback(Step{
-				Kind: StepLinkUp, Description: "bring " + name + " up again",
+				Kind: StepLinkUp, Description: i18n.T(ctx, "bring %s up again", name),
 				Interface: name, Argv: link.SetUpArgs(p.ipBin, name),
 			})
 		}
@@ -873,13 +875,13 @@ func (p *planner) PlanUpdate(current Record, desired Record, keepalive Keepalive
 	// The persistence files are rewritten so a reboot reproduces the new state,
 	// but the unit is deliberately not restarted: restarting it would delete and
 	// recreate the interface, which is exactly what applying in place avoids.
-	p.planRewritePersistence(&plan, current, desired, keepalive, takeover)
+	p.planRewritePersistence(ctx, &plan, current, desired, keepalive, takeover)
 	return plan
 }
 
 // planRewritePersistence rewrites the files describing a tunnel without
 // disturbing the running interface.
-func (p *planner) planRewritePersistence(plan *Plan, current, desired Record,
+func (p *planner) planRewritePersistence(ctx context.Context, plan *Plan, current, desired Record,
 	keepalive KeepaliveFor, takeover bool) {
 
 	name := desired.InterfaceName
@@ -895,12 +897,12 @@ func (p *planner) planRewritePersistence(plan *Plan, current, desired Record,
 
 		plan.AddFile(FileSystemdUnit, unitPath, body)
 		plan.Add(Step{
-			Kind: StepFileWrite, Description: "rewrite the systemd unit " + unit,
+			Kind: StepFileWrite, Description: i18n.T(ctx, "rewrite the systemd unit %s", unit),
 			Path: unitPath, Content: body, FileKind: FileSystemdUnit, Unit: unit,
 			Interface: name, Takeover: takeover,
 		})
 		plan.AddRollback(Step{
-			Kind: StepFileWrite, Description: "restore the previous systemd unit " + unit,
+			Kind: StepFileWrite, Description: i18n.T(ctx, "restore the previous systemd unit %s", unit),
 			Path: unitPath, Content: previous, FileKind: FileSystemdUnit, Unit: unit,
 			Interface: name, Takeover: takeover,
 		})
@@ -911,22 +913,22 @@ func (p *planner) planRewritePersistence(plan *Plan, current, desired Record,
 			keepaliveBody := p.renderer.KeepaliveUnit(name, keepalive.Options)
 			plan.AddFile(FileKeepaliveUnit, keepalivePath, keepaliveBody)
 			plan.Add(Step{
-				Kind: StepFileWrite, Description: "rewrite the keepalive unit " + keepaliveUnit,
+				Kind: StepFileWrite, Description: i18n.T(ctx, "rewrite the keepalive unit %s", keepaliveUnit),
 				Path: keepalivePath, Content: keepaliveBody, FileKind: FileKeepaliveUnit,
 				Unit: keepaliveUnit, Interface: name, Takeover: takeover,
 			})
 			plan.Add(Step{
-				Kind: StepUnitRestart, Description: "restart " + keepaliveUnit,
+				Kind: StepUnitRestart, Description: i18n.T(ctx, "restart %s", keepaliveUnit),
 				Unit: keepaliveUnit, Interface: name,
 				Argv: persist.RestartArgs(p.systemctlBin, keepaliveUnit), Tolerate: true,
 			})
 		}
 
 		plan.Add(Step{
-			Kind: StepDaemonReload, Description: "reload the systemd unit files",
+			Kind: StepDaemonReload, Description: i18n.T(ctx, "reload the systemd unit files"),
 			Argv: persist.DaemonReloadArgs(p.systemctlBin),
 		})
-		plan.Verification = append(plan.Verification, "the systemd unit is enabled and active")
+		plan.Verification = append(plan.Verification, i18n.T(ctx, "the systemd unit is enabled and active"))
 
 	case model.PersistenceTypeNetworkd:
 		netdevPath := p.store.NetdevPath(name)
@@ -937,42 +939,42 @@ func (p *planner) planRewritePersistence(plan *Plan, current, desired Record,
 		plan.AddFile(FileNetdev, netdevPath, netdevBody)
 		plan.AddFile(FileNetwork, networkPath, networkBody)
 		plan.Add(Step{
-			Kind: StepFileWrite, Description: "rewrite " + persist.NetdevName(name),
+			Kind: StepFileWrite, Description: i18n.T(ctx, "rewrite %s", persist.NetdevName(name)),
 			Path: netdevPath, Content: netdevBody, FileKind: FileNetdev, Interface: name, Takeover: takeover,
 		})
 		plan.Add(Step{
-			Kind: StepFileWrite, Description: "rewrite " + persist.NetworkName(name),
+			Kind: StepFileWrite, Description: i18n.T(ctx, "rewrite %s", persist.NetworkName(name)),
 			Path: networkPath, Content: networkBody, FileKind: FileNetwork, Interface: name, Takeover: takeover,
 		})
 		plan.Add(Step{
-			Kind: StepNetworkdReload, Description: "reload systemd-networkd",
+			Kind: StepNetworkdReload, Description: i18n.T(ctx, "reload systemd-networkd"),
 			Argv: p.networkdReloadArgs(), Tolerate: true,
 		})
 	}
 }
 
 // PlanUp builds the plan that brings a tunnel up (§9.6).
-func (p *planner) PlanUp(rec Record) Plan {
+func (p *planner) PlanUp(ctx context.Context, rec Record) Plan {
 	name := rec.InterfaceName
 	plan := Plan{
 		Operation: OpUp, Interface: name, TunnelID: rec.TunnelID,
-		Verification: []string{"the flags include UP and LOWER_UP"},
+		Verification: []string{i18n.T(ctx, "the flags include UP and LOWER_UP")},
 	}
 	plan.Add(Step{
-		Kind: StepLinkUp, Description: "bring " + name + " up",
+		Kind: StepLinkUp, Description: i18n.T(ctx, "bring %s up", name),
 		Interface: name, Argv: link.SetUpArgs(p.ipBin, name),
 	})
 	plan.AddRollback(Step{
-		Kind: StepLinkDown, Description: "bring " + name + " down again",
+		Kind: StepLinkDown, Description: i18n.T(ctx, "bring %s down again", name),
 		Interface: name, Argv: link.SetDownArgs(p.ipBin, name), Tolerate: true,
 	})
 	if rec.PersistenceTypeID == model.PersistenceTypeSystemd {
 		unit := persist.UnitName(name)
 		plan.Add(Step{
-			Kind: StepUnitEnable, Description: "enable " + unit + " so the tunnel returns after a reboot",
+			Kind: StepUnitEnable, Description: i18n.T(ctx, "enable %s so the tunnel returns after a reboot", unit),
 			Unit: unit, Interface: name, Argv: persist.EnableArgs(p.systemctlBin, unit), Tolerate: true,
 		})
-		plan.Verification = append(plan.Verification, "the systemd unit is enabled and active")
+		plan.Verification = append(plan.Verification, i18n.T(ctx, "the systemd unit is enabled and active"))
 	}
 	return plan
 }
@@ -982,24 +984,24 @@ func (p *planner) PlanUp(rec Record) Plan {
 // The interface is left in place rather than deleted: down is a state, not a
 // removal, and an operator who wanted it gone would have said delete. The unit
 // is disabled so a reboot does not quietly bring it back.
-func (p *planner) PlanDown(rec Record) Plan {
+func (p *planner) PlanDown(ctx context.Context, rec Record) Plan {
 	name := rec.InterfaceName
 	plan := Plan{
 		Operation: OpDown, Interface: name, TunnelID: rec.TunnelID,
-		Verification: []string{"the interface is no longer up"},
+		Verification: []string{i18n.T(ctx, "the interface is no longer up")},
 	}
 	plan.Add(Step{
-		Kind: StepLinkDown, Description: "bring " + name + " down",
+		Kind: StepLinkDown, Description: i18n.T(ctx, "bring %s down", name),
 		Interface: name, Argv: link.SetDownArgs(p.ipBin, name),
 	})
 	plan.AddRollback(Step{
-		Kind: StepLinkUp, Description: "bring " + name + " up again",
+		Kind: StepLinkUp, Description: i18n.T(ctx, "bring %s up again", name),
 		Interface: name, Argv: link.SetUpArgs(p.ipBin, name), Tolerate: true,
 	})
 	if rec.PersistenceTypeID == model.PersistenceTypeSystemd {
 		unit := persist.UnitName(name)
 		plan.Add(Step{
-			Kind: StepUnitDisable, Description: "disable " + unit + " so it does not return after a reboot",
+			Kind: StepUnitDisable, Description: i18n.T(ctx, "disable %s so it does not return after a reboot", unit),
 			Unit: unit, Interface: name, Argv: persist.DisableArgs(p.systemctlBin, unit), Tolerate: true,
 		})
 	}

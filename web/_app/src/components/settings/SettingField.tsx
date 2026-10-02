@@ -29,7 +29,9 @@ export function SettingField({
   dirty: boolean
 }) {
   const { t } = useTranslation()
-  const label = labelFor(entry.key)
+  // The backend's own name for the setting, in the language of the request,
+  // when it sends one; the key, humanised, from a backend that predates it.
+  const label = entry.label?.trim() ? <span dir="auto">{entry.label}</span> : labelFor(entry.key)
 
   const aside = (
     <div className="flex items-center gap-1.5">
@@ -56,7 +58,9 @@ export function SettingField({
 
   const description = (
     <>
-      {entry.description}
+      <span dir="auto" className="block">
+        {entry.description}
+      </span>
       {entry.default !== null && entry.default !== undefined ? (
         <span className="block text-2xs opacity-80">
           {/*
@@ -158,9 +162,9 @@ export function SettingField({
 /**
  * A readable label from the setting key.
  *
- * The backend sends a description but not a title, and inventing a translated
- * label per key would be exactly the hand-written list this page exists to
- * avoid, so the key's last segment is humanised.
+ * The fallback for a schema entry that carries no `label` of its own. Inventing
+ * a translated label per key here would be exactly the hand-written list this
+ * page exists to avoid, so the key's last segment is humanised.
  *
  * The raw key used to be printed beside the label for anyone matching a field
  * against the API. It is gone: a settings page is read by somebody deciding
@@ -175,9 +179,11 @@ export function labelFor(key: string): React.ReactNode {
   return <span className="capitalize">{name}</span>
 }
 
-export function displayValue(value: unknown): string {
+export function displayValue(value: unknown, t: TFunction): string {
   if (value === null || value === undefined) return '—'
-  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  // A switch reads as on or off, in the operator's language, rather than as
+  // the JSON literal it is stored as.
+  if (typeof value === 'boolean') return value ? t('states.on') : t('states.off')
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
@@ -218,12 +224,12 @@ export function choicesFor(
  */
 export function choiceLabel(entry: SettingSchemaEntry, value: unknown, t: TFunction): string {
   if (entry.type !== 'lookup' && entry.type !== 'enum') {
-    return displayValue(value)
+    return displayValue(value, t)
   }
   const match = choicesFor(entry, t).find((choice) => choice.value === String(value))
   // No match means the schema and the value disagree, which is worth seeing
   // rather than hiding behind a blank.
-  return match ? match.label : displayValue(value)
+  return match ? match.label : displayValue(value, t)
 }
 
 /** `monitor_only` reads as `Monitor only`. */

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // GRE flag bits carried in IFLA_GRE_IFLAGS and IFLA_GRE_OFLAGS. They are
@@ -48,9 +49,12 @@ func (n *Netlink) Name() string { return ManagerNetlink }
 
 // Capabilities probes whether netlink is usable here and reports which tunnel
 // types this path can serve.
+//
+// What it reports is said in the panel's language, because the interface it
+// implements is not handed a request.
 func (n *Netlink) Capabilities() Capabilities {
 	available := true
-	detail := "direct netlink, no process is spawned"
+	detail := i18n.P("direct netlink, no process is spawned")
 	if err := probeNetlink(); err != nil {
 		available = false
 		detail = err.Error()
@@ -61,8 +65,8 @@ func (n *Netlink) Capabilities() Capabilities {
 		if IsIPv6Kind(kind) {
 			types[kind] = TypeSupport{
 				Supported: false, Manager: ManagerIP,
-				Note: "served through the ip command, because netlink library coverage of the " +
-					"IPv6 GRE variants and their encapsulation limit and flow label is incomplete",
+				Note: i18n.P("served through the ip command, because netlink library coverage of the " +
+					"IPv6 GRE variants and their encapsulation limit and flow label is incomplete"),
 			}
 			continue
 		}
@@ -76,33 +80,33 @@ func (n *Netlink) Capabilities() Capabilities {
 
 // unsupported reports the attributes of a specification this path cannot
 // express, so the caller can fall back rather than create the wrong tunnel.
-func unsupported(spec TunnelSpec) error {
+func unsupported(ctx context.Context, spec TunnelSpec) error {
 	switch {
 	case IsIPv6Kind(spec.Kind):
-		return fmt.Errorf("%w: the netlink library does not carry the IPv6 GRE attributes", ErrUnsupported)
+		return i18n.Errorf(ctx, "%w: the netlink library does not carry the IPv6 GRE attributes", ErrUnsupported)
 	case spec.FwMark != nil:
-		return fmt.Errorf("%w: the netlink library does not carry the tunnel firewall mark", ErrUnsupported)
+		return i18n.Errorf(ctx, "%w: the netlink library does not carry the tunnel firewall mark", ErrUnsupported)
 	case spec.IsIgnoreDf:
-		return fmt.Errorf("%w: the netlink library does not carry the ignore-df attribute", ErrUnsupported)
+		return i18n.Errorf(ctx, "%w: the netlink library does not carry the ignore-df attribute", ErrUnsupported)
 	case spec.IKey != nil && *spec.IKey == 0, spec.OKey != nil && *spec.OKey == 0:
 		// The library treats a zero key as "no key", so an explicit key of zero
 		// cannot be distinguished from its absence on this path.
-		return fmt.Errorf("%w: the netlink library cannot express an explicit GRE key of 0", ErrUnsupported)
+		return i18n.Errorf(ctx, "%w: the netlink library cannot express an explicit GRE key of 0", ErrUnsupported)
 	}
 	return nil
 }
 
 func (n *Netlink) Create(ctx context.Context, spec TunnelSpec) error {
-	if err := unsupported(spec); err != nil {
+	if err := unsupported(ctx, spec); err != nil {
 		return err
 	}
-	local, err := parseIP(spec.Local, "local endpoint")
+	local, err := parseIP(spec.Local)
 	if err != nil {
-		return err
+		return i18n.Errorf(ctx, "local endpoint %q is not an IP address: %w", spec.Local, err)
 	}
-	remote, err := parseIP(spec.Remote, "remote endpoint")
+	remote, err := parseIP(spec.Remote)
 	if err != nil {
-		return err
+		return i18n.Errorf(ctx, "remote endpoint %q is not an IP address: %w", spec.Remote, err)
 	}
 
 	attrs := netlink.NewLinkAttrs()
@@ -120,13 +124,13 @@ func (n *Netlink) Create(ctx context.Context, spec TunnelSpec) error {
 	if spec.BindDevice != "" {
 		dev, err := netlink.LinkByName(spec.BindDevice)
 		if err != nil {
-			return fmt.Errorf("bind device %q: %w", spec.BindDevice, err)
+			return i18n.Errorf(ctx, "bind device %q: %w", spec.BindDevice, err)
 		}
 		bindIndex = uint32(dev.Attrs().Index)
 	}
 
 	iflags, oflags := greFlags(spec)
-	tos, err := parseTos(spec.Tos)
+	tos, err := parseTos(ctx, spec.Tos)
 	if err != nil {
 		return err
 	}
@@ -152,7 +156,7 @@ func (n *Netlink) Create(ctx context.Context, spec TunnelSpec) error {
 			IFlags: iflags, OFlags: oflags, Link: bindIndex,
 		}
 	default:
-		return fmt.Errorf("%w: tunnel kind %q", ErrUnsupported, spec.Kind)
+		return i18n.Errorf(ctx, "%w: tunnel kind %q", ErrUnsupported, spec.Kind)
 	}
 
 	trace(ctx, fmt.Sprintf("LinkAdd %s type %s local %s remote %s",
@@ -161,7 +165,7 @@ func (n *Netlink) Create(ctx context.Context, spec TunnelSpec) error {
 		if errors.Is(err, unix.EEXIST) {
 			return fmt.Errorf("%w: %s", ErrExists, spec.Name)
 		}
-		return fmt.Errorf("creating %s: %w", spec.Name, err)
+		return i18n.Errorf(ctx, "creating %s: %w", spec.Name, err)
 	}
 	return nil
 }
@@ -195,20 +199,22 @@ func keyValue(key *uint32) uint32 {
 	return *key
 }
 
-func parseIP(s, what string) (net.IP, error) {
+// parseIP reads an endpoint. The caller names which one failed, in a sentence
+// of its own.
+func parseIP(s string) (net.IP, error) {
 	if strings.TrimSpace(s) == "" {
 		return nil, nil
 	}
 	addr, err := netip.ParseAddr(s)
 	if err != nil {
-		return nil, fmt.Errorf("%s %q is not an IP address: %w", what, s, err)
+		return nil, err
 	}
 	return net.IP(addr.AsSlice()), nil
 }
 
 // parseTos converts the stored TOS value. "inherit" is the kernel's flag value
 // 1; anything else is a decimal or 0x-prefixed byte.
-func parseTos(tos string) (uint8, error) {
+func parseTos(ctx context.Context, tos string) (uint8, error) {
 	tos = strings.TrimSpace(tos)
 	if tos == "" || tos == "inherit" {
 		return tosInherit, nil
@@ -219,7 +225,7 @@ func parseTos(tos string) (uint8, error) {
 	}
 	n, err := strconv.ParseUint(tos, base, 8)
 	if err != nil {
-		return 0, fmt.Errorf("type of service %q must be \"inherit\" or a byte value: %w", tos, err)
+		return 0, i18n.Errorf(ctx, "type of service %q must be \"inherit\" or a byte value: %w", tos, err)
 	}
 	return uint8(n), nil
 }
@@ -230,78 +236,78 @@ func (n *Netlink) Delete(ctx context.Context, name string) error {
 		if isLinkNotFound(err) {
 			return nil // already gone, which is the requested end state
 		}
-		return fmt.Errorf("looking up %s: %w", name, err)
+		return i18n.Errorf(ctx, "looking up %s: %w", name, err)
 	}
 	trace(ctx, "LinkDel "+name, nil)
 	if err := netlink.LinkDel(l); err != nil {
-		return fmt.Errorf("deleting %s: %w", name, err)
+		return i18n.Errorf(ctx, "deleting %s: %w", name, err)
 	}
 	return nil
 }
 
 func (n *Netlink) SetMTU(ctx context.Context, name string, mtu int) error {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return err
 	}
 	trace(ctx, fmt.Sprintf("LinkSetMTU %s %d", name, mtu), nil)
 	if err := netlink.LinkSetMTU(l, mtu); err != nil {
-		return fmt.Errorf("setting the MTU of %s to %d: %w", name, mtu, err)
+		return i18n.Errorf(ctx, "setting the MTU of %s to %d: %w", name, mtu, err)
 	}
 	return nil
 }
 
 func (n *Netlink) SetTxQueueLength(ctx context.Context, name string, length int) error {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return err
 	}
 	trace(ctx, fmt.Sprintf("LinkSetTxQLen %s %d", name, length), nil)
 	if err := netlink.LinkSetTxQLen(l, length); err != nil {
-		return fmt.Errorf("setting the transmit queue length of %s: %w", name, err)
+		return i18n.Errorf(ctx, "setting the transmit queue length of %s: %w", name, err)
 	}
 	return nil
 }
 
 func (n *Netlink) SetUp(ctx context.Context, name string) error {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return err
 	}
 	trace(ctx, "LinkSetUp "+name, nil)
 	if err := netlink.LinkSetUp(l); err != nil {
-		return fmt.Errorf("bringing %s up: %w", name, err)
+		return i18n.Errorf(ctx, "bringing %s up: %w", name, err)
 	}
 	return nil
 }
 
 func (n *Netlink) SetDown(ctx context.Context, name string) error {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return err
 	}
 	trace(ctx, "LinkSetDown "+name, nil)
 	if err := netlink.LinkSetDown(l); err != nil {
-		return fmt.Errorf("bringing %s down: %w", name, err)
+		return i18n.Errorf(ctx, "bringing %s down: %w", name, err)
 	}
 	return nil
 }
 
 func (n *Netlink) AddAddress(ctx context.Context, name string, addr Address) error {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return err
 	}
-	na, err := toNetlinkAddr(addr)
+	na, err := toNetlinkAddr(ctx, addr)
 	if err != nil {
 		return err
 	}
 	trace(ctx, fmt.Sprintf("AddrAdd %s %s", name, addr), nil)
 	if err := netlink.AddrAdd(l, na); err != nil {
 		if errors.Is(err, unix.EEXIST) {
-			return fmt.Errorf("%w: %s already has %s", ErrExists, name, addr)
+			return i18n.Errorf(ctx, "%w: %s already has %s", ErrExists, name, addr)
 		}
-		return fmt.Errorf("adding %s to %s: %w", addr, name, err)
+		return i18n.Errorf(ctx, "adding %s to %s: %w", addr, name, err)
 	}
 	return nil
 }
@@ -312,9 +318,9 @@ func (n *Netlink) RemoveAddress(ctx context.Context, name string, addr Address) 
 		if isLinkNotFound(err) {
 			return nil
 		}
-		return fmt.Errorf("looking up %s: %w", name, err)
+		return i18n.Errorf(ctx, "looking up %s: %w", name, err)
 	}
-	na, err := toNetlinkAddr(addr)
+	na, err := toNetlinkAddr(ctx, addr)
 	if err != nil {
 		return err
 	}
@@ -323,12 +329,12 @@ func (n *Netlink) RemoveAddress(ctx context.Context, name string, addr Address) 
 		if errors.Is(err, unix.EADDRNOTAVAIL) || errors.Is(err, unix.ENOENT) {
 			return nil
 		}
-		return fmt.Errorf("removing %s from %s: %w", addr, name, err)
+		return i18n.Errorf(ctx, "removing %s from %s: %w", addr, name, err)
 	}
 	return nil
 }
 
-func toNetlinkAddr(addr Address) (*netlink.Addr, error) {
+func toNetlinkAddr(ctx context.Context, addr Address) (*netlink.Addr, error) {
 	parsed, err := addr.Prefix()
 	if err != nil {
 		return nil, err
@@ -344,20 +350,20 @@ func toNetlinkAddr(addr Address) (*netlink.Addr, error) {
 	if addr.NeedsExplicitPeer() {
 		peer, err := netip.ParseAddr(addr.Peer)
 		if err != nil {
-			return nil, fmt.Errorf("peer address %q is not an IP address: %w", addr.Peer, err)
+			return nil, i18n.Errorf(ctx, "peer address %q is not an IP address: %w", addr.Peer, err)
 		}
 		na.Peer = &net.IPNet{IP: net.IP(peer.AsSlice()), Mask: net.CIDRMask(parsed.Bits(), bits)}
 	}
 	return na, nil
 }
 
-func (n *Netlink) byName(name string) (netlink.Link, error) {
+func (n *Netlink) byName(ctx context.Context, name string) (netlink.Link, error) {
 	l, err := netlink.LinkByName(name)
 	if err != nil {
 		if isLinkNotFound(err) {
 			return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 		}
-		return nil, fmt.Errorf("looking up %s: %w", name, err)
+		return nil, i18n.Errorf(ctx, "looking up %s: %w", name, err)
 	}
 	return l, nil
 }
@@ -370,7 +376,7 @@ func isLinkNotFound(err error) bool {
 func (n *Netlink) List(ctx context.Context) ([]Link, error) {
 	links, err := netlink.LinkList()
 	if err != nil {
-		return nil, fmt.Errorf("listing interfaces: %w", err)
+		return nil, i18n.Errorf(ctx, "listing interfaces: %w", err)
 	}
 	out := make([]Link, 0, len(links))
 	for _, l := range links {
@@ -382,7 +388,7 @@ func (n *Netlink) List(ctx context.Context) ([]Link, error) {
 }
 
 func (n *Netlink) Get(ctx context.Context, name string) (Link, error) {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return Link{}, err
 	}
@@ -578,7 +584,7 @@ func tosString(tos uint8) string {
 func (n *Netlink) Routes(ctx context.Context) ([]Route, error) {
 	routes, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
 	if err != nil {
-		return nil, fmt.Errorf("listing routes: %w", err)
+		return nil, i18n.Errorf(ctx, "listing routes: %w", err)
 	}
 	names := map[int]string{}
 	if links, err := netlink.LinkList(); err == nil {
@@ -615,7 +621,7 @@ func (n *Netlink) Routes(ctx context.Context) ([]Route, error) {
 }
 
 func (n *Netlink) Statistics(ctx context.Context, name string) (Statistics, error) {
-	l, err := n.byName(name)
+	l, err := n.byName(ctx, name)
 	if err != nil {
 		return Statistics{}, err
 	}

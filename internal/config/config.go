@@ -7,6 +7,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Defaults for every bootstrap value (§5.1).
@@ -318,6 +321,13 @@ func isWebPathRune(r rune) bool {
 // Note that an interior slash is rejected by the character rule, so the prefix
 // is always exactly one path segment.
 func NormalizeWebPath(raw string) (string, error) {
+	return NormalizeWebPathContext(context.Background(), raw)
+}
+
+// NormalizeWebPathContext is NormalizeWebPath with its refusal said in the
+// language ctx carries, for the panel's own form, which shows it to the
+// operator as it is.
+func NormalizeWebPathContext(ctx context.Context, raw string) (string, error) {
 	s := strings.TrimSpace(raw)
 	s = strings.Trim(s, "/")
 	if s == "" {
@@ -326,15 +336,15 @@ func NormalizeWebPath(raw string) (string, error) {
 	// Traversal is checked before the character rule so that the error names the
 	// real problem instead of blaming the dot.
 	if s == "." || s == ".." || strings.Contains(s, "..") {
-		return "", fmt.Errorf("path traversal is not allowed in %q", raw)
+		return "", i18n.Errorf(ctx, `path traversal is not allowed in "%s"`, raw)
 	}
 	for _, r := range s {
 		if !isWebPathRune(r) {
-			return "", fmt.Errorf("character %q is not allowed; use only A-Z a-z 0-9 . _ ~ -", string(r))
+			return "", i18n.Errorf(ctx, "character %q is not allowed; use only A-Z a-z 0-9 . _ ~ -", string(r))
 		}
 	}
 	if len(s) > 128 {
-		return "", fmt.Errorf("web path is %d characters; the maximum is 128", len(s))
+		return "", i18n.Errorf(ctx, "web path is %d characters; the maximum is 128", len(s))
 	}
 	return s, nil
 }

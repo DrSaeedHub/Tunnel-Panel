@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -68,7 +69,7 @@ func Issue(ctx context.Context, database *db.DB, userID *int64, now time.Time) (
 
 	raw := make([]byte, tokenBytes)
 	if _, err := rand.Read(raw); err != nil {
-		return Grant{}, fmt.Errorf("generating a download token: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "generating a download token: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 
@@ -80,11 +81,11 @@ func Issue(ctx context.Context, database *db.DB, userID *int64, now time.Time) (
 		 VALUES (?, ?, ?, 0, ?, ?, 0)`,
 		hashToken(token), model.FormatTime(expires), userID, stamp, stamp)
 	if err != nil {
-		return Grant{}, fmt.Errorf("recording the download link: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "recording the download link: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return Grant{}, fmt.Errorf("reading the new link id: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "reading the new link id: %w", err)
 	}
 	return Grant{ID: id, Token: token, ExpiresAt: expires, Created: now}, nil
 }
@@ -108,13 +109,13 @@ func live(ctx context.Context, database *db.DB, now time.Time) (Grant, error) {
 		return Grant{}, ErrNoGrant
 	}
 	if err != nil {
-		return Grant{}, fmt.Errorf("reading the live download link: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "reading the live download link: %w", err)
 	}
 	if g.ExpiresAt, err = model.ParseTime(expires); err != nil {
-		return Grant{}, fmt.Errorf("reading the link's expiry: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "reading the link's expiry: %w", err)
 	}
 	if g.Created, err = model.ParseTime(created); err != nil {
-		return Grant{}, fmt.Errorf("reading the link's creation time: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "reading the link's creation time: %w", err)
 	}
 	return g, nil
 }
@@ -148,10 +149,10 @@ func Redeem(ctx context.Context, database *db.DB, token string, now time.Time) (
 		return Grant{}, ErrNoGrant
 	}
 	if err != nil {
-		return Grant{}, fmt.Errorf("checking the download link: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "checking the download link: %w", err)
 	}
 	if g.ExpiresAt, err = model.ParseTime(expires); err != nil {
-		return Grant{}, fmt.Errorf("reading the link's expiry: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "reading the link's expiry: %w", err)
 	}
 	if !g.ExpiresAt.After(now) {
 		return Grant{}, ErrNoGrant
@@ -162,7 +163,7 @@ func Redeem(ctx context.Context, database *db.DB, token string, now time.Time) (
 		    SET DownloadCount = DownloadCount + 1, LastDownloadDate = ?, UpdatedDate = ?
 		  WHERE BackupGrantID = ?`,
 		model.FormatTime(now), model.FormatTime(now), g.ID); err != nil {
-		return Grant{}, fmt.Errorf("counting the download: %w", err)
+		return Grant{}, i18n.Errorf(ctx, "counting the download: %w", err)
 	}
 	g.Downloads++
 	return g, nil
@@ -174,7 +175,7 @@ func Revoke(ctx context.Context, database *db.DB, now time.Time) (int64, error) 
 		`UPDATE BackupGrant SET IsDeleted = 1, UpdatedDate = ? WHERE IsDeleted = 0`,
 		model.FormatTime(now))
 	if err != nil {
-		return 0, fmt.Errorf("revoking download links: %w", err)
+		return 0, i18n.Errorf(ctx, "revoking download links: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	return n, nil

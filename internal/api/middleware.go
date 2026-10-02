@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/auth"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -113,7 +114,7 @@ func (s *Server) recoverPanic(next http.Handler) http.Handler {
 				s.log.Error("handler panicked",
 					"path", r.URL.Path, "panic", rec, "request_id", RequestIDFromContext(r.Context()))
 				writeError(w, http.StatusInternalServerError, CodeInternal,
-					"The request could not be completed.", "", nil)
+					i18n.T(languageOf(r), "The request could not be completed."), "", nil)
 			}
 		}()
 		next.ServeHTTP(w, r)
@@ -240,6 +241,31 @@ func (s *Server) noStore(next http.Handler) http.Handler {
 	})
 }
 
+// language answers each request in the language the interface is showing,
+// which it names in i18n.Header -- or, for an event stream, which cannot carry
+// headers, in the lang query parameter. A request that names neither -- curl,
+// a script -- is answered in the panel's own language, display.language.
+func (s *Server) language(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lang := i18n.Normalize(r.Header.Get(i18n.Header))
+		if lang == "" {
+			lang = i18n.Normalize(r.URL.Query().Get("lang"))
+		}
+		if lang != "" {
+			r = r.WithContext(i18n.WithLanguage(r.Context(), lang))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// languageOf is the context a message to r is said in, read straight off the
+// request. It is for what answers before the language middleware has run --
+// the panic handler, the origin check, the static handler -- so those answer
+// in the interface's language too rather than in the panel's.
+func languageOf(r *http.Request) context.Context {
+	return i18n.WithLanguage(r.Context(), r.Header.Get(i18n.Header))
+}
+
 // cors implements the strict policy of §18: with no configured origins the API
 // is same-origin only and no CORS headers are sent at all.
 func (s *Server) cors(next http.Handler) http.Handler {
@@ -273,7 +299,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			h.Add("Vary", "Origin")
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
-				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type")
+				h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, "+i18n.Header)
 				h.Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -304,7 +330,8 @@ func (s *Server) cors(next http.Handler) http.Handler {
 				return
 			}
 			writeError(w, http.StatusForbidden, CodeOriginNotAllowed,
-				"This origin is not allowed to call the API. Add it to security.allowed_origins.",
+				i18n.T(languageOf(r), "This origin is not allowed to call the API. Add it to "+
+					"security.allowed_origins."),
 				"", map[string]any{"origin": origin})
 			return
 		}
@@ -315,7 +342,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		h.Add("Vary", "Origin")
 		if r.Method == http.MethodOptions {
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, "+auth.CSRFHeader)
+			h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, "+auth.CSRFHeader+", "+i18n.Header)
 			h.Set("Access-Control-Max-Age", "600")
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -353,17 +380,19 @@ func sameOrigin(r *http.Request, origin string) bool {
 // routed outside this middleware rather than special-cased inside it.
 func (s *Server) requireSetup(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ok, err := s.auth.HasUser(r.Context())
+		ctx := r.Context()
+		ok, err := s.auth.HasUser(ctx)
 		if err != nil {
 			s.log.Error("checking setup state failed", "error", err)
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"The panel could not read its database.", "", nil)
+				i18n.T(ctx, "The panel could not read its database."), "", nil)
 			return
 		}
 		if !ok {
 			s.ensureCSRFCookie(w, r)
 			writeError(w, http.StatusServiceUnavailable, CodeSetupRequired,
-				"No operator account exists yet. Create the first account before using the panel.",
+				i18n.T(ctx, "No operator account exists yet. Create the first account before using the "+
+					"panel."),
 				"", map[string]any{"setup_path": s.cfg.APIBasePath() + "/auth/setup"})
 			return
 		}
@@ -380,32 +409,33 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		if token == "" {
 			token = auth.BearerToken(r)
 		}
+		ctx := r.Context()
 		if token == "" {
 			writeError(w, http.StatusUnauthorized, CodeUnauthenticated,
-				"Authentication is required.", "", nil)
+				i18n.T(ctx, "Authentication is required."), "", nil)
 			return
 		}
 
-		user, _, err := s.auth.ResolveToken(r.Context(), token, auth.UseAccess)
+		user, _, err := s.auth.ResolveToken(ctx, token, auth.UseAccess)
 		if err != nil {
 			switch {
 			case errors.Is(err, auth.ErrTokenSuperseded):
 				writeError(w, http.StatusUnauthorized, CodeUnauthenticated,
-					"This session ended when the password was changed. Sign in again.", "", nil)
+					i18n.T(ctx, "This session ended when the password was changed. Sign in again."), "", nil)
 			case errors.Is(err, auth.ErrAccountInactive):
 				writeError(w, http.StatusForbidden, CodeAccountInactive,
-					"This account is not active.", "", nil)
+					i18n.T(ctx, "This account is not active."), "", nil)
 			case errors.Is(err, auth.ErrTokenInvalid), errors.Is(err, auth.ErrTokenWrongUse):
 				writeError(w, http.StatusUnauthorized, CodeUnauthenticated,
-					"The session is not valid. Sign in again.", "", nil)
+					i18n.T(ctx, "The session is not valid. Sign in again."), "", nil)
 			default:
 				s.log.Error("resolving access token failed", "error", err)
 				writeError(w, http.StatusInternalServerError, CodeInternal,
-					"The session could not be verified.", "", nil)
+					i18n.T(ctx, "The session could not be verified."), "", nil)
 			}
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyUser, user)))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, ctxKeyUser, user)))
 	})
 }
 
@@ -432,8 +462,8 @@ func (s *Server) csrfGuard(next http.Handler) http.Handler {
 		}
 		if !auth.CheckCSRF(r) {
 			writeError(w, http.StatusForbidden, CodeCSRFRequired,
-				"This request is missing a valid CSRF token. Send the value of the "+
-					auth.CookieCSRF+" cookie in the "+auth.CSRFHeader+" header.", "", nil)
+				i18n.T(r.Context(), "This request is missing a valid CSRF token. Send the value of the %s "+
+					"cookie in the %s header.", auth.CookieCSRF, auth.CSRFHeader), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -13,6 +13,7 @@ import (
 	"github.com/drs/gre-panel/internal/address"
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/config"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -120,8 +121,8 @@ func (s *Server) addressSnapshot(ctx context.Context) addressResponse {
 		},
 	}
 	if !out.CanApply {
-		out.CannotApplyWhy = "This panel was not started by systemd, so it cannot restart itself. " +
-			"A change made here is stored and takes effect the next time the panel starts."
+		out.CannotApplyWhy = i18n.T(ctx, "This panel was not started by systemd, so it cannot restart "+
+			"itself. A change made here is stored and takes effect the next time the panel starts.")
 	}
 	if s.routeGuard != nil {
 		for _, p := range s.routeGuard.ProtectedPorts(ctx) {
@@ -131,7 +132,7 @@ func (s *Server) addressSnapshot(ctx context.Context) addressResponse {
 				continue
 			}
 			out.ProtectedPorts = append(out.ProtectedPorts, protectedPortInfo{
-				Port: p.Port, Reason: p.Reason, Process: p.Process,
+				Port: p.Port, Reason: i18n.Tr(ctx, p.Reason), Process: p.Process,
 			})
 		}
 	}
@@ -175,14 +176,17 @@ func firstNonLoopbackAddress() string {
 // nobody expects.
 func (s *Server) handleSetAddress(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	ctx := r.Context()
 	var req panelAddressRequest
 	if err := decodeStrict(r, &req); err != nil {
-		writeError(w, http.StatusBadRequest, CodeInvalidRequest, err.Error(), "", nil)
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			i18n.T(ctx, "The request body is not valid JSON for this endpoint: %s", i18n.Tr(ctx, err.Error())),
+			"", nil)
 		return
 	}
 	if req.Port == nil && req.WebPath == nil {
 		writeError(w, http.StatusBadRequest, CodeValidationFailed,
-			"Give a port, a web path, or both.", "", nil)
+			i18n.T(ctx, "Give a port, a web path, or both."), "", nil)
 		return
 	}
 
@@ -192,7 +196,7 @@ func (s *Server) handleSetAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	webPath := s.cfg.WebPath
 	if req.WebPath != nil {
-		normalised, err := config.NormalizeWebPath(*req.WebPath)
+		normalised, err := config.NormalizeWebPathContext(ctx, *req.WebPath)
 		if err != nil {
 			writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, err.Error(), "web_path", nil)
 			return
@@ -202,24 +206,24 @@ func (s *Server) handleSetAddress(w http.ResponseWriter, r *http.Request) {
 
 	if port == s.cfg.BindPort && webPath == s.cfg.WebPath {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			"The panel is already at that address, so there is nothing to change.", "", nil)
+			i18n.T(ctx, "The panel is already at that address, so there is nothing to change."), "", nil)
 		return
 	}
 
-	if err := s.validateNewPort(r.Context(), port); err != nil {
+	if err := s.validateNewPort(ctx, port); err != nil {
 		var v *addressRefusal
 		if errors.As(err, &v) {
 			writeError(w, http.StatusUnprocessableEntity, v.Code, v.Message, "port",
 				map[string]any{"port": port})
 			return
 		}
-		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, err.Error(), "port", nil)
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, i18n.Tr(ctx, err.Error()), "port", nil)
 		return
 	}
 
 	// The seed recorded is the environment file as this process read it at
 	// startup, which is the file this panel has actually seen.
-	if err := address.Set(r.Context(), s.db, port, webPath,
+	if err := address.Set(ctx, s.db, port, webPath,
 		address.Seed{Port: s.cfg.SeedBindPort, WebPath: s.cfg.SeedWebPath, PortProvided: s.cfg.SeedBindPortSet, WebPathProvided: s.cfg.SeedWebPathSet}); err != nil {
 		s.writeDomainError(w, r, err)
 		return
@@ -240,10 +244,10 @@ func (s *Server) handleSetAddress(w http.ResponseWriter, r *http.Request) {
 		SessionSurvives: sessionSurvives,
 	}
 	if s.underSystemd {
-		response.Detail = "The panel is restarting and will answer at the new address."
+		response.Detail = i18n.T(ctx, "The panel is restarting and will answer at the new address.")
 	} else {
-		response.Detail = "The new address was stored. This panel was not started by systemd, " +
-			"so it cannot restart itself; restart it to apply the change."
+		response.Detail = i18n.T(ctx, "The new address was stored. This panel was not started by "+
+			"systemd, so it cannot restart itself; restart it to apply the change.")
 	}
 
 	if s.audit != nil {
@@ -258,10 +262,10 @@ func (s *Server) handleSetAddress(w http.ResponseWriter, r *http.Request) {
 			},
 			IsSuccess: true, Duration: time.Since(start), ClientIP: ClientIP(r),
 		}
-		if user := UserFromContext(r.Context()); user != nil {
+		if user := UserFromContext(ctx); user != nil {
 			entry.UserID = &user.UserID
 		}
-		s.audit.Write(r.Context(), entry)
+		s.audit.Write(ctx, entry)
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -284,7 +288,7 @@ func (e *addressRefusal) Error() string { return e.Message }
 func (s *Server) validateNewPort(ctx context.Context, port int) error {
 	if port < 1 || port > 65535 {
 		return &addressRefusal{CodeValidationFailed,
-			fmt.Sprintf("A port must be between 1 and 65535; %d is not.", port)}
+			i18n.T(ctx, "A port must be between 1 and 65535; %d is not.", port)}
 	}
 	if port == s.cfg.BindPort {
 		return nil // already ours, and the bind test below would refuse it
@@ -296,13 +300,14 @@ func (s *Server) validateNewPort(ctx context.Context, port int) error {
 				continue
 			}
 			return &addressRefusal{CodeProtectedPort,
-				fmt.Sprintf("Port %d cannot be used: %s.", port, p.Reason)}
+				i18n.T(ctx, "Port %d cannot be used: %s.", port, i18n.Tr(ctx, p.Reason))}
 		}
 	}
 
+	// The bind error is the kernel's own words, so it is passed on as it is.
 	if err := address.Probe(s.cfg.BindHost, port); err != nil {
 		return &addressRefusal{CodePortInUse,
-			fmt.Sprintf("Port %d cannot be bound on %s, so the panel would not come back on it: %s.",
+			i18n.T(ctx, "Port %d cannot be bound on %s, so the panel would not come back on it: %s.",
 				port, s.cfg.BindHost, cleanBindError(err))}
 	}
 	return nil

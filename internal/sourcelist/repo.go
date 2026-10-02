@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/netip"
 	"sort"
 	"strings"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
 )
@@ -22,6 +22,21 @@ var ErrNameTaken = errors.New("sourcelist: that name is already used")
 
 // ErrInUse is returned when a list cannot be deleted because rules point at it.
 var ErrInUse = errors.New("sourcelist: forwarding rules are using this list")
+
+// refusal is one of the errors above as the operator reads it: a whole
+// sentence in their language, which still answers errors.Is for the sentinel
+// it stands for. The sentinels themselves are identities, not messages.
+type refusal struct {
+	message  string
+	sentinel error
+}
+
+func (r *refusal) Error() string { return r.message }
+func (r *refusal) Unwrap() error { return r.sentinel }
+
+func notFound(ctx context.Context, id int64) error {
+	return &refusal{message: i18n.T(ctx, "There is no source list %d.", id), sentinel: ErrNotFound}
+}
 
 // Record is a list with its entries, which is how it is always read: a list
 // without its addresses answers no question anybody asks.
@@ -63,7 +78,7 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	rows, err := r.db.Read.QueryContext(ctx,
 		`SELECT `+listColumns+` FROM SourceList WHERE IsDeleted = 0 ORDER BY Name COLLATE NOCASE`)
 	if err != nil {
-		return nil, fmt.Errorf("reading the source lists: %w", err)
+		return nil, i18n.Errorf(ctx, "reading the source lists: %w", err)
 	}
 	defer rows.Close()
 
@@ -71,7 +86,7 @@ func (r *Repo) List(ctx context.Context) ([]Record, error) {
 	for rows.Next() {
 		rec, err := scanList(rows.Scan)
 		if err != nil {
-			return nil, fmt.Errorf("reading a source list row: %w", err)
+			return nil, i18n.Errorf(ctx, "reading a source list row: %w", err)
 		}
 		out = append(out, Record{SourceList: rec})
 	}
@@ -100,10 +115,10 @@ func (r *Repo) ByID(ctx context.Context, id int64) (Record, error) {
 		`SELECT `+listColumns+` FROM SourceList WHERE SourceListID = ? AND IsDeleted = 0`, id)
 	list, err := scanList(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Record{}, fmt.Errorf("%w: %d", ErrNotFound, id)
+		return Record{}, notFound(ctx, id)
 	}
 	if err != nil {
-		return Record{}, fmt.Errorf("reading source list %d: %w", id, err)
+		return Record{}, i18n.Errorf(ctx, "reading source list %d: %w", id, err)
 	}
 
 	entries, err := r.entriesFor(ctx, id)
@@ -135,10 +150,10 @@ func (r *Repo) Entries(ctx context.Context, ids []int64) (map[int64][]model.Sour
 		FROM SourceListEntry WHERE IsDeleted = 0 AND SourceListID IN (`+
 		strings.Join(placeholders, ", ")+`) ORDER BY SourceListID, SourceListEntryID`, args...)
 	if err != nil {
-		return nil, fmt.Errorf("reading source list entries: %w", err)
+		return nil, i18n.Errorf(ctx, "reading source list entries: %w", err)
 	}
 	defer rows.Close()
-	return groupEntries(rows)
+	return groupEntries(ctx, rows)
 }
 
 func (r *Repo) entriesFor(ctx context.Context, id int64) ([]model.SourceListEntry, error) {
@@ -146,10 +161,10 @@ func (r *Repo) entriesFor(ctx context.Context, id int64) ([]model.SourceListEntr
 		FROM SourceListEntry WHERE SourceListID = ? AND IsDeleted = 0
 		ORDER BY SourceListEntryID`, id)
 	if err != nil {
-		return nil, fmt.Errorf("reading the entries of source list %d: %w", id, err)
+		return nil, i18n.Errorf(ctx, "reading the entries of source list %d: %w", id, err)
 	}
 	defer rows.Close()
-	grouped, err := groupEntries(rows)
+	grouped, err := groupEntries(ctx, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -160,10 +175,10 @@ func (r *Repo) allEntries(ctx context.Context) (map[int64][]model.SourceListEntr
 	rows, err := r.db.Read.QueryContext(ctx, `SELECT `+entryColumns+`
 		FROM SourceListEntry WHERE IsDeleted = 0 ORDER BY SourceListID, SourceListEntryID`)
 	if err != nil {
-		return nil, fmt.Errorf("reading source list entries: %w", err)
+		return nil, i18n.Errorf(ctx, "reading source list entries: %w", err)
 	}
 	defer rows.Close()
-	return groupEntries(rows)
+	return groupEntries(ctx, rows)
 }
 
 // usage counts the live rules pointing at each list.
@@ -175,7 +190,7 @@ func (r *Repo) usage(ctx context.Context) (map[int64]int, error) {
 		WHERE l.IsDeleted = 0
 		GROUP BY l.SourceListID`)
 	if err != nil {
-		return nil, fmt.Errorf("counting source list use: %w", err)
+		return nil, i18n.Errorf(ctx, "counting source list use: %w", err)
 	}
 	defer rows.Close()
 
@@ -199,7 +214,7 @@ func (r *Repo) RuleIDs(ctx context.Context, sourceListID int64) ([]int64, error)
 		JOIN RouteRule r ON r.RouteRuleID = l.RouteRuleID AND r.IsDeleted = 0
 		WHERE l.SourceListID = ? AND l.IsDeleted = 0`, sourceListID)
 	if err != nil {
-		return nil, fmt.Errorf("reading the rules using source list %d: %w", sourceListID, err)
+		return nil, i18n.Errorf(ctx, "reading the rules using source list %d: %w", sourceListID, err)
 	}
 	defer rows.Close()
 
@@ -225,18 +240,18 @@ type Input struct {
 
 // Create stores a new list and returns it.
 func (r *Repo) Create(ctx context.Context, in Input) (Record, error) {
-	if err := ValidateName(in.Name); err != nil {
+	if err := validateName(ctx, in.Name); err != nil {
 		return Record{}, err
 	}
 	prefixes, _ := ParseEntries(strings.Join(in.Entries, "\n"))
 	if len(prefixes) > MaxEntries {
-		return Record{}, fmt.Errorf("a source list may hold at most %d ranges", MaxEntries)
+		return Record{}, errors.New(i18n.T(ctx, "A source list may hold at most %d ranges.", MaxEntries))
 	}
 
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return Record{}, fmt.Errorf("beginning the source list transaction: %w", err)
+		return Record{}, i18n.Errorf(ctx, "beginning the source list transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -245,41 +260,41 @@ func (r *Repo) Create(ctx context.Context, in Input) (Record, error) {
 		INSERT INTO SourceList (Name, Description, Slug, IsBuiltIn, CreatedDate, UpdatedDate, IsDeleted)
 		VALUES (?, ?, '', 0, ?, ?, 0)`, name, strings.TrimSpace(in.Description), now, now)
 	if err != nil {
-		return Record{}, storeError(err, name)
+		return Record{}, storeError(ctx, err, name)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
-		return Record{}, fmt.Errorf("reading the new source list identifier: %w", err)
+		return Record{}, i18n.Errorf(ctx, "reading the new source list identifier: %w", err)
 	}
 	// The slug carries the identifier, so it can only be written once there is
 	// one. It is never rewritten afterwards.
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE SourceList SET Slug = ? WHERE SourceListID = ?`, Slugify(id, name), id); err != nil {
-		return Record{}, fmt.Errorf("naming the source list's set: %w", err)
+		return Record{}, i18n.Errorf(ctx, "naming the source list's set: %w", err)
 	}
 	if err := replaceEntries(ctx, tx, id, prefixes, now); err != nil {
 		return Record{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return Record{}, fmt.Errorf("committing the source list: %w", err)
+		return Record{}, i18n.Errorf(ctx, "committing the source list: %w", err)
 	}
 	return r.ByID(ctx, id)
 }
 
 // Update replaces a list's name, note and entries.
 func (r *Repo) Update(ctx context.Context, id int64, in Input) (Record, error) {
-	if err := ValidateName(in.Name); err != nil {
+	if err := validateName(ctx, in.Name); err != nil {
 		return Record{}, err
 	}
 	prefixes, _ := ParseEntries(strings.Join(in.Entries, "\n"))
 	if len(prefixes) > MaxEntries {
-		return Record{}, fmt.Errorf("a source list may hold at most %d ranges", MaxEntries)
+		return Record{}, errors.New(i18n.T(ctx, "A source list may hold at most %d ranges.", MaxEntries))
 	}
 
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return Record{}, fmt.Errorf("beginning the source list transaction: %w", err)
+		return Record{}, i18n.Errorf(ctx, "beginning the source list transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -291,16 +306,16 @@ func (r *Repo) Update(ctx context.Context, id int64, in Input) (Record, error) {
 		WHERE SourceListID = ? AND IsDeleted = 0`,
 		name, strings.TrimSpace(in.Description), now, id)
 	if err != nil {
-		return Record{}, storeError(err, name)
+		return Record{}, storeError(ctx, err, name)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return Record{}, fmt.Errorf("%w: %d", ErrNotFound, id)
+		return Record{}, notFound(ctx, id)
 	}
 	if err := replaceEntries(ctx, tx, id, prefixes, now); err != nil {
 		return Record{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return Record{}, fmt.Errorf("committing source list %d: %w", id, err)
+		return Record{}, i18n.Errorf(ctx, "committing source list %d: %w", id, err)
 	}
 	return r.ByID(ctx, id)
 }
@@ -314,13 +329,17 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 		return err
 	}
 	if len(users) > 0 {
-		return fmt.Errorf("%w: %d rule(s) allow it", ErrInUse, len(users))
+		return &refusal{
+			message: i18n.T(ctx, "This source list cannot be deleted: %d forwarding rule(s) allow it.",
+				len(users)),
+			sentinel: ErrInUse,
+		}
 	}
 
 	now := model.NowUTC()
 	tx, err := r.db.Write.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("beginning the source list transaction: %w", err)
+		return i18n.Errorf(ctx, "beginning the source list transaction: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // no-op once the commit succeeds
 
@@ -328,15 +347,15 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 		`UPDATE SourceList SET IsDeleted = 1, UpdatedDate = ? WHERE SourceListID = ? AND IsDeleted = 0`,
 		now, id)
 	if err != nil {
-		return fmt.Errorf("removing source list %d: %w", id, err)
+		return i18n.Errorf(ctx, "removing source list %d: %w", id, err)
 	}
 	if affected, _ := res.RowsAffected(); affected == 0 {
-		return fmt.Errorf("%w: %d", ErrNotFound, id)
+		return notFound(ctx, id)
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE SourceListEntry SET IsDeleted = 1, UpdatedDate = ? WHERE SourceListID = ? AND IsDeleted = 0`,
 		now, id); err != nil {
-		return fmt.Errorf("removing the entries of source list %d: %w", id, err)
+		return i18n.Errorf(ctx, "removing the entries of source list %d: %w", id, err)
 	}
 	return tx.Commit()
 }
@@ -351,14 +370,14 @@ func replaceEntries(ctx context.Context, tx *sql.Tx, id int64,
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE SourceListEntry SET IsDeleted = 1, UpdatedDate = ? WHERE SourceListID = ? AND IsDeleted = 0`,
 		now, id); err != nil {
-		return fmt.Errorf("replacing the entries of source list %d: %w", id, err)
+		return i18n.Errorf(ctx, "replacing the entries of source list %d: %w", id, err)
 	}
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO SourceListEntry
 			(SourceListID, Cidr, AddressFamilyID, Description, CreatedDate, UpdatedDate, IsDeleted)
 		VALUES (?, ?, ?, '', ?, ?, 0)`)
 	if err != nil {
-		return fmt.Errorf("preparing the source list entry insert: %w", err)
+		return i18n.Errorf(ctx, "preparing the source list entry insert: %w", err)
 	}
 	defer stmt.Close()
 
@@ -368,7 +387,7 @@ func replaceEntries(ctx context.Context, tx *sql.Tx, id int64,
 			family = model.AddressFamilyIPv6
 		}
 		if _, err := stmt.ExecContext(ctx, id, prefix.String(), family, now, now); err != nil {
-			return fmt.Errorf("storing %s in source list %d: %w", prefix, id, err)
+			return i18n.Errorf(ctx, "storing %s in source list %d: %w", prefix, id, err)
 		}
 	}
 	return nil
@@ -387,7 +406,7 @@ func scanList(scan func(...any) error) (model.SourceList, error) {
 	return list, nil
 }
 
-func groupEntries(rows *sql.Rows) (map[int64][]model.SourceListEntry, error) {
+func groupEntries(ctx context.Context, rows *sql.Rows) (map[int64][]model.SourceListEntry, error) {
 	out := map[int64][]model.SourceListEntry{}
 	for rows.Next() {
 		var entry model.SourceListEntry
@@ -395,7 +414,7 @@ func groupEntries(rows *sql.Rows) (map[int64][]model.SourceListEntry, error) {
 		if err := rows.Scan(&entry.SourceListEntryID, &entry.SourceListID, &entry.Cidr,
 			&entry.AddressFamilyID, &entry.Description,
 			&entry.CreatedDate, &entry.UpdatedDate, &isDeleted); err != nil {
-			return nil, fmt.Errorf("reading a source list entry: %w", err)
+			return nil, i18n.Errorf(ctx, "reading a source list entry: %w", err)
 		}
 		entry.IsDeleted = isDeleted != 0
 		out[entry.SourceListID] = append(out[entry.SourceListID], entry)
@@ -405,11 +424,14 @@ func groupEntries(rows *sql.Rows) (map[int64][]model.SourceListEntry, error) {
 
 // storeError turns the unique-index violation into the one thing an operator
 // can act on, rather than a constraint name.
-func storeError(err error, name string) error {
+func storeError(ctx context.Context, err error, name string) error {
 	if strings.Contains(strings.ToLower(err.Error()), "unique") {
-		return fmt.Errorf("%w: %q", ErrNameTaken, name)
+		return &refusal{
+			message:  i18n.T(ctx, "A source list named %q already exists.", name),
+			sentinel: ErrNameTaken,
+		}
 	}
-	return fmt.Errorf("storing the source list: %w", err)
+	return i18n.Errorf(ctx, "storing the source list: %w", err)
 }
 
 func familyOf(id int64) string {

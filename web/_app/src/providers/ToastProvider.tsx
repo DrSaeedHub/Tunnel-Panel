@@ -11,6 +11,15 @@ export interface Toast {
   tone: ToastTone
   title: string
   description?: string
+  /**
+   * Whether the description is a sentence the backend wrote -- an error, a
+   * verification failure, a warning -- rather than this interface's own copy.
+   * The backend's sentence is laid out by its own direction, which is what lets
+   * an English sentence read correctly inside the Farsi layout and a Farsi one
+   * carrying Latin values read correctly in its own. A failure's description is
+   * the backend's unless said otherwise.
+   */
+  fromServer?: boolean
   /** Offered on failures, so a toast is never a dead end. */
   onRetry?: () => void
   /**
@@ -163,7 +172,12 @@ function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">{toast.title}</p>
               {toast.description ? (
-                <p className="mt-0.5 break-words text-xs text-muted-foreground">{toast.description}</p>
+                <p
+                  dir={(toast.fromServer ?? toast.tone === 'error') ? 'auto' : undefined}
+                  className="mt-0.5 break-words text-xs text-muted-foreground"
+                >
+                  {toast.description}
+                </p>
               ) : null}
               {toast.action ? (
                 <button

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 )
 
@@ -415,7 +416,7 @@ func (s *Sampler) readInterfaces(ctx context.Context, snapshot *Snapshot) []Inte
 			return InterfacesFromLinks(links)
 		}
 		snapshot.Errors = append(snapshot.Errors,
-			"interface details came from /proc because netlink could not be read: "+err.Error())
+			i18n.T(ctx, "interface details came from /proc because netlink could not be read: %v", err))
 	}
 	counters, err := s.reader.ProcNetDev()
 	if err != nil {

@@ -31,6 +31,7 @@ import (
 	"github.com/drs/gre-panel/internal/db"
 	"github.com/drs/gre-panel/internal/diag"
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/lock"
 	"github.com/drs/gre-panel/internal/metrics"
@@ -204,6 +205,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// What the panel says with no request behind it -- a monitor's reason, a
+	// background apply's error -- is said in the language the operator chose.
+	i18n.SetPanelLanguage(func() string { return store.String("display.language") })
 	authService, err := auth.NewService(startupCtx, database, store, signer)
 	if err != nil {
 		return err

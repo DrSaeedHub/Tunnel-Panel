@@ -1,3 +1,5 @@
+import i18n from 'i18next'
+
 import { apiUrl } from './bootstrap'
 
 /**
@@ -23,7 +25,12 @@ export class ApiError extends Error {
   readonly details: Record<string, unknown>
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.message || `Request failed with status ${status}`)
+    // Only the backend's own sentence becomes the message. A failure that came
+    // back without one -- a proxy's error page, a body that is not JSON -- has
+    // an empty message, and the error card says it in the operator's language
+    // from the status instead of an English "status 502" or the raw body of
+    // somebody else's HTML page.
+    super(body.message || '')
     this.name = 'ApiError'
     this.status = status
     this.code = body.code || 'UNKNOWN'
@@ -49,7 +56,7 @@ export class ApiError extends Error {
     for (const [key, value] of Object.entries(this.details)) {
       if (key !== 'fields' && typeof value === 'string') out[key] = value
     }
-    if (!Object.keys(out).length && this.field) out[this.field] = this.message
+    if (!Object.keys(out).length && this.field && this.message) out[this.field] = this.message
     return out
   }
 
@@ -87,6 +94,17 @@ export class NetworkError extends Error {
 
 const CSRF_COOKIE = 'gre_panel_csrf'
 const CSRF_HEADER = 'X-CSRF-Token'
+/** Must match i18n.Header in the Go package internal/i18n. */
+const LANGUAGE_HEADER = 'X-Panel-Language'
+
+/**
+ * The header naming the language this page is showing, for a request made
+ * outside `request` -- a streamed probe, an upload. The panel says every
+ * message, error and explanation in its answer in that language.
+ */
+export function languageHeader(): Record<string, string> {
+  return i18n.language ? { [LANGUAGE_HEADER]: i18n.language } : {}
+}
 
 /**
  * The CSRF cookie is deliberately readable: the backend compares the header
@@ -134,7 +152,9 @@ export function buildQuery(query: RequestOptions['query']): string {
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const method = options.method ?? 'GET'
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  // The panel answers in the language this page is showing: every message,
+  // error and explanation it sends is said in it.
+  const headers: Record<string, string> = { Accept: 'application/json', ...languageHeader() }
 
   if (options.body !== undefined) headers['Content-Type'] = 'application/json'
   if (method !== 'GET' && method !== 'HEAD') {
@@ -158,27 +178,10 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   if (response.status === 204) return undefined as T
 
-  const text = await response.text()
-  let parsed: unknown = undefined
-  if (text) {
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      parsed = undefined
-    }
-  }
+  const parsed = parseJson(await response.text())
 
   if (!response.ok) {
-    const envelope = (parsed as { error?: ApiErrorBody } | undefined)?.error
-    const error = new ApiError(
-      response.status,
-      envelope ?? {
-        code: response.status === 404 ? 'NOT_FOUND' : 'UNKNOWN',
-        message: text || `Request failed with status ${response.status}`,
-        field: '',
-        details: {},
-      },
-    )
+    const error = errorFromBody(response.status, parsed)
     if (response.status === 401 && !SESSION_PROBES.some((p) => path.startsWith(p))) {
       onUnauthorized?.()
     }
@@ -186,6 +189,44 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   return parsed as T
+}
+
+function parseJson(text: string): unknown {
+  if (!text) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The error a failed answer carries.
+ *
+ * The backend's envelope when there is one. When there is not -- a reverse
+ * proxy's 502 page, a body cut off by a restart -- the error keeps only its
+ * status: a raw body is never what an operator should be shown.
+ */
+function errorFromBody(status: number, parsed: unknown): ApiError {
+  const envelope = (parsed as { error?: ApiErrorBody } | undefined)?.error
+  if (envelope && typeof envelope === 'object') return new ApiError(status, envelope)
+  return new ApiError(status, {
+    code: status === 404 ? 'NOT_FOUND' : 'UNKNOWN',
+    message: '',
+    field: '',
+    details: {},
+  })
+}
+
+/** The ApiError for a failed response that was read outside `request`. */
+export async function errorFromResponse(response: Response): Promise<ApiError> {
+  let text = ''
+  try {
+    text = await response.text()
+  } catch {
+    // An unreadable body still has a status, which is enough to say something.
+  }
+  return errorFromBody(response.status, parseJson(text))
 }
 
 export const api = {

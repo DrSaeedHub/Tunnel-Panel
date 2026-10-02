@@ -3,16 +3,18 @@
 package metrics
 
 import (
-	"fmt"
+	"context"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // statfs measures one mount point.
 func statfs(mountPoint string) (filesystemUsage, error) {
 	var fs unix.Statfs_t
 	if err := unix.Statfs(mountPoint, &fs); err != nil {
-		return filesystemUsage{}, fmt.Errorf("%s could not be measured: %w", mountPoint, err)
+		return filesystemUsage{}, i18n.Errorf(context.Background(), "%s could not be measured: %w", mountPoint, err)
 	}
 	blockSize := uint64(fs.Bsize)
 	return filesystemUsage{

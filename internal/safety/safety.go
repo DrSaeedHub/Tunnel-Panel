@@ -14,12 +14,12 @@ package safety
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/netip"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/persist"
 )
@@ -47,6 +47,9 @@ type Violation struct {
 
 func (v *Violation) Error() string { return v.Message }
 
+// violation builds a refusal. Its message is said in the operator's language:
+// the request's where the check is handed one, and otherwise the panel's, since
+// the checks that take no context are called deep inside an apply.
 func violation(code, field, message string, details map[string]any) *Violation {
 	return &Violation{Code: code, Field: field, Message: message, Details: details}
 }
@@ -134,16 +137,16 @@ func New(links link.LinkManager, systemdDir, networkdDir string) *Guard {
 func (g *Guard) CheckInterface(ctx context.Context, name string, managed bool) error {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return violation(CodeProtectedDevice, "interface_name", "No interface was named.", nil)
+		return violation(CodeProtectedDevice, "interface_name", i18n.T(ctx, "No interface was named."), nil)
 	}
 	if isReservedDevice(trimmed) {
 		return violation(CodeProtectedDevice, "interface_name",
-			fmt.Sprintf("%q is a device the kernel creates for itself and the panel never touches it.", trimmed),
+			i18n.T(ctx, "%q is a device the kernel creates for itself and the panel never touches it.", trimmed),
 			map[string]any{"interface_name": trimmed})
 	}
 	if !managed {
 		return violation(CodeNotManaged, "interface_name",
-			fmt.Sprintf("The panel does not manage %q, so it will not change it. Adopt it first if it "+
+			i18n.T(ctx, "The panel does not manage %q, so it will not change it. Adopt it first if it "+
 				"is a tunnel that should be managed here.", trimmed),
 			map[string]any{"interface_name": trimmed})
 	}
@@ -157,19 +160,22 @@ func (g *Guard) CheckInterface(ctx context.Context, name string, managed bool) e
 
 	switch {
 	case observed.IsLoopback():
-		return protected(trimmed, "the loopback interface")
+		return protected(trimmed, i18n.T(ctx, "%q is the loopback interface. The panel only ever manages "+
+			"tunnel interfaces it created or adopted.", trimmed))
 	case observed.IsBridge():
-		return protected(trimmed, "a bridge")
+		return protected(trimmed, i18n.T(ctx, "%q is a bridge. The panel only ever manages tunnel "+
+			"interfaces it created or adopted.", trimmed))
 	case observed.IsPhysical():
-		return protected(trimmed, "a physical interface")
+		return protected(trimmed, i18n.T(ctx, "%q is a physical interface. The panel only ever manages "+
+			"tunnel interfaces it created or adopted.", trimmed))
 	case !observed.IsTunnel():
 		return violation(CodeProtectedDevice, "interface_name",
-			fmt.Sprintf("%q is a %s interface, not a tunnel, and the panel only manages tunnels.",
+			i18n.T(ctx, "%q is a %s interface, not a tunnel, and the panel only manages tunnels.",
 				trimmed, observed.Kind),
 			map[string]any{"interface_name": trimmed, "kind": observed.Kind})
 	case observed.MasterIndex != 0:
 		return violation(CodeProtectedDevice, "interface_name",
-			fmt.Sprintf("%q is enslaved to another device, so something else owns it.", trimmed),
+			i18n.T(ctx, "%q is enslaved to another device, so something else owns it.", trimmed),
 			map[string]any{"interface_name": trimmed, "master_index": observed.MasterIndex})
 	}
 
@@ -178,17 +184,18 @@ func (g *Guard) CheckInterface(ctx context.Context, name string, managed bool) e
 	routes, err := g.Links.Routes(ctx)
 	if err == nil && link.DefaultRouteDevices(routes)[trimmed] {
 		return violation(CodeProtectedDevice, "interface_name",
-			fmt.Sprintf("The default route of this server goes through %q. Changing it would take this "+
+			i18n.T(ctx, "The default route of this server goes through %q. Changing it would take this "+
 				"machine off the network, so the panel refuses.", trimmed),
 			map[string]any{"interface_name": trimmed})
 	}
 	return nil
 }
 
-func protected(name, what string) *Violation {
-	return violation(CodeProtectedDevice, "interface_name",
-		fmt.Sprintf("%q is %s. The panel only ever manages tunnel interfaces it created or adopted.",
-			name, what),
+// protected refuses an interface that is not a tunnel at all. Each kind of
+// interface has a sentence of its own, rather than one sentence with "a bridge"
+// dropped into it.
+func protected(name, message string) *Violation {
+	return violation(CodeProtectedDevice, "interface_name", message,
 		map[string]any{"interface_name": name})
 }
 
@@ -208,13 +215,13 @@ func (g *Guard) CheckPath(target string) error {
 	cleaned := hostPath(target)
 	if !isAbsHostPath(target) {
 		return violation(CodeProtectedPath, "path",
-			fmt.Sprintf("%q is not an absolute path.", target), map[string]any{"path": target})
+			i18n.P("%q is not an absolute path.", target), map[string]any{"path": target})
 	}
 
 	for _, protectedPath := range ProtectedPaths {
 		if isUnderHostPath(cleaned, protectedPath) {
 			return violation(CodeProtectedPath, "path",
-				fmt.Sprintf("%s belongs to this system's own network configuration. The panel manages "+
+				i18n.P("%s belongs to this system's own network configuration. The panel manages "+
 					"tunnel interfaces and never edits it.", cleaned),
 				map[string]any{"path": cleaned})
 		}
@@ -229,7 +236,7 @@ func (g *Guard) CheckPath(target string) error {
 		}
 	}
 	return violation(CodeProtectedPath, "path",
-		fmt.Sprintf("%s is outside the directories the panel writes to.", cleaned),
+		i18n.P("%s is outside the directories the panel writes to.", cleaned),
 		map[string]any{"path": cleaned, "systemd_dir": g.SystemdDir, "networkd_dir": g.NetworkdDir})
 }
 
@@ -248,7 +255,7 @@ func (g *Guard) CheckUnitOwnership(path string, takeover bool) error {
 		return nil
 	}
 	return violation(CodeForeignUnit, "path",
-		fmt.Sprintf("%s was not written by the panel, so it belongs to whatever created it. Adopt the "+
+		i18n.P("%s was not written by the panel, so it belongs to whatever created it. Adopt the "+
 			"tunnel with takeover to let the panel manage it; the original is backed up first.", path),
 		map[string]any{"path": path})
 }
@@ -281,7 +288,7 @@ func CheckClientConnection(clientIP string, addresses []link.Address, acknowledg
 			continue
 		}
 		return violation(CodeWouldCutOwnAccess, "i_understand_i_may_lose_access",
-			fmt.Sprintf("You are connected to this panel from %s, which is inside this tunnel's subnet "+
+			i18n.P("You are connected to this panel from %s, which is inside this tunnel's subnet "+
 				"%s. Carrying out this change would cut the connection you are using. Set "+
 				"i_understand_i_may_lose_access to proceed anyway.", client, prefix.Masked()),
 			map[string]any{"client_ip": client.String(), "subnet": prefix.Masked().String()})
@@ -295,13 +302,13 @@ func CheckClientConnection(clientIP string, addresses []link.Address, acknowledg
 // would smuggle a shell back in as the program being run.
 func CheckArgv(argv []string) error {
 	if len(argv) == 0 {
-		return violation(CodeShellInvocation, "argv", "No command was given.", nil)
+		return violation(CodeShellInvocation, "argv", i18n.P("No command was given."), nil)
 	}
 	program := filepath.Base(strings.TrimSpace(argv[0]))
 	for _, shell := range shellPrograms {
 		if program == shell {
 			return violation(CodeShellInvocation, "argv",
-				fmt.Sprintf("The panel does not run %s. Every command it executes is an argv slice with "+
+				i18n.P("The panel does not run %s. Every command it executes is an argv slice with "+
 					"no shell involved.", program),
 				map[string]any{"argv": argv})
 		}

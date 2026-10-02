@@ -1,8 +1,7 @@
 package monitor
 
 import (
-	"fmt"
-
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -26,9 +25,12 @@ func StateName(id int64) string {
 // Not enough decided probes yet is Unknown rather than Up: a monitor that has
 // just started knows nothing, and saying so is more useful than a confident
 // answer drawn from one packet (§10.2).
+//
+// The reason is said in the panel's language: it is decided in the background,
+// with no request behind it, and it is what the state-change event records.
 func Classify(stats Stats, cfg Config) (int64, string) {
 	if stats.Sent < cfg.StateChangeSamples {
-		return model.MonitorStateUnknown, fmt.Sprintf(
+		return model.MonitorStateUnknown, i18n.P(
 			"only %d of the %d probes needed for a verdict have finished", stats.Sent, cfg.StateChangeSamples)
 	}
 	if stats.LossPercent >= cfg.DownLossPercent {
@@ -44,28 +46,28 @@ func Classify(stats Stats, cfg Config) (int64, string) {
 		// it, so the counters called a tunnel that was never built at the
 		// other end up and carrying traffic.
 		if stats.PeerAnswered {
-			return model.MonitorStateUp, fmt.Sprintf(
+			return model.MonitorStateUp, i18n.P(
 				"%.1f%% of probes are unanswered, but the far end answered a TCP connection "+
 					"across the tunnel: the path is up and ICMP is being filtered",
 				stats.LossPercent)
 		}
-		return model.MonitorStateDown, fmt.Sprintf(
+		return model.MonitorStateDown, i18n.P(
 			"%.1f%% of probes over the last %d are unanswered, at or above the down threshold of %.1f%%",
 			stats.LossPercent, stats.Sent, cfg.DownLossPercent)
 	}
 	if stats.LossPercent >= cfg.DegradedLossPercent {
 		// Partial loss is real loss: some probes did come back, so the far end
 		// is answering ICMP and the ones that did not were dropped.
-		return model.MonitorStateDegraded, fmt.Sprintf(
+		return model.MonitorStateDegraded, i18n.P(
 			"%.1f%% of probes over the last %d are unanswered, at or above the degraded threshold of %.1f%%",
 			stats.LossPercent, stats.Sent, cfg.DegradedLossPercent)
 	}
 	if cfg.DegradedRttMs != nil && stats.RttAvgMs != nil && *stats.RttAvgMs >= *cfg.DegradedRttMs {
-		return model.MonitorStateDegraded, fmt.Sprintf(
+		return model.MonitorStateDegraded, i18n.P(
 			"the average round-trip time of %.1f ms is at or above the degraded threshold of %.1f ms",
 			*stats.RttAvgMs, *cfg.DegradedRttMs)
 	}
-	return model.MonitorStateUp, fmt.Sprintf("%d of %d probes answered", stats.Received, stats.Sent)
+	return model.MonitorStateUp, i18n.P("%d of %d probes answered", stats.Received, stats.Sent)
 }
 
 // Machine applies hysteresis to the classified state.
@@ -136,8 +138,9 @@ func (m *Machine) Observe(state int64, reason string) (Transition, bool) {
 		// Already there; keep the freshest explanation for the status endpoint
 		// — unless the one in force is a fact. An interface that has vanished
 		// is Down for a reason a probe timeout cannot discover, and replacing
-		// "interface_missing" with "100% of probes are unanswered" would tell
-		// an operator only the symptom of what the panel already knows (§10.3).
+		// ReasonInterfaceMissing with "100% of probes are unanswered" would
+		// tell an operator only the symptom of what the panel already knows
+		// (§10.3).
 		if !m.forced {
 			m.reason = reason
 		}

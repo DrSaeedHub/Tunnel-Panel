@@ -4,11 +4,12 @@ package route
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // NetlinkConntrack reads connection tracking through the netfilter netlink
@@ -25,9 +26,12 @@ func (n *NetlinkConntrack) Name() string { return "netlink" }
 // Available reports whether the table can be dumped here. It probes rather than
 // assumes: the conntrack module may not be loaded, and running unprivileged or
 // in a restricted namespace fails the same way.
+//
+// Why not is said in the panel's language: the interface this answers to has
+// no request to say it in.
 func (n *NetlinkConntrack) Available() (bool, string) {
 	if _, err := netlink.ConntrackTableList(netlink.ConntrackTable, unix.AF_INET); err != nil {
-		return false, "connection tracking could not be dumped over netlink: " + err.Error()
+		return false, i18n.P("connection tracking could not be dumped over netlink: %s", err.Error())
 	}
 	return true, ""
 }
@@ -61,7 +65,7 @@ func (n *NetlinkConntrack) Flows(ctx context.Context) ([]Flow, error) {
 		}
 	}
 	if len(out) == 0 && firstErr != nil {
-		return nil, fmt.Errorf("dumping connection tracking: %w", firstErr)
+		return nil, i18n.Errorf(ctx, "dumping connection tracking: %w", firstErr)
 	}
 	return out, nil
 }

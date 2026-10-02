@@ -207,7 +207,9 @@ export function PanelAddressSection() {
         ) : null}
 
         {!current.can_apply ? (
-          <p className="text-2xs text-warning">{current.cannot_apply_why}</p>
+          <p dir="auto" className="text-2xs text-warning">
+            {current.cannot_apply_why}
+          </p>
         ) : null}
 
         <div className="flex items-center gap-3">
@@ -334,7 +336,7 @@ function MovingDialog({ change, onGiveUp }: { change: PanelAddressChange; onGive
               ? gaveUp
                 ? t('settings.address.stillWaitingBody')
                 : t('settings.address.movingBody', { seconds: Math.round(elapsed / 1000) })
-              : change.detail}
+              : <span dir="auto">{change.detail}</span>}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-3 text-sm">

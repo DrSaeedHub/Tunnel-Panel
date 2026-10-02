@@ -2,11 +2,11 @@ package reconcile
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
 	"path/filepath"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/persist"
@@ -63,7 +63,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	name := strings.TrimSpace(req.InterfaceName)
 	if err := validate.InterfaceName(name); err != nil {
 		errs := &validate.Errors{}
-		errs.Add("interface_name", validate.CodeInvalidName, "The interface name "+err.Error()+".", nil)
+		errs.Add("interface_name", validate.CodeInvalidName, validate.InterfaceNameMessage(ctx, name), nil)
 		return AdoptResult{}, errs
 	}
 
@@ -71,27 +71,27 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 	if err != nil {
 		errs := &validate.Errors{}
 		errs.Add("interface_name", validate.CodeInvalidName,
-			fmt.Sprintf("No interface called %q exists on this host.", name), nil)
+			i18n.T(ctx, "No interface called %q exists on this host.", name), nil)
 		return AdoptResult{}, errs
 	}
 	if !observed.IsTunnel() {
 		errs := &validate.Errors{}
 		errs.Add("interface_name", validate.CodeInvalidName,
-			fmt.Sprintf("%q is a %s interface, not a tunnel. The panel manages tunnels only.",
+			i18n.T(ctx, "%q is a %s interface, not a tunnel. The panel manages tunnels only.",
 				name, observed.Kind), nil)
 		return AdoptResult{}, errs
 	}
 	if existing, err := s.Repo.ByInterfaceName(ctx, name); err == nil {
 		errs := &validate.Errors{}
 		errs.Add("interface_name", validate.CodeNameConflict,
-			fmt.Sprintf("The panel already manages %q as tunnel %d.", name, existing.TunnelID), nil)
+			i18n.T(ctx, "The panel already manages %q as tunnel %d.", name, existing.TunnelID), nil)
 		return AdoptResult{}, errs
 	}
 
 	result := AdoptResult{Imported: map[string]any{}}
 	legacy, isLegacy := ParseLegacyName(name)
 
-	in, warnings, err := s.importFrom(observed, req, legacy, isLegacy)
+	in, warnings, err := s.importFrom(ctx, observed, req, legacy, isLegacy)
 	if err != nil {
 		return AdoptResult{}, err
 	}
@@ -128,7 +128,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 
 	// Only the syntactic rules apply here: the tunnel already exists, so the
 	// conflict rules would object to the very interface being adopted.
-	if errs := validate.ValidateStatic(in); !errs.Empty() {
+	if errs := validate.ValidateStaticContext(ctx, in); !errs.Empty() {
 		return AdoptResult{}, errs
 	}
 
@@ -160,7 +160,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 			result.Warnings = append(result.Warnings, validate.Warning{
 				Code:  WarnUnitNotActive,
 				Field: "takeover",
-				Message: fmt.Sprintf("The unit %s is %s: the interface was left running untouched, so the "+
+				Message: i18n.T(ctx, "The unit %s is %s: the interface was left running untouched, so the "+
 					"rewritten unit has not been run and a reboot is the first time it would be. Reapply "+
 					"this tunnel during a maintenance window to prove it works, which briefly interrupts it.",
 					persist.UnitName(name), state),
@@ -171,7 +171,7 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 		result.Warnings = append(result.Warnings, validate.Warning{
 			Code:  WarnLegacyUnitNotOwned,
 			Field: "takeover",
-			Message: fmt.Sprintf("%s still owns this interface at boot and was not written by the panel. "+
+			Message: i18n.T(ctx, "%s still owns this interface at boot and was not written by the panel. "+
 				"Until you adopt with takeover, the panel will refuse to change or remove it, and a "+
 				"reboot applies whatever that file says.", unitPath),
 			Details: map[string]any{"unit_path": unitPath},
@@ -189,14 +189,15 @@ func (s *Service) Adopt(ctx context.Context, req AdoptRequest) (AdoptResult, err
 }
 
 // importFrom builds the tunnel description from what the kernel reports.
-func (s *Service) importFrom(observed link.Link, req AdoptRequest,
+func (s *Service) importFrom(ctx context.Context, observed link.Link, req AdoptRequest,
 	legacy LegacyInfo, isLegacy bool) (validate.TunnelInput, []validate.Warning, error) {
 
 	typeID, ok := model.TunnelTypeForKind(observed.Kind)
 	if !ok {
 		errs := &validate.Errors{}
 		errs.Add("interface_name", validate.CodeInvalidType,
-			fmt.Sprintf("%q is a %s interface, which this panel does not model.", observed.Name, observed.Kind), nil)
+			i18n.T(ctx, "%q is a %s interface, which this panel does not model.",
+				observed.Name, observed.Kind), nil)
 		return validate.TunnelInput{}, nil, errs
 	}
 
@@ -274,8 +275,9 @@ func (s *Service) importFrom(observed link.Link, req AdoptRequest,
 				warnings = append(warnings, validate.Warning{
 					Code:  WarnNoPeerAddress,
 					Field: "addresses",
-					Message: fmt.Sprintf("The peer address for %s could not be worked out from its subnet, "+
+					Message: i18n.T(ctx, "The peer address for %s could not be worked out from its subnet, "+
 						"so monitoring has no target until you set one.", addr),
+					Details: map[string]any{"address": addr.String()},
 				})
 			}
 		}
@@ -283,9 +285,10 @@ func (s *Service) importFrom(observed link.Link, req AdoptRequest,
 			warnings = append(warnings, validate.Warning{
 				Code:  WarnPublicRangeAdopted,
 				Field: "addresses",
-				Message: fmt.Sprintf("This tunnel uses %s, which is globally routable. It is adopted as it "+
+				Message: i18n.T(ctx, "This tunnel uses %s, which is globally routable. It is adopted as it "+
 					"is, but it squats on address space belonging to someone else and blackholes those "+
 					"destinations from this server.", addr),
+				Details: map[string]any{"address": addr.String()},
 			})
 		}
 		in.Addresses = append(in.Addresses, imported)
@@ -369,7 +372,7 @@ func (s *Service) takeOverUnits(ctx context.Context, name string, id int64, isLe
 
 	backup, err := s.Store.Write(ctx, unitPath, body, true)
 	if err != nil {
-		return nil, nil, fmt.Errorf("taking over %s: %w", unitPath, err)
+		return nil, nil, i18n.Errorf(ctx, "taking over %s: %w", unitPath, err)
 	}
 	taken = append(taken, unitPath)
 	if backup != "" {
@@ -386,7 +389,7 @@ func (s *Service) takeOverUnits(ctx context.Context, name string, id int64, isLe
 			_ = s.Store.Disable(ctx, unit)
 			backup, err := s.Store.Remove(ctx, keepalivePath, true)
 			if err != nil {
-				return taken, backups, fmt.Errorf("taking over %s: %w", keepalivePath, err)
+				return taken, backups, i18n.Errorf(ctx, "taking over %s: %w", keepalivePath, err)
 			}
 			taken = append(taken, keepalivePath)
 			if backup != "" {

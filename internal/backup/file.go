@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // sqliteMagic is the first 16 bytes of every SQLite 3 file. Checking it costs
@@ -35,19 +35,19 @@ var tablesARestoreMustHave = []string{"AppUser", "Tunnel", "RouteRule", "AppSett
 // backup.
 func Snapshot(ctx context.Context, database *db.DB, path string) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return 0, fmt.Errorf("preparing the snapshot directory: %w", err)
+		return 0, i18n.Errorf(ctx, "preparing the snapshot directory: %w", err)
 	}
 	// VACUUM INTO refuses to overwrite, so a leftover from a previous attempt
 	// would fail the next one with a confusing error.
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return 0, fmt.Errorf("clearing the previous snapshot: %w", err)
+		return 0, i18n.Errorf(ctx, "clearing the previous snapshot: %w", err)
 	}
 	if _, err := database.Write.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
-		return 0, fmt.Errorf("taking the snapshot: %w", err)
+		return 0, i18n.Errorf(ctx, "taking the snapshot: %w", err)
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		return 0, fmt.Errorf("measuring the snapshot: %w", err)
+		return 0, i18n.Errorf(ctx, "measuring the snapshot: %w", err)
 	}
 	return info.Size(), nil
 }
@@ -62,20 +62,20 @@ func Snapshot(ctx context.Context, database *db.DB, path string) (int64, error) 
 func Verify(ctx context.Context, path string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("opening the uploaded file: %w", err)
+		return i18n.Errorf(ctx, "opening the uploaded file: %w", err)
 	}
 	header := make([]byte, len(sqliteMagic))
 	n, readErr := io.ReadFull(f, header)
 	f.Close() //nolint:errcheck // read-only
 	if readErr != nil || n != len(sqliteMagic) || string(header) != sqliteMagic {
-		return errors.New("this is not a SQLite database file")
+		return i18n.Errorf(ctx, "this is not a SQLite database file")
 	}
 
 	// Read-only, and immutable so opening it cannot create a -wal beside a file
 	// that is about to be moved.
 	handle, err := sql.Open("sqlite", "file:"+path+"?mode=ro&immutable=1")
 	if err != nil {
-		return fmt.Errorf("opening the uploaded database: %w", err)
+		return i18n.Errorf(ctx, "opening the uploaded database: %w", err)
 	}
 	defer handle.Close() //nolint:errcheck // read-only
 
@@ -92,11 +92,11 @@ func Verify(ctx context.Context, path string) error {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("reading the uploaded database: %w", err)
+			return i18n.Errorf(ctx, "reading the uploaded database: %w", err)
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("this database is missing %s, so it is not a panel backup",
+		return i18n.Errorf(ctx, "this database is missing %s, so it is not a panel backup",
 			strings.Join(missing, ", "))
 	}
 
@@ -105,10 +105,10 @@ func Verify(ctx context.Context, path string) error {
 	var users int
 	if err := handle.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM AppUser WHERE IsDeleted = 0`).Scan(&users); err != nil {
-		return fmt.Errorf("counting the accounts in the uploaded database: %w", err)
+		return i18n.Errorf(ctx, "counting the accounts in the uploaded database: %w", err)
 	}
 	if users == 0 {
-		return errors.New("this database has no operator account, so restoring it would lock you out")
+		return i18n.Errorf(ctx, "this database has no operator account, so restoring it would lock you out")
 	}
 	return nil
 }
@@ -125,7 +125,7 @@ type Counts struct {
 func Describe(ctx context.Context, path string) (Counts, error) {
 	handle, err := sql.Open("sqlite", "file:"+path+"?mode=ro&immutable=1")
 	if err != nil {
-		return Counts{}, fmt.Errorf("opening the uploaded database: %w", err)
+		return Counts{}, i18n.Errorf(ctx, "opening the uploaded database: %w", err)
 	}
 	defer handle.Close() //nolint:errcheck // read-only
 
@@ -139,7 +139,7 @@ func Describe(ctx context.Context, path string) (Counts, error) {
 		{`SELECT COUNT(*) FROM RouteRule WHERE IsDeleted = 0`, &c.Routes},
 	} {
 		if err := handle.QueryRowContext(ctx, q.sql).Scan(q.into); err != nil {
-			return Counts{}, fmt.Errorf("counting rows in the uploaded database: %w", err)
+			return Counts{}, i18n.Errorf(ctx, "counting rows in the uploaded database: %w", err)
 		}
 	}
 	return c, nil
@@ -155,29 +155,33 @@ func Describe(ctx context.Context, path string) (Counts, error) {
 // The -wal and -shm are removed, not moved: they belong to the database being
 // replaced, and leaving them beside a different file is how SQLite is handed a
 // journal that does not match its database.
+//
+// Install is handed no request to speak for, so what goes wrong is said in the
+// panel's own language.
 func Install(livePath, uploaded string) error {
+	ctx := context.Background()
 	if _, err := os.Stat(uploaded); err != nil {
-		return fmt.Errorf("the uploaded database is not there: %w", err)
+		return i18n.Errorf(ctx, "the uploaded database is not there: %w", err)
 	}
 	previous := livePath + ".previous"
 	if _, err := os.Stat(livePath); err == nil {
 		if err := os.Remove(previous); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("clearing the previous backup: %w", err)
+			return i18n.Errorf(ctx, "clearing the previous backup: %w", err)
 		}
 		if err := os.Rename(livePath, previous); err != nil {
-			return fmt.Errorf("setting the current database aside: %w", err)
+			return i18n.Errorf(ctx, "setting the current database aside: %w", err)
 		}
 	}
 	for _, suffix := range []string{"-wal", "-shm"} {
 		if err := os.Remove(livePath + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("clearing %s: %w", livePath+suffix, err)
+			return i18n.Errorf(ctx, "clearing %s: %w", livePath+suffix, err)
 		}
 	}
 	if err := os.Rename(uploaded, livePath); err != nil {
 		// Rename fails across filesystems; the upload may be in a temp
 		// directory on another mount, so fall back to a copy.
 		if copyErr := copyFile(uploaded, livePath); copyErr != nil {
-			return fmt.Errorf("putting the uploaded database in place: %w", copyErr)
+			return i18n.Errorf(ctx, "putting the uploaded database in place: %w", copyErr)
 		}
 		os.Remove(uploaded) //nolint:errcheck // best effort
 	}

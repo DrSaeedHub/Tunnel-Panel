@@ -12,6 +12,7 @@ import (
 
 	"github.com/drs/gre-panel/internal/audit"
 	"github.com/drs/gre-panel/internal/backup"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -61,8 +62,8 @@ func (s *Server) handleBackupLink(w http.ResponseWriter, r *http.Request) {
 			Downloads:  before.Downloads,
 			Reused:     true,
 			WindowSecs: int(backup.Window.Seconds()),
-			Warning: "A link is already out and this is the same one. The token is not stored, " +
-				"so it cannot be shown again; revoke it to issue a new link.",
+			Warning: i18n.T(r.Context(), "A link is already out and this is the same one. The token is "+
+				"not stored, so it cannot be shown again; revoke it to issue a new link."),
 		})
 		return
 	}
@@ -76,8 +77,8 @@ func (s *Server) handleBackupLink(w http.ResponseWriter, r *http.Request) {
 		Downloads:  grant.Downloads,
 		Reused:     false,
 		WindowSecs: int(backup.Window.Seconds()),
-		Warning: "This file contains every operator password hash and the panel's signing key. " +
-			"Anyone with this link can download it until it expires.",
+		Warning: i18n.T(r.Context(), "This file contains every operator password hash and the panel's "+
+			"signing key. Anyone with this link can download it until it expires."),
 	})
 }
 
@@ -120,7 +121,7 @@ func (s *Server) handleBackupDownload(w http.ResponseWriter, r *http.Request) {
 		// One answer for a wrong token and an expired one. Distinguishing them
 		// tells somebody guessing that they guessed a real token.
 		writeError(w, http.StatusNotFound, CodeNotFound,
-			"That download link is not valid. It may have expired.", "", nil)
+			i18n.T(r.Context(), "That download link is not valid. It may have expired."), "", nil)
 		return
 	}
 
@@ -179,8 +180,10 @@ const (
 )
 
 type restoreState struct {
-	mu       sync.Mutex
-	Stage    restoreStage
+	mu    sync.Mutex
+	Stage restoreStage
+	// Message is a stage's English, marked for translation and said in the
+	// language of whoever polls, or a failure already said in the uploader's.
 	Message  string
 	Counts   backup.Counts
 	Started  time.Time
@@ -198,12 +201,12 @@ func (rs *restoreState) set(stage restoreStage, message string) {
 	}
 }
 
-func (rs *restoreState) snapshot() map[string]any {
+func (rs *restoreState) snapshot(ctx context.Context) map[string]any {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	out := map[string]any{
 		"stage":   string(rs.Stage),
-		"message": rs.Message,
+		"message": i18n.Tr(ctx, rs.Message),
 		"counts":  rs.Counts,
 	}
 	if rs.Err != "" {
@@ -223,7 +226,7 @@ func (s *Server) handleRestoreStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"stage": "idle"})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.restoreState.snapshot())
+	writeJSON(w, http.StatusOK, s.restoreState.snapshot(r.Context()))
 }
 
 // handleRestoreUpload takes a .db file and puts it in place of the live one.
@@ -236,19 +239,19 @@ func (s *Server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, CodeValidationFailed,
-			"The upload could not be read; it may be larger than the limit.", "file", nil)
+			i18n.T(r.Context(), "The upload could not be read; it may be larger than the limit."), "file", nil)
 		return
 	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			"Attach the database file as the field named 'file'.", "file", nil)
+			i18n.T(r.Context(), "Attach the database file as the field named 'file'."), "file", nil)
 		return
 	}
 	defer file.Close() //nolint:errcheck // read-only
 
 	state := &restoreState{Stage: stageVerifying, Started: time.Now(),
-		Message: "Checking the uploaded file."}
+		Message: i18n.N("Checking the uploaded file.")}
 	s.restoreState = state
 
 	// The upload lands beside the live database rather than in /tmp, so the
@@ -257,18 +260,18 @@ func (s *Server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 	staged := filepath.Join(dir, "restore-upload.db")
 	dst, err := os.OpenFile(staged, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		state.fail(w, r, s, "The upload could not be written: "+err.Error())
+		state.fail(w, r, s, i18n.T(r.Context(), "The upload could not be written: %v", err))
 		return
 	}
 	if _, err := copyInto(dst, file); err != nil {
 		dst.Close() //nolint:errcheck // the write already failed
 		os.Remove(staged)
-		state.fail(w, r, s, "The upload did not finish: "+err.Error())
+		state.fail(w, r, s, i18n.T(r.Context(), "The upload did not finish: %v", err))
 		return
 	}
 	if err := dst.Close(); err != nil {
 		os.Remove(staged)
-		state.fail(w, r, s, "The upload could not be completed: "+err.Error())
+		state.fail(w, r, s, i18n.T(r.Context(), "The upload could not be completed: %v", err))
 		return
 	}
 
@@ -287,7 +290,7 @@ func (s *Server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 	state.Counts = counts
 	state.mu.Unlock()
 
-	state.set(stageInstalling, "Putting the database in place.")
+	state.set(stageInstalling, i18n.N("Putting the database in place."))
 	if err := backup.Install(s.db.Path, staged); err != nil {
 		state.fail(w, r, s, err.Error())
 		return
@@ -301,17 +304,17 @@ func (s *Server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 	// The answer goes out before the restart, for the same reason the address
 	// change does: the connection carrying it is the one the restart breaks.
 	restarting := s.underSystemd && s.restart != nil
-	state.set(stageRestarting, "Restarting the panel to load the restored database.")
+	state.set(stageRestarting, i18n.N("Restarting the panel to load the restored database."))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"restored":   true,
 		"restarting": restarting,
 		"counts":     counts,
 		"detail": func() string {
 			if restarting {
-				return "The panel is restarting. Every session is now signed out, because the " +
-					"accounts in the restored database are the ones that exist."
+				return i18n.T(r.Context(), "The panel is restarting. Every session is now signed out, "+
+					"because the accounts in the restored database are the ones that exist.")
 			}
-			return "The database is in place. Restart the panel by hand to load it."
+			return i18n.T(r.Context(), "The database is in place. Restart the panel by hand to load it.")
 		}(),
 		"url": s.cfg.BasePath(),
 	})
@@ -319,7 +322,7 @@ func (s *Server) handleRestoreUpload(w http.ResponseWriter, r *http.Request) {
 	if restarting {
 		s.restart("a database was restored")
 	} else {
-		state.set(stageDone, "Restored. Restart the panel to load it.")
+		state.set(stageDone, i18n.N("Restored. Restart the panel to load it."))
 	}
 }
 

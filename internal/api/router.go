@@ -20,6 +20,7 @@ import (
 	"github.com/drs/gre-panel/internal/config"
 	"github.com/drs/gre-panel/internal/db"
 	"github.com/drs/gre-panel/internal/diag"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/metrics"
 	"github.com/drs/gre-panel/internal/model"
@@ -268,13 +269,15 @@ func (s *Server) buildRouter() http.Handler {
 
 	app.Route("/api/v1", func(r chi.Router) {
 		r.Use(s.noStore)
+		r.Use(s.language)
 
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
-			writeError(w, http.StatusNotFound, CodeNotFound, "No such endpoint.", "", nil)
+			writeError(w, http.StatusNotFound, CodeNotFound,
+				i18n.T(r.Context(), "No such endpoint."), "", nil)
 		})
 		r.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusMethodNotAllowed, CodeMethodNotAllowed,
-				"That method is not allowed on this endpoint.", "", nil)
+				i18n.T(r.Context(), "That method is not allowed on this endpoint."), "", nil)
 		})
 
 		// The two endpoints reachable before an operator account exists (§18).
@@ -555,6 +558,7 @@ func (s *Server) buildRouter() http.Handler {
 	// and is gated behind authentication like everything else (§15).
 	app.Route("/api/docs", func(r chi.Router) {
 		r.Use(s.noStore)
+		r.Use(s.language)
 		r.Use(s.requireSetup)
 		r.Use(s.csrfGuard)
 		r.Use(s.requireAuth)
@@ -608,7 +612,7 @@ func (s *Server) requireTunnels(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.tunnels == nil || s.reconcile == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Tunnel management is not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Tunnel management is not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -620,7 +624,7 @@ func (s *Server) requireTunnels(next http.Handler) http.Handler {
 func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
 	if s.tunnels == nil {
 		writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-			"Interface listing is not available on this instance.", "", nil)
+			i18n.T(r.Context(), "Interface listing is not available on this instance."), "", nil)
 		return
 	}
 	links, err := s.tunnels.Links().List(r.Context())
@@ -656,7 +660,7 @@ func (s *Server) handleInterfaces(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	if s.tunnels == nil {
 		writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-			"Route listing is not available on this instance.", "", nil)
+			i18n.T(r.Context(), "Route listing is not available on this instance."), "", nil)
 		return
 	}
 	routes, err := s.tunnels.Links().Routes(r.Context())

@@ -9,6 +9,7 @@ import { useAuth } from '@/providers/AuthProvider'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { Button } from '@/components/ui/button'
 import { Field, Input } from '@/components/ui/form'
+import { describeError } from '@/components/ui/feedback'
 import { LanguageMenu } from '@/components/layout/LanguageMenu'
 import { useDocumentTitle } from '@/hooks/useDocumentTitle'
 
@@ -87,7 +88,7 @@ export default function LoginPage() {
             ) : null}
 
             {error ? (
-              <p className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
+              <p dir="auto" className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger" role="alert">
                 {error}
               </p>
             ) : null}
@@ -178,6 +179,6 @@ export function describeLoginFailure(
     case 'ACCOUNT_INACTIVE':
       return t('login.inactive')
     default:
-      return error.message || t('errors.title')
+      return describeError(error, t).message
   }
 }

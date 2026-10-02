@@ -5,6 +5,8 @@ package link
 import (
 	"context"
 	"fmt"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Netlink is unavailable off Linux. The panel manages Linux kernel tunnels and
@@ -18,13 +20,14 @@ func NewNetlink() *Netlink { return &Netlink{} }
 func (n *Netlink) Name() string { return ManagerNetlink }
 
 func (n *Netlink) Capabilities() Capabilities {
+	unavailable := i18n.P("netlink is only available on Linux")
 	types := map[string]TypeSupport{}
 	for _, kind := range TunnelKinds() {
-		types[kind] = TypeSupport{Supported: false, Manager: ManagerNetlink, Note: "netlink is only available on Linux"}
+		types[kind] = TypeSupport{Supported: false, Manager: ManagerNetlink, Note: unavailable}
 	}
 	return Capabilities{
 		Name: ManagerNetlink, Available: false,
-		Detail: "netlink is only available on Linux", TunnelTypes: types,
+		Detail: unavailable, TunnelTypes: types,
 	}
 }
 

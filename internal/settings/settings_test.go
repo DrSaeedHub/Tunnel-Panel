@@ -337,6 +337,24 @@ func TestEveryDefinitionIsComplete(t *testing.T) {
 	}
 }
 
+// The settings page names each field by its label; a setting without one would
+// be shown by its API key, and two settings with the same label would be two
+// fields the operator cannot tell apart.
+func TestEverySettingHasItsOwnLabel(t *testing.T) {
+	seen := map[string]string{}
+	for _, d := range Definitions() {
+		label := strings.TrimSpace(d.Label)
+		if label == "" {
+			t.Errorf("%s has no label to show on the settings page", d.Key)
+			continue
+		}
+		if other, taken := seen[label]; taken {
+			t.Errorf("%s and %s share the label %q", other, d.Key, label)
+		}
+		seen[label] = d.Key
+	}
+}
+
 func TestDefaultsMatchTheSpecification(t *testing.T) {
 	_, _, store := newTestStore(t)
 

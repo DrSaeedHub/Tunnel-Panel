@@ -417,14 +417,16 @@ export function RouteFormDialog({
               className="rounded-md border border-danger/30 bg-danger-muted px-3 py-2 text-xs text-danger"
               role="alert"
             >
-              <p>{submitError}</p>
+              <p dir="auto">{submitError}</p>
               {/* The per-field messages are repeated here as well as against
                   their fields. Each one names the rule it collides with, and
                   the field it belongs to may be scrolled well out of sight. */}
               {Object.keys(fieldErrors).length ? (
                 <ul className="mt-1 list-disc space-y-0.5 ps-4">
                   {Object.entries(fieldErrors).map(([field, message]) => (
-                    <li key={field}>{message}</li>
+                    <li key={field} dir="auto">
+                      {message}
+                    </li>
                   ))}
                 </ul>
               ) : null}
@@ -1144,7 +1146,9 @@ function DestinationList({
         </p>
 
         {fieldErrors['destinations'] ? (
-          <p className="text-2xs text-danger">{fieldErrors['destinations']}</p>
+          <p dir="auto" className="text-2xs text-danger">
+            {fieldErrors['destinations']}
+          </p>
         ) : null}
 
         <Button
@@ -1407,11 +1411,13 @@ function DestinationRow({
           {probe.result.reachable ? (
             <Check className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
           ) : null}
-          {probe.result.reachable
-            ? t('routeForm.preflight.reachable', {
-                latency: formatMs(probe.result.latency_ms ?? 0, digits) ?? '',
-              })
-            : probe.result.detail}
+          {probe.result.reachable ? (
+            t('routeForm.preflight.reachable', {
+              latency: formatMs(probe.result.latency_ms ?? 0, digits) ?? '',
+            })
+          ) : (
+            <span dir="auto">{probe.result.detail}</span>
+          )}
         </p>
       ) : null}
     </div>

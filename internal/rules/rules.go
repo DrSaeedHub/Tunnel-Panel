@@ -36,6 +36,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Backend implementation names, reported through /system/capabilities. The
@@ -150,23 +152,41 @@ func IdentitiesIn(text string) []int64 {
 }
 
 // Sentinel errors. Callers switch on these rather than on message text.
+//
+// Their text is marked for translation and stays English in the error itself;
+// whoever shows one says it with i18n.Tr.
 var (
 	// ErrUnavailable means this backend cannot run here: its binary was not
 	// found, or it is the unavailable stand-in returned when nothing was.
-	ErrUnavailable = errors.New("rules: no netfilter backend is available on this host")
+	ErrUnavailable = errors.New(i18n.N("rules: no netfilter backend is available on this host"))
 	// ErrUnsupported means the backend cannot express an option the rule asks
 	// for. It names the option, because the answer an operator needs is which
 	// setting to change, not that something went wrong.
-	ErrUnsupported = errors.New("rules: unsupported by this backend")
+	ErrUnsupported = errors.New(i18n.N("rules: unsupported by this backend"))
 	// ErrNoDestination means an enabled rule has nowhere to send traffic.
-	ErrNoDestination = errors.New("rules: the rule has no enabled destination")
+	ErrNoDestination = errors.New(i18n.N("rules: the rule has no enabled destination"))
 	// ErrRangeWidth means the bind and destination port ranges are different
 	// widths, so there is no one-to-one mapping between them.
-	ErrRangeWidth = errors.New("rules: the bind and destination port ranges are different widths")
+	ErrRangeWidth = errors.New(i18n.N("rules: the bind and destination port ranges are different widths"))
 	// ErrNotPanelOwned means a payload file on disk was not written by the
 	// panel, so the panel will not overwrite it (§6.3.2).
-	ErrNotPanelOwned = errors.New("rules: this file was not written by the panel")
+	ErrNotPanelOwned = errors.New(i18n.N("rules: this file was not written by the panel"))
 )
+
+// saidError is a sentinel with its particulars, said as one sentence in the
+// operator's language.
+//
+// Wrapping with fmt.Errorf("%w: ...") would print the sentinel's English in
+// front of a translated remainder. This says the whole sentence — sentinel
+// included, which is why the English keys repeat the sentinel's text — and
+// still unwraps to the sentinel, so errors.Is keeps working.
+type saidError struct {
+	text string
+	err  error
+}
+
+func (e *saidError) Error() string { return e.text }
+func (e *saidError) Unwrap() error { return e.err }
 
 // ---------------------------------------------------------------- vocabulary
 
@@ -374,30 +394,38 @@ func (s RouteSpec) Identity() string { return Identity(s.RouteRuleID) }
 // Check reports whether the spec can be rendered at all, independently of the
 // backend. It is the structural half of validation — the half that would
 // otherwise produce a syntactically valid ruleset which forwards to nowhere.
+//
+// It is called while rendering, which no request is handed to, so its errors
+// are said in the panel's language.
 func (s RouteSpec) Check() error {
 	if s.RouteRuleID <= 0 {
-		return fmt.Errorf("rules: a rule needs an identifier to be rendered")
+		return errors.New(i18n.P("rules: a rule needs an identifier to be rendered"))
 	}
+	// These three are passed as their own types rather than as strings: a
+	// string is wrapped in bidirectional isolates for a Persian sentence, and
+	// %q would print those as escapes.
 	if !s.Protocol.Valid() {
-		return fmt.Errorf("rules: %q is not a protocol", s.Protocol)
+		return errors.New(i18n.P("rules: %q is not a protocol", s.Protocol))
 	}
 	if !s.NatMode.Valid() {
-		return fmt.Errorf("rules: %q is not a NAT mode", s.NatMode)
+		return errors.New(i18n.P("rules: %q is not a NAT mode", s.NatMode))
 	}
 	if s.LoadBalance != "" && !s.LoadBalance.Valid() {
-		return fmt.Errorf("rules: %q is not a load balancing mode", s.LoadBalance)
+		return errors.New(i18n.P("rules: %q is not a load balancing mode", s.LoadBalance))
 	}
 	if len(s.Destinations) == 0 {
-		return fmt.Errorf("%w: rule %d", ErrNoDestination, s.RouteRuleID)
+		return &saidError{i18n.P("rules: the rule has no enabled destination: rule %d", s.RouteRuleID),
+			ErrNoDestination}
 	}
 	if s.NatMode == NatSnat && strings.TrimSpace(s.SnatAddress) == "" {
-		return fmt.Errorf("rules: rule %d uses SNAT but names no source address", s.RouteRuleID)
+		return errors.New(i18n.P("rules: rule %d uses SNAT but names no source address", s.RouteRuleID))
 	}
 	for _, d := range s.Destinations {
 		if d.Ports.Width() != s.BindPorts.Width() {
-			return fmt.Errorf("%w: rule %d binds %s (%d ports) and sends to %s (%d ports)",
-				ErrRangeWidth, s.RouteRuleID, s.BindPorts, s.BindPorts.Width(),
-				d.Ports, d.Ports.Width())
+			return &saidError{i18n.P("rules: the bind and destination port ranges are different "+
+				"widths: rule %d binds %s (%d ports) and sends to %s (%d ports)",
+				s.RouteRuleID, s.BindPorts, s.BindPorts.Width(), d.Ports, d.Ports.Width()),
+				ErrRangeWidth}
 		}
 	}
 	return nil

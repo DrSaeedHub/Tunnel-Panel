@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/settings"
 )
@@ -18,15 +19,21 @@ import (
 // Errors returned by the service. ErrInvalidCredentials is deliberately the
 // single answer for both an unknown username and a wrong password (§18);
 // distinguishing them would let an attacker enumerate accounts.
+//
+// They stay sentinels compared with errors.Is. The ones whose text an operator
+// reads -- in a response, or as the reason a failed sign-in is recorded with
+// -- are marked with i18n.N and said in the operator's language where they
+// become that message.
 var (
-	ErrInvalidCredentials = errors.New("invalid username or password")
+	ErrInvalidCredentials = errors.New(i18n.N("invalid username or password"))
 	ErrAccountLocked      = errors.New("account is temporarily locked")
-	ErrRateLimited        = errors.New("too many login attempts")
-	ErrAccountInactive    = errors.New("account is not active")
+	ErrRateLimited        = errors.New(i18n.N("too many login attempts"))
+	ErrAccountInactive    = errors.New(i18n.N("account is not active"))
 	ErrSetupComplete      = errors.New("setup has already been completed")
 	ErrUsernameTaken      = errors.New("username is already in use")
 	ErrUserNotFound       = errors.New("user not found")
-	ErrInvalidUsername    = errors.New("username must be 1-64 characters from A-Z a-z 0-9 . _ - and start with a letter or digit")
+	ErrInvalidUsername    = errors.New(i18n.N("username must be 1-64 characters from A-Z a-z 0-9 . _ - and " +
+		"start with a letter or digit"))
 )
 
 // usernameRe allows one character upwards. The floor was three, which refused
@@ -221,8 +228,10 @@ func (s *Service) Authenticate(ctx context.Context, username, password, clientIP
 	ok, err := VerifyPassword(user.PasswordHash, password)
 	if err != nil {
 		// A malformed stored hash is an operational fault, not a credential
-		// problem, but the caller still learns nothing beyond "no".
-		return nil, fmt.Errorf("verifying password for %q: %w", username, err)
+		// problem, but the caller still learns nothing beyond "no". What fails
+		// here is recorded against the sign-in in the history, so it is said
+		// in the operator's language.
+		return nil, i18n.Errorf(ctx, `verifying password for "%s": %w`, username, err)
 	}
 	if !ok {
 		if err := s.recordFailure(ctx, user, limit); err != nil {
@@ -253,7 +262,7 @@ func (s *Service) recordFailure(ctx context.Context, user *model.AppUser, thresh
 			`UPDATE AppUser SET FailedLoginCount = 0, LockedUntilDate = ?, UpdatedDate = ?
 			 WHERE UserID = ?`, until, now, user.UserID)
 		if err != nil {
-			return fmt.Errorf("locking account: %w", err)
+			return i18n.Errorf(ctx, "locking account: %w", err)
 		}
 		return nil
 	}
@@ -261,7 +270,7 @@ func (s *Service) recordFailure(ctx context.Context, user *model.AppUser, thresh
 		`UPDATE AppUser SET FailedLoginCount = ?, UpdatedDate = ? WHERE UserID = ?`,
 		failures, now, user.UserID)
 	if err != nil {
-		return fmt.Errorf("recording failed login: %w", err)
+		return i18n.Errorf(ctx, "recording failed login: %w", err)
 	}
 	return nil
 }
@@ -273,7 +282,7 @@ func (s *Service) recordSuccess(ctx context.Context, user *model.AppUser) error 
 			LastLoginDate = ?, UpdatedDate = ? WHERE UserID = ?`,
 		now, now, user.UserID)
 	if err != nil {
-		return fmt.Errorf("recording successful login: %w", err)
+		return i18n.Errorf(ctx, "recording successful login: %w", err)
 	}
 	user.LastLoginDate = &now
 	return nil
@@ -369,13 +378,13 @@ func (s *Service) ChangeUsername(ctx context.Context, userID int64, username str
 
 // UserByID loads a user by primary key.
 func (s *Service) UserByID(ctx context.Context, id int64) (*model.AppUser, error) {
-	return s.scanUser(s.database.Read.QueryRowContext(ctx, userSelect+` WHERE UserID = ? AND IsDeleted = 0`, id))
+	return s.scanUser(ctx, s.database.Read.QueryRowContext(ctx, userSelect+` WHERE UserID = ? AND IsDeleted = 0`, id))
 }
 
 func (s *Service) userByUsername(ctx context.Context, username string) (*model.AppUser, error) {
 	// COLLATE NOCASE would make usernames case-insensitive; they are compared
 	// exactly instead, matching how the unique index stores them.
-	return s.scanUser(s.database.Read.QueryRowContext(ctx, userSelect+` WHERE Username = ? AND IsDeleted = 0`, username))
+	return s.scanUser(ctx, s.database.Read.QueryRowContext(ctx, userSelect+` WHERE Username = ? AND IsDeleted = 0`, username))
 }
 
 const userSelect = `
@@ -383,7 +392,7 @@ const userSelect = `
 	       LockedUntilDate, TokenVersion, CreatedDate, UpdatedDate, IsDeleted
 	FROM AppUser`
 
-func (s *Service) scanUser(row *sql.Row) (*model.AppUser, error) {
+func (s *Service) scanUser(ctx context.Context, row *sql.Row) (*model.AppUser, error) {
 	var u model.AppUser
 	var lastLogin, lockedUntil sql.NullString
 	err := row.Scan(&u.UserID, &u.Username, &u.PasswordHash, &u.IsActive, &lastLogin,
@@ -393,7 +402,7 @@ func (s *Service) scanUser(row *sql.Row) (*model.AppUser, error) {
 		return nil, ErrUserNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading user: %w", err)
+		return nil, i18n.Errorf(ctx, "reading user: %w", err)
 	}
 	if lastLogin.Valid {
 		u.LastLoginDate = &lastLogin.String

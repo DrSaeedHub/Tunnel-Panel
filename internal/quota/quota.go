@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/db"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -256,11 +257,11 @@ func (c *Checker) Reset(ctx context.Context, subject Subject) error {
 		return err
 	}
 	if stored == nil {
-		return fmt.Errorf("no traffic limit is set here")
+		return i18n.Errorf(ctx, "no traffic limit is set here")
 	}
 	if stored.quotaDisabled != "" {
 		if err := c.start(ctx, *stored); err != nil {
-			return fmt.Errorf("starting it again: %w", err)
+			return i18n.Errorf(ctx, "starting it again: %w", err)
 		}
 	}
 	now := c.deps.Now().UTC()
@@ -471,7 +472,7 @@ func (c *Checker) stop(ctx context.Context, stored row) error {
 		}
 		return c.deps.SetDestinationEnabled(ctx, id, false)
 	}
-	return fmt.Errorf("unknown scope %d", stored.subject.ScopeID)
+	return i18n.Errorf(ctx, "unknown scope %d", stored.subject.ScopeID)
 }
 
 func (c *Checker) start(ctx context.Context, stored row) error {
@@ -487,7 +488,7 @@ func (c *Checker) start(ctx context.Context, stored row) error {
 		}
 		return c.deps.SetDestinationEnabled(ctx, id, true)
 	}
-	return fmt.Errorf("unknown scope %d", stored.subject.ScopeID)
+	return i18n.Errorf(ctx, "unknown scope %d", stored.subject.ScopeID)
 }
 
 // ---------------------------------------------------------------- storage
@@ -505,7 +506,7 @@ func (c *Checker) loadAll(ctx context.Context) ([]row, error) {
 
 	var out []row
 	for rows.Next() {
-		stored, err := scanRow(rows.Scan)
+		stored, err := scanRow(ctx, rows.Scan)
 		if err != nil {
 			return nil, err
 		}
@@ -516,7 +517,7 @@ func (c *Checker) loadAll(ctx context.Context) ([]row, error) {
 
 func (c *Checker) load(ctx context.Context, subject Subject) (*row, error) {
 	where, args := subjectWhere(subject)
-	stored, err := scanRow(c.deps.DB.Read.QueryRowContext(ctx, `
+	stored, err := scanRow(ctx, c.deps.DB.Read.QueryRowContext(ctx, `
 		SELECT TrafficQuotaID, ScopeTypeID, TunnelID, RouteRuleID, Address, Port,
 		       LimitBytes, ModeID, PeriodID, DirectionID,
 		       BaselineRxBytes, BaselineTxBytes, PeriodStartDate, QuotaDisabledDate
@@ -530,7 +531,7 @@ func (c *Checker) load(ctx context.Context, subject Subject) (*row, error) {
 	return &stored, nil
 }
 
-func scanRow(scan func(...any) error) (row, error) {
+func scanRow(ctx context.Context, scan func(...any) error) (row, error) {
 	var stored row
 	var tunnelID, ruleID, port sql.NullInt64
 	var address, periodStart, quotaDisabled sql.NullString
@@ -538,7 +539,7 @@ func scanRow(scan func(...any) error) (row, error) {
 		&stored.limit.LimitBytes, &stored.limit.ModeID, &stored.limit.PeriodID,
 		&stored.limit.DirectionID,
 		&stored.baselineRx, &stored.baselineTx, &periodStart, &quotaDisabled); err != nil {
-		return stored, fmt.Errorf("reading a traffic limit: %w", err)
+		return stored, i18n.Errorf(ctx, "reading a traffic limit: %w", err)
 	}
 	stored.subject.TunnelID = tunnelID.Int64
 	stored.subject.RouteRuleID = ruleID.Int64
@@ -586,7 +587,7 @@ func (c *Checker) insert(ctx context.Context, subject Subject, limit Limit,
 		limit.LimitBytes, limit.ModeID, limit.PeriodID, limit.DirectionID,
 		baselineRx, baselineTx, periodStart, now, now)
 	if err != nil {
-		return fmt.Errorf("storing a traffic limit: %w", err)
+		return i18n.Errorf(ctx, "storing a traffic limit: %w", err)
 	}
 	return nil
 }
@@ -607,7 +608,7 @@ func (c *Checker) update(ctx context.Context, id int64, limit Limit,
 		limit.LimitBytes, limit.ModeID, limit.PeriodID, limit.DirectionID,
 		baselineRx, baselineTx, periodStart, disabled, model.NowUTC(), id)
 	if err != nil {
-		return fmt.Errorf("updating a traffic limit: %w", err)
+		return i18n.Errorf(ctx, "updating a traffic limit: %w", err)
 	}
 	return nil
 }
@@ -617,7 +618,7 @@ func (c *Checker) remove(ctx context.Context, id int64) error {
 		UPDATE TrafficQuota SET IsDeleted = 1, UpdatedDate = ? WHERE TrafficQuotaID = ?`,
 		model.NowUTC(), id)
 	if err != nil {
-		return fmt.Errorf("removing a traffic limit: %w", err)
+		return i18n.Errorf(ctx, "removing a traffic limit: %w", err)
 	}
 	return nil
 }
@@ -659,7 +660,7 @@ func (c *Checker) subjectState(ctx context.Context, subject Subject) (alive, ena
 			WHERE d.RouteRuleID = ? AND d.Address = ? AND d.Port = ? AND d.IsDeleted = 0`,
 			subject.RouteRuleID, subject.Address, subject.Port).Scan(&isEnabled)
 	default:
-		return false, false, fmt.Errorf("unknown scope %d", subject.ScopeID)
+		return false, false, i18n.Errorf(ctx, "unknown scope %d", subject.ScopeID)
 	}
 	if err == sql.ErrNoRows {
 		return false, false, nil
@@ -688,11 +689,15 @@ func (c *Checker) destinationID(ctx context.Context, subject Subject) (int64, er
 		WHERE RouteRuleID = ? AND Address = ? AND Port = ? AND IsDeleted = 0`,
 		subject.RouteRuleID, subject.Address, subject.Port).Scan(&id)
 	if err == sql.ErrNoRows {
-		return 0, fmt.Errorf("the destination %s no longer exists on rule %d",
+		return 0, i18n.Errorf(ctx, "the destination %s no longer exists on rule %d",
 			DestinationKey(subject.Address, subject.Port), subject.RouteRuleID)
 	}
 	return id, err
 }
+
+// errScope is ParseScope's refusal. Its text is kept in English and said with
+// i18n.Tr where it is shown.
+var errScope = errors.New(i18n.N("scope has to be tunnel, rule or destination"))
 
 // ParseScope maps the API's scope word to its identifier.
 func ParseScope(scope string) (int64, error) {
@@ -704,5 +709,5 @@ func ParseScope(scope string) (int64, error) {
 	case "destination":
 		return model.QuotaScopeDestination, nil
 	}
-	return 0, fmt.Errorf("scope has to be tunnel, rule or destination")
+	return 0, errScope
 }

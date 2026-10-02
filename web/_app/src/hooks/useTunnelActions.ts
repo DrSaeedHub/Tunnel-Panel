@@ -70,6 +70,7 @@ export function useTunnelActions(): ActionState {
           tone: warnings ? 'info' : 'success',
           title: describeAction(action, name, t),
           description: warnings || undefined,
+          fromServer: Boolean(warnings),
         })
         return true
       } catch (error) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/tuning"
 	"github.com/drs/gre-panel/internal/validate"
@@ -22,7 +23,7 @@ func (s *Server) requireTuning(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.tuning == nil {
 			writeError(w, http.StatusServiceUnavailable, CodeUnavailable,
-				"Kernel tuning is not available on this instance.", "", nil)
+				i18n.T(r.Context(), "Kernel tuning is not available on this instance."), "", nil)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -30,7 +31,27 @@ func (s *Server) requireTuning(next http.Handler) http.Handler {
 }
 
 func (s *Server) handleTuning(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.tuning.Report(s.liveConnections()))
+	writeJSON(w, http.StatusOK, s.tuningReport(r))
+}
+
+// tuningReport is the report as the operator reads it: each parameter's title,
+// explanation, unit and choice notes said in the language of the request. The
+// keys, values and recommendations are the kernel's and stay as they are.
+func (s *Server) tuningReport(r *http.Request) tuning.Report {
+	report := s.tuning.Report(s.liveConnections())
+	ctx := r.Context()
+	for i := range report.Readings {
+		reading := &report.Readings[i]
+		reading.Title = i18n.Tr(ctx, reading.Title)
+		reading.Explain = i18n.Tr(ctx, reading.Explain)
+		reading.Unit = i18n.Tr(ctx, reading.Unit)
+		// Every report builds its own list of choices, so they can be said in
+		// place.
+		for j := range reading.Choices {
+			reading.Choices[j].Detail = i18n.Tr(ctx, reading.Choices[j].Detail)
+		}
+	}
+	return report
 }
 
 // handleApplyTuning sets the throughput parameters and records them.
@@ -49,7 +70,7 @@ func (s *Server) handleApplyTuning(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"applied": applied}, nil, nil, start)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"applied": applied,
-		"tuning":  s.tuning.Report(s.liveConnections()),
+		"tuning":  s.tuningReport(r),
 	})
 }
 
@@ -66,7 +87,7 @@ func (s *Server) handleRevertTuning(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"reverted": true}, nil, nil, start)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"reverted": true,
-		"tuning":   s.tuning.Report(s.liveConnections()),
+		"tuning":   s.tuningReport(r),
 	})
 }
 
@@ -103,7 +124,7 @@ func (s *Server) handleSetTuning(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.Values) == 0 {
 		writeError(w, http.StatusBadRequest, CodeValidationFailed,
-			"No parameters were sent.", "values", nil)
+			i18n.T(r.Context(), "No parameters were sent."), "values", nil)
 		return
 	}
 
@@ -111,8 +132,8 @@ func (s *Server) handleSetTuning(w http.ResponseWriter, r *http.Request) {
 	for _, key := range sortedKeys(req.Values) {
 		value := req.Values[key]
 		if _, known := tuning.ParameterFor(key); !known {
-			errs.Addf("values."+key, CodeValidationFailed,
-				"%s is not a parameter the panel knows.", key)
+			errs.Add("values."+key, CodeValidationFailed,
+				i18n.T(r.Context(), "%s is not a parameter the panel knows.", key), nil)
 			continue
 		}
 		if strings.TrimSpace(value) == "" {
@@ -120,8 +141,10 @@ func (s *Server) handleSetTuning(w http.ResponseWriter, r *http.Request) {
 			// be validated.
 			continue
 		}
-		if err := s.tuning.Validate(key, value); err != nil {
-			errs.Addf("values."+key, CodeValidationFailed, "%s %s.", key, err.Error())
+		// The reason is a whole sentence naming the parameter, already in the
+		// request's language.
+		if err := s.tuning.Validate(r.Context(), key, value); err != nil {
+			errs.Add("values."+key, CodeValidationFailed, err.Error(), nil)
 		}
 	}
 	if !errs.Empty() {
@@ -139,7 +162,7 @@ func (s *Server) handleSetTuning(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"applied": applied, "values": req.Values}, nil, nil, start)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"applied": applied,
-		"tuning":  s.tuning.Report(s.liveConnections()),
+		"tuning":  s.tuningReport(r),
 	})
 }
 

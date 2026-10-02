@@ -110,7 +110,7 @@ export function PairingCodeDialog({
                 <TechnicalBlock className="max-h-32 whitespace-pre-wrap break-all">{code}</TechnicalBlock>
               </div>
 
-              <p className="text-2xs text-muted-foreground">{codeQuery.data?.note ?? t('pairing.note')}</p>
+              <p dir="auto" className="text-2xs text-muted-foreground">{codeQuery.data?.note ?? t('pairing.note')}</p>
             </>
           ) : null}
         </DialogBody>
@@ -208,7 +208,7 @@ export function ImportPairingCodeDialog({
                   />
                 ))}
               </dl>
-              <p className="text-2xs text-muted-foreground">{decoded.note || t('pairing.decodedNote')}</p>
+              <p dir="auto" className="text-2xs text-muted-foreground">{decoded.note || t('pairing.decodedNote')}</p>
             </div>
           ) : null}
         </DialogBody>

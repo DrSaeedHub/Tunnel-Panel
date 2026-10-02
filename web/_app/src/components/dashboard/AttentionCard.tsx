@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Badge, describeError } from '../ui/feedback'
 import { Technical, TunnelName } from '../ui/technical'
 import { hasDisplayName } from '@/lib/format'
+import { tunnelFieldLabel } from '@/lib/fieldLabels'
 
 /**
  * What the panel and the server disagree about.
@@ -108,6 +109,20 @@ export function AttentionCard() {
 }
 
 /**
+ * One side of a diff.
+ *
+ * Usually a value -- an MTU, an address, a key -- which reads as a technical
+ * token. Sometimes it is the backend's phrase for a state ("the interface
+ * reports none", "not configured"), which is said in the operator's language
+ * and is laid out by its own direction. A token never has a space in it.
+ */
+function DiffValue({ value }: { value: string }) {
+  if (!value) return <span className="text-muted-foreground">—</span>
+  if (/\s/.test(value.trim())) return <span dir="auto">{value}</span>
+  return <Technical className="text-2xs">{value}</Technical>
+}
+
+/**
  * The actions this card offers. `delete` is deliberately not among them: it
  * destroys an interface and the specification requires a typed confirmation for
  * that, which belongs on the tunnel's own page, and the row already links there.
@@ -157,17 +172,19 @@ function AttentionRow({
             {item.interface_name}
           </Technical>
         ) : null}
-        <p className="mt-0.5 text-xs text-muted-foreground">{item.detail}</p>
+        <p dir="auto" className="mt-0.5 text-xs text-muted-foreground">
+          {item.detail}
+        </p>
 
         {item.diffs?.length ? (
           <ul className="mt-1 space-y-0.5">
             {(item.diffs ?? []).map((diff) => (
               <li key={diff.field} className="flex flex-wrap items-center gap-1.5 text-2xs">
-                <span className="text-muted-foreground">{diff.field}</span>
+                <span className="font-medium">{tunnelFieldLabel(diff.field, t)}</span>
                 <span className="text-muted-foreground">{t('reconcile.expected')}</span>
-                <Technical className="text-2xs">{diff.expected}</Technical>
+                <DiffValue value={diff.desired} />
                 <span className="text-muted-foreground">{t('reconcile.observed')}</span>
-                <Technical className="text-2xs">{diff.observed}</Technical>
+                <DiffValue value={diff.actual} />
               </li>
             ))}
           </ul>

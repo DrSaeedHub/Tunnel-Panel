@@ -6,9 +6,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Machine-readable error codes. The frontend switches on these, so they are
@@ -73,11 +77,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	body, err := json.Marshal(normaliseNilLists(v))
 	if err != nil {
 		// Falling back to a hand-written envelope keeps the contract intact even
-		// when the payload itself is what failed.
+		// when the payload itself is what failed. No request is at hand here, so
+		// the message is said in the panel's language; encoding a lone string
+		// cannot fail.
 		slog.Error("encoding response failed", "error", err)
+		message, _ := json.Marshal(i18n.P("The response could not be encoded."))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":{"code":"INTERNAL_ERROR","message":"The response could not be encoded.","field":"","details":{}}}`))
+		_, _ = w.Write([]byte(`{"error":{"code":"INTERNAL_ERROR","message":` + string(message) +
+			`,"field":"","details":{}}}`))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -109,8 +117,23 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"The request body is not valid JSON for this endpoint: "+err.Error(), "", nil)
+			i18n.T(r.Context(), "The request body is not valid JSON for this endpoint: %s",
+				i18n.Tr(r.Context(), err.Error())), "", nil)
 		return false
 	}
 	return true
+}
+
+// sentence says the text of a service error as a sentence of the envelope: in
+// the request's language when the text is one marked for translation, with its
+// first letter upper-cased and a full stop after it.
+//
+// An error built with i18n.Errorf arrives already said in the request's
+// language; Tr leaves it, and any text it does not know, exactly as it is.
+func sentence(ctx context.Context, text string) string {
+	text = capitalise(i18n.Tr(ctx, text))
+	if text == "" || strings.HasSuffix(text, ".") {
+		return text
+	}
+	return text + "."
 }

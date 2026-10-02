@@ -13,7 +13,7 @@ import {
   XCircle,
 } from 'lucide-react'
 
-import { api, csrfToken } from '@/lib/api'
+import { NetworkError, api, csrfToken, errorFromResponse, languageHeader } from '@/lib/api'
 import { apiUrl } from '@/lib/bootstrap'
 import type {
   AnalyzeResult,
@@ -32,9 +32,9 @@ import { useToast } from '@/providers/ToastProvider'
 import { Button } from '../ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Field, Input, SwitchField, TechnicalInput } from '../ui/form'
-import { Badge, EmptyState, ErrorState, Skeleton } from '../ui/feedback'
+import { Badge, EmptyState, ErrorState, Skeleton, describeError } from '../ui/feedback'
 import { Technical, TechnicalBlock } from '../ui/technical'
-import { cn } from '@/lib/utils'
+import { cn, isolateText } from '@/lib/utils'
 
 export function DiagnosticsPanel({ tunnel }: { tunnel: Tunnel }) {
   return (
@@ -132,7 +132,9 @@ function VerdictCard({ result }: { result: AnalyzeResult }) {
               {t(`diagnostics.analyze.confidenceLevel.${result.confidence}`, result.confidence)}
             </Badge>
           </div>
-          <p className="mt-1 text-xs">{result.summary}</p>
+          <p dir="auto" className="mt-1 text-xs">
+            {result.summary}
+          </p>
         </div>
       </div>
 
@@ -145,7 +147,7 @@ function VerdictCard({ result }: { result: AnalyzeResult }) {
                 <span aria-hidden="true" className="text-muted-foreground">
                   →
                 </span>
-                <span>{fix}</span>
+                <span dir="auto">{fix}</span>
               </li>
             ))}
           </ul>
@@ -156,10 +158,17 @@ function VerdictCard({ result }: { result: AnalyzeResult }) {
         <section>
           <h4 className="mb-1.5 text-xs font-medium">{t('diagnostics.analyze.evidence')}</h4>
           <dl className="space-y-1.5">
-            {(result.evidence ?? []).map((item) => (
-              <div key={item.name} className="rounded-md border border-border bg-surface-sunken p-2">
-                <dt className="text-2xs font-medium text-muted-foreground">{item.name}</dt>
-                <dd className="text-xs">{item.detail}</dd>
+            {(result.evidence ?? []).map((item, index) => (
+              <div key={`${item.name}-${index}`} className="rounded-md border border-border bg-surface-sunken p-2">
+                {/* The analyser's own identifier for what it looked at, named
+                    for the operator; one added there before its label lands
+                    here is still shown, as the backend spells it. */}
+                <dt className="text-2xs font-medium text-muted-foreground">
+                  {t(`diagnostics.analyze.evidenceName.${item.name}`, { defaultValue: item.name })}
+                </dt>
+                <dd dir="auto" className="text-xs">
+                  {item.detail}
+                </dd>
               </div>
             ))}
           </dl>
@@ -234,7 +243,9 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
   const [packets, setPackets] = useState<PingPacket[]>([])
   const [summary, setSummary] = useState<PingResult | null>(null)
   const [running, setRunning] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // The failure itself rather than its text, so the error card can say it in
+  // the operator's language and keep the code with the technical details.
+  const [error, setError] = useState<unknown>(null)
   const runIdRef = useRef<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const outputRef = useRef<HTMLDivElement | null>(null)
@@ -267,6 +278,9 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
           'X-CSRF-Token': csrfToken(),
+          // Outside `request`, so the language has to be named here: it is
+          // what the packet errors and the summary are said in.
+          ...languageHeader(),
         },
         body: JSON.stringify({
           count,
@@ -278,8 +292,10 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
       })
 
       if (!response.ok || !response.body) {
-        const text = await response.text()
-        throw new Error(text || `HTTP ${response.status}`)
+        // The backend's envelope, read the way every other request reads it.
+        // This threw the raw body -- a JSON document, verbatim -- or an
+        // English "HTTP 409" when there was none.
+        throw await errorFromResponse(response)
       }
 
       const reader = response.body.getReader()
@@ -302,7 +318,7 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
       }
     } catch (caught) {
       if (!(caught instanceof DOMException && caught.name === 'AbortError')) {
-        setError(caught instanceof Error ? caught.message : String(caught))
+        setError(caught instanceof TypeError ? new NetworkError(caught) : caught)
       }
     } finally {
       setRunning(false)
@@ -328,7 +344,8 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
         } else if (event === 'summary') {
           setSummary((payload.result ?? null) as PingResult | null)
         } else if (event === 'error') {
-          setError(String(payload.message ?? ''))
+          // The backend's sentence, said in the language the request named.
+          setError(new Error(String(payload.message ?? '')))
         }
       } catch {
         // A malformed frame is skipped rather than ending the run.
@@ -444,7 +461,7 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
           )}
         </div>
 
-        {error ? <ErrorState error={new Error(error)} compact /> : null}
+        {error ? <ErrorState error={error} compact /> : null}
 
         <div
           ref={outputRef}
@@ -474,7 +491,13 @@ function PingCard({ tunnel }: { tunnel: Tunnel }) {
                           rtt: formatMs(packet.rtt_ms ?? null, 'latin') ?? '',
                         })
                       : packet.error
-                        ? t('diagnostics.ping.packetError', { seq: packet.sequence, error: packet.error })
+                        ? t('diagnostics.ping.packetError', {
+                            seq: packet.sequence,
+                            // The backend's sentence inside a line that is
+                            // otherwise technical, so a Farsi reason keeps its
+                            // own order in this left-to-right line.
+                            error: isolateText(packet.error),
+                          })
                         : t('diagnostics.ping.packetLost', { seq: packet.sequence })}
                   </Technical>
                 </li>
@@ -519,7 +542,8 @@ function MtuProbeCard({ tunnel }: { tunnel: Tunnel }) {
       await queryClient.invalidateQueries({ queryKey: ['tunnels'] })
       toast({ tone: 'success', title: t('diagnostics.mtu.applied', { value: mtu }) })
     },
-    onError: () => toast({ tone: 'error', title: t('errors.title') }),
+    onError: (error) =>
+      toast({ tone: 'error', title: t('errors.title'), description: describeError(error, t).message }),
   })
 
   const result = probeMutation.data?.result
@@ -582,7 +606,11 @@ function MtuProbeCard({ tunnel }: { tunnel: Tunnel }) {
                     <span className={step.fits ? 'text-ok' : 'text-danger'}>
                       {step.fits ? t('diagnostics.mtu.stepFits') : t('diagnostics.mtu.stepBlocked')}
                     </span>
-                    {step.detail ? <span className="text-muted-foreground">· {step.detail}</span> : null}
+                    {step.detail ? (
+                      <span className="text-muted-foreground">
+                        · <bdi>{step.detail}</bdi>
+                      </span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
@@ -626,7 +654,9 @@ function TracerouteCard({ tunnel }: { tunnel: Tunnel }) {
           <p className="text-xs text-muted-foreground">{t('diagnostics.traceroute.empty')}</p>
         ) : (
           <>
-            <p className="text-xs">{result.detail}</p>
+            <p dir="auto" className="text-xs">
+              {result.detail}
+            </p>
             <ol className="space-y-1">
               {(result.hops ?? []).map((hop) => (
                 <li key={hop.ttl} className="flex items-baseline gap-2 text-2xs">
@@ -681,7 +711,11 @@ export function DiagnosticRuns({ tunnelId }: { tunnelId: number }) {
             ) : (
               <XCircle className="size-3.5 text-danger" aria-hidden="true" />
             )}
-            <Technical className="text-xs">{run.type}</Technical>
+            {/* The backend's identifier for the kind of run (ping, mtu-probe,
+                traceroute, analyze), named for the operator. */}
+            <span>
+              {t(`diagnostics.runs.type.${run.type.replace(/-/g, '_')}`, { defaultValue: run.type })}
+            </span>
           </span>
           <TimeLabel iso={run.started_date} locale={language} calendar={calendar} digits={digits} />
         </li>
@@ -810,7 +844,9 @@ function TcpCheckCard({ tunnel }: { tunnel: Tunnel }) {
                 <Badge tone="neutral">{formatMs(result.latency_ms, digits) ?? ''}</Badge>
               ) : null}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">{result.detail}</p>
+            <p dir="auto" className="mt-1 text-xs text-muted-foreground">
+              {result.detail}
+            </p>
           </div>
         )}
       </CardContent>

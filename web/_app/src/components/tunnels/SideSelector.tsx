@@ -66,14 +66,21 @@ export function SideSelector({
             ) : info ? (
               <>
                 {/* The backend's canonical text, rendered as written. */}
-                <p className="whitespace-pre-line text-xs leading-relaxed">{info.summary}</p>
+                <p dir="auto" className="whitespace-pre-line text-xs leading-relaxed">
+                  {info.summary}
+                </p>
                 <dl className="space-y-1.5 border-t border-border pt-2 text-2xs">
                   {info.sides.map((side) => (
                     <div key={side.slot}>
                       <dt className="font-medium">{side.label}</dt>
                       <dd className="text-muted-foreground">
-                        {side.endpoints}
-                        {side.address_in_subnet ? ` · ${side.address_in_subnet}` : ''}
+                        <bdi>{side.endpoints}</bdi>
+                        {side.address_in_subnet ? (
+                          <>
+                            {' · '}
+                            <bdi>{side.address_in_subnet}</bdi>
+                          </>
+                        ) : null}
                       </dd>
                     </div>
                   ))}
@@ -81,7 +88,9 @@ export function SideSelector({
                 {(info.identical_on_both_ends ?? []).length ? (
                   <div className="border-t border-border pt-2 text-2xs">
                     <p className="font-medium">{t('tunnel.side.identicalOnBoth')}</p>
-                    <p className="text-muted-foreground">{info.identical_on_both_ends.join(' · ')}</p>
+                    <p dir="auto" className="text-muted-foreground">
+                      {info.identical_on_both_ends.join(' · ')}
+                    </p>
                   </div>
                 ) : null}
               </>
@@ -110,7 +119,9 @@ export function SideSelector({
           >
             <span className="block text-sm font-medium">{option.label}</span>
             {option.address_in_subnet ? (
-              <span className="mt-0.5 block text-2xs text-muted-foreground">{option.address_in_subnet}</span>
+              <span dir="auto" className="mt-0.5 block text-2xs text-muted-foreground">
+                {option.address_in_subnet}
+              </span>
             ) : null}
           </button>
         ))}

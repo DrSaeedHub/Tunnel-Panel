@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 //go:embed seed/*.txt
@@ -17,6 +19,11 @@ var seedFiles embed.FS
 // actually used with, and typing seven hundred ranges into a text box to get
 // started is not a first run anybody should have. The private ranges are here
 // because every allowlist wants them and they never change.
+//
+// The name and description are stored in English and marked for translation:
+// a built-in list whose text is still this text is shown in the operator's
+// language where lists are served, and one an operator has edited is shown
+// as they wrote it.
 type builtIn struct {
 	name        string
 	description string
@@ -26,8 +33,8 @@ type builtIn struct {
 
 var builtIns = []builtIn{
 	{
-		name:        "Private IPs",
-		description: "The ranges RFC 1918 and RFC 4193 reserve for private networks, plus loopback and link-local. Never routed on the internet, so allowing them only ever admits traffic from this machine or the networks it is on.",
+		name:        i18n.N("Private IPs"),
+		description: i18n.N("The ranges RFC 1918 and RFC 4193 reserve for private networks, plus loopback and link-local. Never routed on the internet, so allowing them only ever admits traffic from this machine or the networks it is on."),
 		inline: []string{
 			"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
 			"127.0.0.0/8", "169.254.0.0/16", "100.64.0.0/10",
@@ -35,13 +42,13 @@ var builtIns = []builtIn{
 		},
 	},
 	{
-		name:        "MCI",
-		description: "Hamrah-e Aval (MCI), the Iranian mobile operator. Shipped with the panel and updated with it; edit it here to add a range the release does not have yet.",
+		name:        i18n.N("MCI"),
+		description: i18n.N("Hamrah-e Aval (MCI), the Iranian mobile operator. Shipped with the panel and updated with it; edit it here to add a range the release does not have yet."),
 		file:        "seed/mci.txt",
 	},
 	{
-		name:        "MTN",
-		description: "Irancell (MTN), the Iranian mobile operator. Shipped with the panel and updated with it; edit it here to add a range the release does not have yet.",
+		name:        i18n.N("MTN"),
+		description: i18n.N("Irancell (MTN), the Iranian mobile operator. Shipped with the panel and updated with it; edit it here to add a range the release does not have yet."),
 		file:        "seed/mtn.txt",
 	},
 }
@@ -56,6 +63,9 @@ func Seed(ctx context.Context, repo *Repo, log *slog.Logger) error {
 	if repo == nil {
 		return nil
 	}
+	// Seeding happens at start-up, with nobody to read its errors but the log,
+	// so they are said in English whatever the panel's language is.
+	ctx = i18n.WithLanguage(ctx, i18n.English)
 	existing, err := repo.List(ctx)
 	if err != nil {
 		return err

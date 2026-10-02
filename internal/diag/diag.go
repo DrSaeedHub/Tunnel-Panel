@@ -18,6 +18,7 @@ import (
 
 	"github.com/drs/gre-panel/internal/db"
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/monitor"
@@ -26,6 +27,13 @@ import (
 
 // ErrNotFound is returned when no such diagnostic run exists.
 var ErrNotFound = errors.New("diag: no such diagnostic run")
+
+// runNotFound is ErrNotFound for one run, said in the language of the request
+// that asked for it. errors.Is still matches it against ErrNotFound.
+type runNotFound struct{ message string }
+
+func (e runNotFound) Error() string        { return e.message }
+func (e runNotFound) Is(target error) bool { return target == ErrNotFound }
 
 // Settings is the slice of the settings store this package reads.
 type Settings interface {
@@ -137,7 +145,7 @@ func (s *Service) begin(ctx context.Context, tunnelID *int64, typeID int64, para
 		VALUES (?, ?, ?, ?, 0, ?, ?, 0)`,
 		tunnelID, typeID, string(encoded), now, now, now)
 	if err != nil {
-		return 0, fmt.Errorf("recording the start of a diagnostic run: %w", err)
+		return 0, i18n.Errorf(ctx, "recording the start of a diagnostic run: %w", err)
 	}
 	return res.LastInsertId()
 }
@@ -238,7 +246,7 @@ func (s *Service) Runs(ctx context.Context, filter RunFilter) ([]Run, int, error
 	var total int
 	if err := s.db.Read.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM DiagnosticRun `+where, args...).Scan(&total); err != nil {
-		return nil, 0, fmt.Errorf("counting diagnostic runs: %w", err)
+		return nil, 0, i18n.Errorf(ctx, "counting diagnostic runs: %w", err)
 	}
 
 	limit := filter.Limit
@@ -252,7 +260,7 @@ func (s *Service) Runs(ctx context.Context, filter RunFilter) ([]Run, int, error
 		ORDER BY StartedDate DESC, DiagnosticRunID DESC LIMIT ? OFFSET ?`,
 		append(args, limit, filter.Offset)...)
 	if err != nil {
-		return nil, 0, fmt.Errorf("reading diagnostic runs: %w", err)
+		return nil, 0, i18n.Errorf(ctx, "reading diagnostic runs: %w", err)
 	}
 	defer rows.Close()
 
@@ -277,7 +285,7 @@ func (s *Service) RunByID(ctx context.Context, id int64) (Run, error) {
 
 	run, err := scanRun(row.Scan)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Run{}, fmt.Errorf("%w: %d", ErrNotFound, id)
+		return Run{}, runNotFound{i18n.T(ctx, "diag: no such diagnostic run: %d", id)}
 	}
 	if err != nil {
 		return Run{}, err
@@ -296,7 +304,7 @@ func (s *Service) DeleteRun(ctx context.Context, id int64) (bool, error) {
 	if _, err := s.db.Write.ExecContext(ctx,
 		`UPDATE DiagnosticRun SET IsDeleted = 1, UpdatedDate = ? WHERE DiagnosticRunID = ?`,
 		model.NowUTC(), id); err != nil {
-		return cancelled, fmt.Errorf("deleting diagnostic run %d: %w", id, err)
+		return cancelled, i18n.Errorf(ctx, "deleting diagnostic run %d: %w", id, err)
 	}
 	return cancelled, nil
 }
@@ -377,7 +385,7 @@ func (s *Service) Ping(ctx context.Context, tunnelID int64, params PingParams,
 	if err != nil {
 		return Run{}, err
 	}
-	request, err := s.pingRequest(rec, params)
+	request, err := s.pingRequest(ctx, rec, params)
 	if err != nil {
 		return Run{}, err
 	}
@@ -434,7 +442,7 @@ func (s *Service) Ping(ctx context.Context, tunnelID int64, params PingParams,
 }
 
 // pingRequest resolves the parameters against the settings and the tunnel.
-func (s *Service) pingRequest(rec tunnel.Record, params PingParams) (monitor.PingRequest, error) {
+func (s *Service) pingRequest(ctx context.Context, rec tunnel.Record, params PingParams) (monitor.PingRequest, error) {
 	request := monitor.PingRequest{
 		TunnelID:     rec.TunnelID,
 		Count:        params.Count,
@@ -472,10 +480,10 @@ func (s *Service) pingRequest(rec tunnel.Record, params PingParams) (monitor.Pin
 		}
 	}
 	if request.Source == "" {
-		return request, fmt.Errorf("this tunnel has no address to probe from; give an explicit source")
+		return request, i18n.Errorf(ctx, "this tunnel has no address to probe from; give an explicit source")
 	}
 	if request.Target == "" {
-		return request, fmt.Errorf("no peer address is recorded for this tunnel; give an explicit target")
+		return request, i18n.Errorf(ctx, "no peer address is recorded for this tunnel; give an explicit target")
 	}
 	return request, nil
 }

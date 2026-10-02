@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/tunnel"
 )
 
@@ -133,7 +134,9 @@ func (s *Sweeper) run(ctx context.Context, done chan struct{}) {
 // Sweep runs one reconciliation and acts on it. It is exported so a test can
 // drive a single cycle rather than waiting on a ticker.
 func (s *Sweeper) Sweep(ctx context.Context) {
-	report, err := s.Service.Report(ctx)
+	// Nobody reads this report but the log, and the log is kept in English
+	// whatever language the panel speaks.
+	report, err := s.Service.Report(i18n.WithLanguage(ctx, i18n.English))
 	if err != nil {
 		s.log().Error("the periodic reconcile could not read this host's state", "error", err)
 		return

@@ -2,10 +2,10 @@ package route
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/rules"
 	"github.com/drs/gre-panel/internal/validate"
 )
@@ -60,7 +60,7 @@ func (r VerifyReport) Warnings() []validate.Warning {
 	return out
 }
 
-func (r *VerifyReport) add(check VerifyCheck) {
+func (r *VerifyReport) add(ctx context.Context, check VerifyCheck) {
 	// A failing check always carries a sentence.
 	//
 	// The interface renders check.Detail and falls back to check.Name when it is
@@ -74,10 +74,9 @@ func (r *VerifyReport) add(check VerifyCheck) {
 	if !check.Ok && !check.Skipped && strings.TrimSpace(check.Detail) == "" {
 		switch {
 		case check.Expected != "" || check.Actual != "":
-			check.Detail = fmt.Sprintf("This check expected %s and found %s.",
-				orNone(check.Expected), orNone(check.Actual))
+			check.Detail = expectedAndFound(ctx, check.Expected, check.Actual)
 		default:
-			check.Detail = "This check did not pass, and the backend gave no further detail."
+			check.Detail = i18n.T(ctx, "This check did not pass, and the backend gave no further detail.")
 		}
 	}
 	r.Checks = append(r.Checks, check)
@@ -86,11 +85,21 @@ func (r *VerifyReport) add(check VerifyCheck) {
 	}
 }
 
-func orNone(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "nothing"
+// expectedAndFound is the sentence for a check that failed with only its
+// expected and actual values to go on. A blank value reads as "nothing", and
+// each combination is its own sentence so it can be said in any language.
+func expectedAndFound(ctx context.Context, expected, actual string) string {
+	hasExpected := strings.TrimSpace(expected) != ""
+	hasActual := strings.TrimSpace(actual) != ""
+	switch {
+	case hasExpected && hasActual:
+		return i18n.T(ctx, "This check expected %s and found %s.", expected, actual)
+	case hasExpected:
+		return i18n.T(ctx, "This check expected %s and found nothing.", expected)
+	case hasActual:
+		return i18n.T(ctx, "This check expected nothing and found %s.", actual)
 	}
-	return value
+	return i18n.T(ctx, "This check expected nothing and found nothing.")
 }
 
 // expectation is one rule the panel intends, and how to recognise it in what
@@ -108,8 +117,9 @@ type expectation struct {
 	describes   string
 }
 
-// expectationsFor lists what a rule must produce in the kernel.
-func expectationsFor(spec rules.RouteSpec) []expectation {
+// expectationsFor lists what a rule must produce in the kernel, each described
+// in the language ctx carries.
+func expectationsFor(ctx context.Context, spec rules.RouteSpec) []expectation {
 	var out []expectation
 	protocols := spec.Protocol.Expand()
 
@@ -119,12 +129,12 @@ func expectationsFor(spec rules.RouteSpec) []expectation {
 				expectation{
 					routeRuleID: spec.RouteRuleID, role: rules.RoleForward,
 					contains:  []string{d.Address, "accept"},
-					describes: fmt.Sprintf("the %s forward permission to %s", proto, d.Address),
+					describes: i18n.T(ctx, "the %s forward permission to %s", string(proto), d.Address),
 				},
 				expectation{
 					routeRuleID: spec.RouteRuleID, role: rules.RoleAccounting,
 					contains:  []string{d.Address},
-					describes: fmt.Sprintf("the %s accounting rules for %s", proto, d.Address),
+					describes: i18n.T(ctx, "the %s accounting rules for %s", string(proto), d.Address),
 				},
 			)
 			switch spec.NatMode {
@@ -132,20 +142,20 @@ func expectationsFor(spec rules.RouteSpec) []expectation {
 				out = append(out, expectation{
 					routeRuleID: spec.RouteRuleID, role: rules.RolePostrouting,
 					contains:  []string{d.Address, "masquerade"},
-					describes: fmt.Sprintf("the masquerade for %s", d.Address),
+					describes: i18n.T(ctx, "the masquerade for %s", d.Address),
 				})
 			case rules.NatSnat:
 				out = append(out, expectation{
 					routeRuleID: spec.RouteRuleID, role: rules.RolePostrouting,
 					contains:  []string{d.Address, "snat"},
-					describes: fmt.Sprintf("the source NAT for %s", d.Address),
+					describes: i18n.T(ctx, "the source NAT for %s", d.Address),
 				})
 			}
 			if spec.ClampMssToPmtu && proto == rules.ProtocolTCP {
 				out = append(out, expectation{
 					routeRuleID: spec.RouteRuleID, role: rules.RoleMss,
 					contains:  []string{d.Address},
-					describes: fmt.Sprintf("the MSS clamp for %s", d.Address),
+					describes: i18n.T(ctx, "the MSS clamp for %s", d.Address),
 				})
 			}
 		}
@@ -155,24 +165,24 @@ func expectationsFor(spec rules.RouteSpec) []expectation {
 		out = append(out, expectation{
 			routeRuleID: spec.RouteRuleID, role: rules.RolePrerouting,
 			contains:  []string{"dnat"},
-			describes: fmt.Sprintf("the %s destination NAT", proto),
+			describes: i18n.T(ctx, "the %s destination NAT", string(proto)),
 		})
 		if spec.IncludeLocalOriginated {
 			out = append(out, expectation{
 				routeRuleID: spec.RouteRuleID, role: rules.RoleOutput,
 				contains:  []string{"dnat"},
-				describes: fmt.Sprintf("the %s destination NAT for locally-originated traffic", proto),
+				describes: i18n.T(ctx, "the %s destination NAT for locally-originated traffic", string(proto)),
 			}, expectation{
 				routeRuleID: spec.RouteRuleID, role: rules.RoleLocalAccounting,
 				contains:  []string{"counter"},
-				describes: fmt.Sprintf("the %s accounting for locally-originated traffic", proto),
+				describes: i18n.T(ctx, "the %s accounting for locally-originated traffic", string(proto)),
 			})
 		}
 		if spec.FwMark != nil {
 			out = append(out, expectation{
 				routeRuleID: spec.RouteRuleID, role: rules.RoleMark,
 				contains:  []string{"mark"},
-				describes: fmt.Sprintf("the %s firewall mark", proto),
+				describes: i18n.T(ctx, "the %s firewall mark", string(proto)),
 			})
 		}
 	}
@@ -197,9 +207,18 @@ type MissingRule struct {
 // must carry rather than on a rule count, because the two backends render the
 // same intent as different numbers of lines and counting would report a ruleset
 // that is precisely right as drifted.
+//
+// Describes is said in the panel's language; MissingRulesIn says it in a
+// request's.
 func MissingRules(spec rules.RouteSpec, live rules.Live) []MissingRule {
+	return MissingRulesIn(context.Background(), spec, live)
+}
+
+// MissingRulesIn is MissingRules with each Describes said in the language ctx
+// carries.
+func MissingRulesIn(ctx context.Context, spec rules.RouteSpec, live rules.Live) []MissingRule {
 	var out []MissingRule
-	for _, want := range expectationsFor(spec) {
+	for _, want := range expectationsFor(ctx, spec) {
 		if !satisfied(live, want) {
 			out = append(out, MissingRule{Role: want.role, Describes: want.describes})
 		}
@@ -209,7 +228,9 @@ func MissingRules(spec rules.RouteSpec, live rules.Live) []MissingRule {
 
 // ExpectedRuleCount is how many distinct rules a forwarding rule intends, which
 // the reconcile report shows beside how many the kernel holds.
-func ExpectedRuleCount(spec rules.RouteSpec) int { return len(expectationsFor(spec)) }
+func ExpectedRuleCount(spec rules.RouteSpec) int {
+	return len(expectationsFor(context.Background(), spec))
+}
 
 // Verify reads the panel's ruleset back from the kernel and confirms it is what
 // was asked for (§7).
@@ -223,40 +244,41 @@ func (s *Service) Verify(ctx context.Context, desired []Record, plan Plan) Verif
 
 	live, err := s.backend.ReadBack(ctx)
 	if err != nil {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckRulesetReadable, Fatal: true,
-			Detail: "the panel's ruleset could not be read back from the kernel: " + err.Error(),
+			Detail: i18n.T(ctx, "the panel's ruleset could not be read back from the kernel: %s",
+				err.Error()),
 		})
 		report.Ok = false
 		return report
 	}
 	report.RuleCount = len(live.Rules)
-	report.add(VerifyCheck{
+	report.add(ctx, VerifyCheck{
 		Name: CheckRulesetReadable, Ok: true, Fatal: true,
-		Detail: fmt.Sprintf("read %d rule(s) back from the panel's own %s namespace",
+		Detail: i18n.T(ctx, "read %d rule(s) back from the panel's own %s namespace",
 			len(live.Rules), s.backend.Name()),
 	})
 
 	// 1. Every rule the panel intends is in the chain it belongs to.
 	var missing []string
 	for _, spec := range ruleset.Sorted() {
-		for _, absent := range MissingRules(spec, live) {
-			missing = append(missing, fmt.Sprintf("rule %d (%s): %s",
+		for _, absent := range MissingRulesIn(ctx, spec, live) {
+			missing = append(missing, i18n.T(ctx, "rule %d (%s): %s",
 				spec.RouteRuleID, spec.Title, absent.Describes))
 		}
 	}
 	if len(missing) == 0 {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckRulesPresent, Ok: true, Fatal: true,
-			Detail: fmt.Sprintf("every rule of the %d enabled forwarding rule(s) is installed",
+			Detail: i18n.T(ctx, "every rule of the %d enabled forwarding rule(s) is installed",
 				len(ruleset.Routes)),
 		})
 	} else {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckRulesPresent, Fatal: true,
-			Detail:   "missing from the kernel: " + strings.Join(missing, "; "),
-			Expected: fmt.Sprintf("%d rule(s) installed", len(ruleset.Routes)),
-			Actual:   fmt.Sprintf("%d missing", len(missing)),
+			Detail:   i18n.T(ctx, "missing from the kernel: %s", strings.Join(missing, "; ")),
+			Expected: i18n.T(ctx, "%d rule(s) installed", len(ruleset.Routes)),
+			Actual:   i18n.T(ctx, "%d missing", len(missing)),
 		})
 	}
 
@@ -273,17 +295,17 @@ func (s *Service) Verify(ctx context.Context, desired []Record, plan Plan) Verif
 			continue
 		}
 		if rule.RouteRuleID == 0 {
-			stray = append(stray, fmt.Sprintf("an unattributed rule in %s", rule.Chain))
+			stray = append(stray, i18n.T(ctx, "an unattributed rule in %s", rule.Chain))
 			continue
 		}
 		if !intended[rule.RouteRuleID] {
-			stray = append(stray, fmt.Sprintf("a rule for the forwarding rule %d, which is not enabled",
+			stray = append(stray, i18n.T(ctx, "a rule for the forwarding rule %d, which is not enabled",
 				rule.RouteRuleID))
 		}
 	}
-	report.add(VerifyCheck{
+	report.add(ctx, VerifyCheck{
 		Name: CheckNoStrayRules, Ok: len(stray) == 0,
-		Detail: strayDetail(stray),
+		Detail: strayDetail(ctx, stray),
 	})
 
 	// 2b. The kernel's chain inventory is the one the ruleset declares.
@@ -300,29 +322,30 @@ func (s *Service) Verify(ctx context.Context, desired []Record, plan Plan) Verif
 	// packet's fate, and rolling back a ruleset that is otherwise exactly right
 	// would do more harm than the thing it is objecting to. It is reported so it
 	// cannot go unnoticed the way it did before.
-	report.add(s.staleChainCheck(ruleset, live))
+	report.add(ctx, s.staleChainCheck(ctx, ruleset, live))
 
 	// 3. On the iptables backend, the jump rules are what make the panel's
 	// chains reachable at all. A chain full of correct rules that nothing jumps
 	// to forwards nothing.
 	if len(live.MissingJumps) > 0 {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckJumpRules, Fatal: true,
-			Detail: "the panel's chains are not reached from: " + strings.Join(live.MissingJumps, ", "),
+			Detail: i18n.T(ctx, "the panel's chains are not reached from: %s",
+				strings.Join(live.MissingJumps, ", ")),
 		})
 	} else {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckJumpRules, Ok: true, Fatal: true,
-			Detail: "every built-in chain jumps into the panel's own",
+			Detail: i18n.T(ctx, "every built-in chain jumps into the panel's own"),
 		})
 	}
 
 	// 4. Forwarding, which the rules need to carry anything at all.
-	report.add(s.forwardingCheck(ctx, ruleset))
+	report.add(ctx, s.forwardingCheck(ctx, ruleset))
 
 	// 5. The file the boot-time restore reads has to be the one that was
 	// applied, or the rules will not come back.
-	report.add(persistenceCheck(plan))
+	report.add(ctx, persistenceCheck(ctx, plan))
 
 	report.Ok = len(report.Failures) == 0
 	return report
@@ -330,11 +353,11 @@ func (s *Service) Verify(ctx context.Context, desired []Record, plan Plan) Verif
 
 // staleChainCheck asks the renderer whether the inventory the kernel now holds
 // still contains chains this ruleset does not declare.
-func (s *Service) staleChainCheck(ruleset rules.Ruleset, live rules.Live) VerifyCheck {
+func (s *Service) staleChainCheck(ctx context.Context, ruleset rules.Ruleset, live rules.Live) VerifyCheck {
 	if len(live.Chains) == 0 {
 		return VerifyCheck{
 			Name: CheckNoStaleChains, Skipped: true,
-			Detail: "this backend does not report a chain inventory",
+			Detail: i18n.T(ctx, "this backend does not report a chain inventory"),
 		}
 	}
 	probe := ruleset
@@ -343,33 +366,33 @@ func (s *Service) staleChainCheck(ruleset rules.Ruleset, live rules.Live) Verify
 	if err != nil {
 		return VerifyCheck{
 			Name: CheckNoStaleChains, Skipped: true,
-			Detail: "the chain inventory could not be compared: " + err.Error(),
+			Detail: i18n.T(ctx, "the chain inventory could not be compared: %s", err.Error()),
 		}
 	}
 	if len(payload.RemovesChains) == 0 {
 		return VerifyCheck{
 			Name: CheckNoStaleChains, Ok: true,
-			Detail: fmt.Sprintf("the panel's namespace holds exactly the %d chain(s) this ruleset declares",
+			Detail: i18n.T(ctx, "the panel's namespace holds exactly the %d chain(s) this ruleset declares",
 				len(live.Chains)),
 		}
 	}
 	return VerifyCheck{
 		Name:     CheckNoStaleChains,
-		Expected: "no chain the ruleset does not declare",
+		Expected: i18n.T(ctx, "no chain the ruleset does not declare"),
 		Actual:   strings.Join(payload.RemovesChains, ", "),
-		Detail: "the panel's namespace still holds " + strings.Join(payload.RemovesChains, ", ") +
-			", which this ruleset does not declare. They are empty and accept by policy, so they " +
-			"change no packet's fate, but they are hooked into the kernel and the panel no longer " +
-			"has a use for them.",
+		Detail: i18n.T(ctx, "the panel's namespace still holds %s, which this ruleset does not "+
+			"declare. They are empty and accept by policy, so they change no packet's fate, but they "+
+			"are hooked into the kernel and the panel no longer has a use for them.",
+			strings.Join(payload.RemovesChains, ", ")),
 	}
 }
 
-func strayDetail(stray []string) string {
+func strayDetail(ctx context.Context, stray []string) string {
 	if len(stray) == 0 {
-		return "nothing in the panel's namespace is unaccounted for"
+		return i18n.T(ctx, "nothing in the panel's namespace is unaccounted for")
 	}
-	return "the panel's namespace also holds " + strings.Join(stray, "; ") +
-		". Nothing was removed: the reconcile report is where that is decided."
+	return i18n.T(ctx, "the panel's namespace also holds %s. Nothing was removed: the reconcile "+
+		"report is where that is decided.", strings.Join(stray, "; "))
 }
 
 // satisfied reports whether the live ruleset holds a rule matching one
@@ -398,13 +421,13 @@ func (s *Service) forwardingCheck(ctx context.Context, ruleset rules.Ruleset) Ve
 	if len(ruleset.Routes) == 0 {
 		return VerifyCheck{
 			Name: CheckForwarding, Ok: true,
-			Detail: "no rule is enabled, so forwarding is not needed",
+			Detail: i18n.T(ctx, "no rule is enabled, so forwarding is not needed"),
 		}
 	}
 	if s.forwarding == nil {
 		return VerifyCheck{
 			Name: CheckForwarding, Skipped: true,
-			Detail: "the kernel parameters were not checked on this instance",
+			Detail: i18n.T(ctx, "the kernel parameters were not checked on this instance"),
 		}
 	}
 	// Forwarding off after an apply is a failure only when the apply was meant
@@ -417,10 +440,11 @@ func (s *Service) forwardingCheck(ctx context.Context, ruleset rules.Ruleset) Ve
 	status := s.forwarding.Status(ctx, ruleset.HasIPv6(), len(ruleset.Routes), 0)
 	switch {
 	case !status.IPv4Forwarding:
-		detail := "the rules are installed but this kernel is not forwarding packets, so they carry nothing"
+		detail := i18n.T(ctx, "the rules are installed but this kernel is not forwarding packets, so "+
+			"they carry nothing")
 		if !fatal {
-			detail = "the rules are installed and carry nothing until IP forwarding is turned on: it is " +
-				"off, and the panel is set not to turn it on"
+			detail = i18n.T(ctx, "the rules are installed and carry nothing until IP forwarding is "+
+				"turned on: it is off, and the panel is set not to turn it on")
 		}
 		return VerifyCheck{
 			Name: CheckForwarding, Fatal: fatal,
@@ -428,10 +452,10 @@ func (s *Service) forwardingCheck(ctx context.Context, ruleset rules.Ruleset) Ve
 			Detail: detail,
 		}
 	case ruleset.HasIPv6() && !status.IPv6Forwarding:
-		detail := "an enabled rule forwards IPv6 but this kernel is not forwarding IPv6 packets"
+		detail := i18n.T(ctx, "an enabled rule forwards IPv6 but this kernel is not forwarding IPv6 packets")
 		if !fatal {
-			detail = "the IPv6 rules are installed and carry nothing until IPv6 forwarding is turned " +
-				"on: it is off, and the panel is set not to turn it on"
+			detail = i18n.T(ctx, "the IPv6 rules are installed and carry nothing until IPv6 forwarding "+
+				"is turned on: it is off, and the panel is set not to turn it on")
 		}
 		return VerifyCheck{
 			Name: CheckForwarding, Fatal: fatal,
@@ -439,13 +463,16 @@ func (s *Service) forwardingCheck(ctx context.Context, ruleset rules.Ruleset) Ve
 			Detail: detail,
 		}
 	}
-	return VerifyCheck{Name: CheckForwarding, Ok: true, Fatal: fatal, Detail: "this kernel forwards packets"}
+	return VerifyCheck{
+		Name: CheckForwarding, Ok: true, Fatal: fatal,
+		Detail: i18n.T(ctx, "this kernel forwards packets"),
+	}
 }
 
 // persistenceCheck confirms the rendered ruleset really is on disk and really
 // is the one that was applied. Without it the rules work now and vanish at the
 // next reboot, which is the zombie state this whole design exists to prevent.
-func persistenceCheck(plan Plan) VerifyCheck {
+func persistenceCheck(ctx context.Context, plan Plan) VerifyCheck {
 	var files []PlannedFile
 	for _, f := range plan.Files {
 		if f.Kind == FileRuleset {
@@ -455,7 +482,7 @@ func persistenceCheck(plan Plan) VerifyCheck {
 	if len(files) == 0 {
 		return VerifyCheck{
 			Name: CheckPersistence, Skipped: true,
-			Detail: "this operation rendered no ruleset file",
+			Detail: i18n.T(ctx, "this operation rendered no ruleset file"),
 		}
 	}
 	for _, f := range files {
@@ -463,23 +490,23 @@ func persistenceCheck(plan Plan) VerifyCheck {
 		if err != nil {
 			return VerifyCheck{
 				Name: CheckPersistence, Fatal: true,
-				Expected: f.Path, Actual: "absent",
-				Detail: fmt.Sprintf("%s was not written, so the rules would not come back after a "+
+				Expected: f.Path, Actual: i18n.T(ctx, "absent"),
+				Detail: i18n.T(ctx, "%s was not written, so the rules would not come back after a "+
 					"reboot: %v", f.Path, err),
 			}
 		}
 		if string(content) != f.Content {
 			return VerifyCheck{
 				Name: CheckPersistence, Fatal: true,
-				Expected: fmt.Sprintf("%d bytes", len(f.Content)),
-				Actual:   fmt.Sprintf("%d bytes", len(content)),
-				Detail: fmt.Sprintf("%s is not the ruleset that was applied, so a reboot would install "+
+				Expected: i18n.T(ctx, "%d bytes", len(f.Content)),
+				Actual:   i18n.T(ctx, "%d bytes", len(content)),
+				Detail: i18n.T(ctx, "%s is not the ruleset that was applied, so a reboot would install "+
 					"something else", f.Path),
 			}
 		}
 	}
 	return VerifyCheck{
 		Name: CheckPersistence, Ok: true, Fatal: true,
-		Detail: "the boot-time restore file is on disk and is the ruleset that was applied",
+		Detail: i18n.T(ctx, "the boot-time restore file is on disk and is the ruleset that was applied"),
 	}
 }

@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertTriangle, FileText, ListChecks, RefreshCw, Terminal, Undo2 } from 'lucide-react'
 
 import type { PreviewResponse } from '@/lib/types'
+import { tunnelFieldLabel } from '@/lib/fieldLabels'
 import { DisclosurePanel } from '../ui/disclosure'
 import { ErrorState, Skeleton } from '../ui/feedback'
 import { Technical, TechnicalBlock } from '../ui/technical'
@@ -58,7 +59,9 @@ export function PreviewPanel({
               {preview.plan.recreate_reasons?.length ? (
                 <ul className="mt-1.5 space-y-0.5 text-2xs text-muted-foreground">
                   {(preview.plan.recreate_reasons ?? []).map((reason) => (
-                    <li key={reason}>• {reason}</li>
+                    <li key={reason} dir="auto">
+                      • {reason}
+                    </li>
                   ))}
                 </ul>
               ) : null}
@@ -70,7 +73,7 @@ export function PreviewPanel({
               <ul className="space-y-1 text-2xs">
                 {(preview.diffs ?? []).map((diff) => (
                   <li key={diff.field} className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-muted-foreground">{diff.field}</span>
+                    <span className="text-muted-foreground">{tunnelFieldLabel(diff.field, t)}</span>
                     <Technical className="text-2xs line-through opacity-70">{diff.from || '—'}</Technical>
                     <span aria-hidden="true">→</span>
                     <Technical className="text-2xs">{diff.to || '—'}</Technical>
@@ -88,7 +91,7 @@ export function PreviewPanel({
               <ol className="space-y-1.5">
                 {(preview.plan.steps ?? []).map((step, index) => (
                   <li key={`${step.kind}-${index}`} className="space-y-0.5">
-                    <p className="text-2xs text-muted-foreground">{step.description}</p>
+                    <p dir="auto" className="text-2xs text-muted-foreground">{step.description}</p>
                     {step.argv?.length ? (
                       <Technical className="block overflow-x-auto text-2xs">{step.argv.join(' ')}</Technical>
                     ) : null}
@@ -117,7 +120,9 @@ export function PreviewPanel({
             <Section icon={<Undo2 className="icon-directional size-3.5" aria-hidden="true" />} title={t('tunnelForm.preview.rollback')}>
               <ul className="space-y-0.5 text-2xs text-muted-foreground">
                 {(preview.plan.rollback ?? []).map((step, index) => (
-                  <li key={`${step.kind}-rollback-${index}`}>• {step.description}</li>
+                  <li key={`${step.kind}-rollback-${index}`} dir="auto">
+                    • {step.description}
+                  </li>
                 ))}
               </ul>
             </Section>
@@ -130,7 +135,9 @@ export function PreviewPanel({
             >
               <ul className="space-y-0.5 text-2xs text-muted-foreground">
                 {(preview.plan.verification ?? []).map((check) => (
-                  <li key={check}>• {check}</li>
+                  <li key={check} dir="auto">
+                    • {check}
+                  </li>
                 ))}
               </ul>
             </Section>

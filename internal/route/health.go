@@ -2,9 +2,9 @@ package route
 
 import (
 	"context"
-	"fmt"
 	"net/netip"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
 )
@@ -59,7 +59,7 @@ func (s *Service) Health(ctx context.Context, records []Record) map[int64]Health
 				health.Tunnel = &state
 			}
 		}
-		health.State, health.Detail = healthOf(rec, health, readable, host)
+		health.State, health.Detail = healthOf(ctx, rec, health, readable, host)
 		out[rec.RouteRuleID] = health
 	}
 	return out
@@ -94,24 +94,24 @@ func (s *Service) hostPath(ctx context.Context) hostPath {
 
 // blocked returns why the host keeps an installed rule from carrying traffic,
 // or "" when nothing on the host stands in the way.
-func (h hostPath) blocked(spec rules.RouteSpec) string {
+func (h hostPath) blocked(ctx context.Context, spec rules.RouteSpec) string {
 	if !h.known {
 		return ""
 	}
 	if spec.IsIPv6() && !h.ipv6Forwarding {
-		return "the rules are installed correctly, but this kernel is not forwarding IPv6 packets, " +
-			"so nothing crosses them"
+		return i18n.T(ctx, "the rules are installed correctly, but this kernel is not forwarding IPv6 "+
+			"packets, so nothing crosses them")
 	}
 	if !spec.IsIPv6() && !h.ipv4Forwarding {
-		return "the rules are installed correctly, but this kernel is not forwarding packets, so " +
-			"nothing crosses them"
+		return i18n.T(ctx, "the rules are installed correctly, but this kernel is not forwarding "+
+			"packets, so nothing crosses them")
 	}
 	if !h.routeLocalnet {
 		for _, d := range spec.Destinations {
 			if addr, err := netip.ParseAddr(d.Address); err == nil && addr.Is4() && addr.IsLoopback() {
-				return fmt.Sprintf("the rules are installed correctly, but %s is a loopback address and "+
-					"route_localnet is off on every interface, so the kernel drops what they send there",
-					d.Address)
+				return i18n.T(ctx, "the rules are installed correctly, but %s is a loopback address "+
+					"and route_localnet is off on every interface, so the kernel drops what they send "+
+					"there", d.Address)
 			}
 		}
 	}
@@ -119,42 +119,44 @@ func (h hostPath) blocked(spec rules.RouteSpec) string {
 }
 
 // healthOf decides one rule's state, in the order the answers matter.
-func healthOf(rec Record, health Health, readable bool, host hostPath) (string, string) {
+func healthOf(ctx context.Context, rec Record, health Health, readable bool, host hostPath) (string, string) {
 	switch {
 	case !rec.IsEnabled:
-		return HealthDisabled, "the rule is switched off, so it installs nothing"
+		return HealthDisabled, i18n.T(ctx, "the rule is switched off, so it installs nothing")
 
 	case rec.ApplyStatusID == model.ApplyStatusInconsistent:
-		detail := "the last change could not be applied and could not be undone either"
 		if rec.LastApplyError != nil {
-			detail += ": " + *rec.LastApplyError
+			return HealthInconsistent, i18n.T(ctx, "the last change could not be applied and could "+
+				"not be undone either: %s", *rec.LastApplyError)
 		}
-		return HealthInconsistent, detail
+		return HealthInconsistent, i18n.T(ctx, "the last change could not be applied and could not "+
+			"be undone either")
 
 	case rec.ApplyStatusID == model.ApplyStatusFailed:
-		detail := "the last apply failed"
 		if rec.LastApplyError != nil {
-			detail += ": " + *rec.LastApplyError
+			return HealthFailed, i18n.T(ctx, "the last apply failed: %s", *rec.LastApplyError)
 		}
-		return HealthFailed, detail
+		return HealthFailed, i18n.T(ctx, "the last apply failed")
 
 	case rec.ApplyStatusID == model.ApplyStatusPending:
-		return HealthPending, "the rule has not been applied yet"
+		return HealthPending, i18n.T(ctx, "the rule has not been applied yet")
 
 	case !readable:
-		return HealthPending, "the panel's ruleset could not be read back, so this rule's state is unknown"
+		return HealthPending, i18n.T(ctx, "the panel's ruleset could not be read back, so this rule's "+
+			"state is unknown")
 
 	case !health.Installed:
-		return HealthFailed, "the rule is enabled and none of its rules are in the kernel; reapply it"
+		return HealthFailed, i18n.T(ctx, "the rule is enabled and none of its rules are in the kernel; "+
+			"reapply it")
 
 	// The rules are installed and correct. What can still be wrong is the path
 	// they relay over.
 	case health.Tunnel != nil && !health.Tunnel.Healthy():
-		return HealthImpaired, fmt.Sprintf("the rules are installed correctly, and %s — the tunnel "+
+		return HealthImpaired, i18n.T(ctx, "the rules are installed correctly, and %s — the tunnel "+
 			"this rule relays over — is not up, so nothing crosses it", health.Tunnel.InterfaceName)
 	}
-	if reason := host.blocked(rec.Spec()); reason != "" {
+	if reason := host.blocked(ctx, rec.Spec()); reason != "" {
 		return HealthImpaired, reason
 	}
-	return HealthHealthy, "the rules are installed and the path they use is up"
+	return HealthHealthy, i18n.T(ctx, "the rules are installed and the path they use is up")
 }

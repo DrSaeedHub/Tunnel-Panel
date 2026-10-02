@@ -126,7 +126,9 @@ export function DeleteTunnelDialog({
                 {t('deleteDialog.ownConnectionTitle')}
               </p>
               <p className="text-xs">{t('deleteDialog.ownConnectionBody')}</p>
-              <p className="text-2xs text-muted-foreground">{wouldCutAccess}</p>
+              <p dir="auto" className="text-2xs text-muted-foreground">
+                {wouldCutAccess}
+              </p>
               <label className="flex items-start gap-2 pt-1 text-xs font-medium">
                 <Checkbox
                   checked={acknowledged}

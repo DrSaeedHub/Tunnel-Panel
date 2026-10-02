@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // heartbeatInterval is how often an idle stream sends a comment line.
@@ -71,7 +73,7 @@ func (s *sseStream) Comment(text string) error {
 }
 
 // streamNotSupported answers a client whose connection cannot stream.
-func streamNotSupported(w http.ResponseWriter) {
+func streamNotSupported(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusInternalServerError, CodeInternal,
-		"This connection cannot carry a live stream.", "", nil)
+		i18n.T(r.Context(), "This connection cannot carry a live stream."), "", nil)
 }

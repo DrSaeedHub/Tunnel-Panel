@@ -2,12 +2,12 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/metrics"
 	"github.com/drs/gre-panel/internal/monitor"
@@ -107,9 +107,11 @@ func worseStatus(a, b string) string {
 
 // RegisterCoreComponents wires the checks the panel can answer on its own.
 func (s *Server) RegisterCoreComponents() {
+	// Every check is handed the request's context, so its detail is said in the
+	// language of whoever asked.
 	s.health.Register(ComponentDatabase, func(ctx context.Context) ComponentHealth {
 		if s.db == nil {
-			return ComponentHealth{Status: StatusError, Detail: "no database is configured"}
+			return ComponentHealth{Status: StatusError, Detail: i18n.T(ctx, "no database is configured")}
 		}
 		if err := s.db.Healthy(ctx); err != nil {
 			return ComponentHealth{Status: StatusError, Detail: err.Error()}
@@ -117,7 +119,7 @@ func (s *Server) RegisterCoreComponents() {
 		return ComponentHealth{Status: StatusOK, Data: map[string]any{"path": s.db.Path}}
 	})
 
-	s.health.Register(ComponentListenAddress, func(context.Context) ComponentHealth {
+	s.health.Register(ComponentListenAddress, func(ctx context.Context) ComponentHealth {
 		data := map[string]any{
 			"port": s.cfg.BindPort, "web_path": s.cfg.WebPath,
 			"port_source": s.addressSources.Port, "web_path_source": s.addressSources.WebPath,
@@ -127,9 +129,10 @@ func (s *Server) RegisterCoreComponents() {
 		}
 		data["configured_port"] = s.addressFallback.Wanted
 		data["bind_error"] = s.addressFallback.Reason
+		// The reason is the bind error verbatim, the kernel's own words.
 		return ComponentHealth{
 			Status: StatusDegraded,
-			Detail: fmt.Sprintf("port %d could not be bound, so the panel is serving on %d instead: %s",
+			Detail: i18n.T(ctx, "port %d could not be bound, so the panel is serving on %d instead: %s",
 				s.addressFallback.Wanted, s.addressFallback.Serving, s.addressFallback.Reason),
 			Data: data,
 		}
@@ -140,7 +143,7 @@ func (s *Server) RegisterCoreComponents() {
 		if !a.NetlinkAvailable {
 			return ComponentHealth{
 				Status: StatusError,
-				Detail: "netlink is not usable, so tunnels cannot be configured: " + a.NetlinkError,
+				Detail: i18n.T(ctx, "netlink is not usable, so tunnels cannot be configured: %s", a.NetlinkError),
 			}
 		}
 		return ComponentHealth{Status: StatusOK}
@@ -152,9 +155,9 @@ func (s *Server) RegisterCoreComponents() {
 		// Not loaded is the normal state on a server with no tunnels yet: the
 		// module autoloads the first time one is created. Reporting that as a
 		// fault would make every fresh install look broken.
-		detail := "loaded"
+		detail := i18n.T(ctx, "loaded")
 		if !loaded {
-			detail = "not loaded; it autoloads when the first tunnel is created"
+			detail = i18n.T(ctx, "not loaded; it autoloads when the first tunnel is created")
 		}
 		return ComponentHealth{
 			Status: StatusOK,
@@ -171,7 +174,7 @@ func (s *Server) RegisterCoreComponents() {
 	// the component always appears in the response and an external check never
 	// sees a field come and go.
 	s.health.Register(ComponentMonitor, func(ctx context.Context) ComponentHealth {
-		return ComponentHealth{Status: StatusUnknown, Detail: "the monitor supervisor is not running"}
+		return ComponentHealth{Status: StatusUnknown, Detail: i18n.T(ctx, "the monitor supervisor is not running")}
 	})
 }
 
@@ -223,12 +226,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) RegisterMonitorComponent(supervisor *monitor.Supervisor) {
 	s.health.Register(ComponentMonitor, func(ctx context.Context) ComponentHealth {
 		if supervisor == nil {
-			return ComponentHealth{Status: StatusUnknown, Detail: "the monitor supervisor is not running"}
+			return ComponentHealth{Status: StatusUnknown, Detail: i18n.T(ctx, "the monitor supervisor is not running")}
 		}
 		counts := supervisor.Counts()
 		return ComponentHealth{
 			Status: StatusOK,
-			Detail: fmt.Sprintf("%d prober(s) running", supervisor.Running()),
+			Detail: i18n.T(ctx, "%d prober(s) running", supervisor.Running()),
 			Data: map[string]any{
 				"probers":     supervisor.Running(),
 				"subscribers": supervisor.Hub().Subscribers(),
@@ -246,20 +249,20 @@ func (s *Server) RegisterMonitorComponent(supervisor *monitor.Supervisor) {
 func (s *Server) RegisterMetricsComponent(sampler *metrics.Sampler) {
 	s.health.Register(ComponentMetrics, func(ctx context.Context) ComponentHealth {
 		if sampler == nil {
-			return ComponentHealth{Status: StatusUnknown, Detail: "the metrics sampler is not running"}
+			return ComponentHealth{Status: StatusUnknown, Detail: i18n.T(ctx, "the metrics sampler is not running")}
 		}
 		healthy, at := sampler.Healthy()
 		if !healthy {
-			return ComponentHealth{Status: StatusUnknown, Detail: "no reading has been taken yet"}
+			return ComponentHealth{Status: StatusUnknown, Detail: i18n.T(ctx, "no reading has been taken yet")}
 		}
 		age := time.Since(at)
 		status := StatusOK
-		detail := fmt.Sprintf("the last reading was %s ago", age.Round(time.Second))
+		detail := i18n.T(ctx, "the last reading was %s ago", age.Round(time.Second))
 		// A sampler whose last reading is minutes old has stalled, which the
 		// dashboard would otherwise show as merely stale numbers.
 		if age > 2*time.Minute {
 			status = StatusDegraded
-			detail = fmt.Sprintf("the last reading was %s ago, so sampling has stalled", age.Round(time.Second))
+			detail = i18n.T(ctx, "the last reading was %s ago, so sampling has stalled", age.Round(time.Second))
 		}
 		return ComponentHealth{
 			Status: status, Detail: detail,

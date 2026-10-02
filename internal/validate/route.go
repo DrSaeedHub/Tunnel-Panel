@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
@@ -102,7 +103,7 @@ func (v *RouteValidator) ApplyDefaults(ctx context.Context, in *RouteInput) erro
 	if strings.TrimSpace(in.BindAddress) == "" && v.Links != nil {
 		links, err := v.Links.List(ctx)
 		if err != nil {
-			return fmt.Errorf("reading interfaces to resolve the bind address: %w", err)
+			return i18n.Errorf(ctx, "reading interfaces to resolve the bind address: %w", err)
 		}
 		routes, err := v.Links.Routes(ctx)
 		if err != nil {
@@ -159,49 +160,58 @@ func (v *RouteValidator) settingBool(key string, def bool) bool {
 //
 // This phase runs first and short-circuits, so nothing is read from the kernel
 // or from the database until the request itself is sound.
+//
+// With no request to take a language from, its messages are said in the
+// panel's own; ValidateRouteStaticContext says them in the request's.
 func ValidateRouteStatic(in RouteInput) *Errors {
+	return ValidateRouteStaticContext(context.Background(), in)
+}
+
+// ValidateRouteStaticContext is ValidateRouteStatic with its messages said in
+// the language ctx carries.
+func ValidateRouteStaticContext(ctx context.Context, in RouteInput) *Errors {
 	errs := &Errors{}
 
-	validateRouteTitle(in, errs)
-	validateRouteLookups(in, errs)
-	validateRouteAddresses(in, errs)
-	validateRoutePorts(in, errs)
-	validateRouteNumbers(in, errs)
-	validateAllowedSources(in, errs)
+	validateRouteTitle(ctx, in, errs)
+	validateRouteLookups(ctx, in, errs)
+	validateRouteAddresses(ctx, in, errs)
+	validateRoutePorts(ctx, in, errs)
+	validateRouteNumbers(ctx, in, errs)
+	validateAllowedSources(ctx, in, errs)
 
 	return errs
 }
 
-func validateRouteTitle(in RouteInput, errs *Errors) {
+func validateRouteTitle(ctx context.Context, in RouteInput, errs *Errors) {
 	title := strings.TrimSpace(in.RouteRuleTitle)
 	switch {
 	case title == "":
 		errs.Add("route_rule_title", CodeInvalidRouteTitle,
-			"A forwarding rule needs a name: it is how you will recognise it in the list, "+
-				"in the audit log and in the generated rules.", nil)
+			i18n.T(ctx, "A forwarding rule needs a name: it is how you will recognise it in the list, "+
+				"in the audit log and in the generated rules."), nil)
 	case len(title) > MaxRouteTitleLength:
-		errs.Addf("route_rule_title", CodeInvalidRouteTitle,
-			"The name is %d characters; the maximum is %d.", len(title), MaxRouteTitleLength)
+		errs.Add("route_rule_title", CodeInvalidRouteTitle,
+			i18n.T(ctx, "The name is %d characters; the maximum is %d.", len(title), MaxRouteTitleLength), nil)
 	}
 }
 
-func validateRouteLookups(in RouteInput, errs *Errors) {
+func validateRouteLookups(ctx context.Context, in RouteInput, errs *Errors) {
 	if model.RouteProtocolName(in.RouteProtocolID) == "" {
-		errs.Addf("route_protocol_id", CodeInvalidRouteProtocol,
-			"%d is not a known protocol; a rule forwards TCP, UDP, or both.", in.RouteProtocolID)
+		errs.Add("route_protocol_id", CodeInvalidRouteProtocol,
+			i18n.T(ctx, "%d is not a known protocol; a rule forwards TCP, UDP, or both.", in.RouteProtocolID), nil)
 	}
 	if model.NatModeName(in.NatModeID) == "" {
-		errs.Addf("nat_mode_id", CodeInvalidNatMode,
-			"%d is not a known NAT mode.", in.NatModeID)
+		errs.Add("nat_mode_id", CodeInvalidNatMode,
+			i18n.T(ctx, "%d is not a known NAT mode.", in.NatModeID), nil)
 	}
 	if in.LoadBalanceModeID != 0 && model.LoadBalanceModeName(in.LoadBalanceModeID) == "" {
-		errs.Addf("load_balance_mode_id", CodeInvalidLoadBalanceMode,
-			"%d is not a known load balancing mode.", in.LoadBalanceModeID)
+		errs.Add("load_balance_mode_id", CodeInvalidLoadBalanceMode,
+			i18n.T(ctx, "%d is not a known load balancing mode.", in.LoadBalanceModeID), nil)
 	}
 	if in.AddressFamilyID != 0 &&
 		in.AddressFamilyID != model.AddressFamilyIPv4 && in.AddressFamilyID != model.AddressFamilyIPv6 {
-		errs.Addf("address_family_id", CodeInvalidAddressFamily,
-			"%d is not a known address family.", in.AddressFamilyID)
+		errs.Add("address_family_id", CodeInvalidAddressFamily,
+			i18n.T(ctx, "%d is not a known address family.", in.AddressFamilyID), nil)
 	}
 }
 
@@ -209,7 +219,12 @@ func validateRouteLookups(in RouteInput, errs *Errors) {
 // that every address on one rule must be in the same family: a rule that binds
 // an IPv4 address and forwards to an IPv6 one describes a translation this
 // subsystem does not do.
-func validateRouteAddresses(in RouteInput, errs *Errors) {
+//
+// A family mismatch has a sentence for each way round rather than one sentence
+// with the family names dropped into it. There are only two families, so a
+// mismatch is always one or the other, and the sentence around them is not
+// built the same way in every language.
+func validateRouteAddresses(ctx context.Context, in RouteInput, errs *Errors) {
 	family := ""
 
 	// The bind address is optional in the request: empty means the server's
@@ -219,12 +234,12 @@ func validateRouteAddresses(in RouteInput, errs *Errors) {
 		switch {
 		case err != nil:
 			errs.Add("bind_address", CodeInvalidBindAddress,
-				fmt.Sprintf("%q is not an IP address. Leave it empty to use this server's primary "+
+				i18n.T(ctx, "%q is not an IP address. Leave it empty to use this server's primary "+
 					"address, or use 0.0.0.0 to mean every local address.", in.BindAddress),
 				map[string]any{"value": in.BindAddress})
 		case addr.Unmap().IsMulticast():
 			errs.Add("bind_address", CodeInvalidBindAddress,
-				"A relay cannot bind a multicast address.", nil)
+				i18n.T(ctx, "A relay cannot bind a multicast address."), nil)
 		default:
 			family = rules.FamilyOf(addr.Unmap())
 		}
@@ -238,13 +253,13 @@ func validateRouteAddresses(in RouteInput, errs *Errors) {
 		address := strings.TrimSpace(d.Address)
 		if address == "" {
 			errs.Add(field, CodeInvalidDestination,
-				"A forwarding rule needs a destination address.", nil)
+				i18n.T(ctx, "A forwarding rule needs a destination address."), nil)
 			continue
 		}
 		addr, err := netip.ParseAddr(address)
 		if err != nil {
 			errs.Add(field, CodeInvalidDestination,
-				fmt.Sprintf("%q is not an IP address.", d.Address),
+				i18n.T(ctx, "%q is not an IP address.", d.Address),
 				map[string]any{"value": d.Address})
 			continue
 		}
@@ -252,17 +267,21 @@ func validateRouteAddresses(in RouteInput, errs *Errors) {
 		switch {
 		case addr.IsUnspecified():
 			errs.Add(field, CodeInvalidDestination,
-				"The destination may not be the unspecified address: traffic has to go somewhere.", nil)
+				i18n.T(ctx, "The destination may not be the unspecified address: traffic has to go somewhere."), nil)
 			continue
 		case addr.IsMulticast():
 			errs.Add(field, CodeInvalidDestination,
-				"The destination may not be a multicast address.", nil)
+				i18n.T(ctx, "The destination may not be a multicast address."), nil)
 			continue
 		}
 		if destFamily := rules.FamilyOf(addr); family != "" && destFamily != family {
-			errs.Add(field, CodeAddressFamilyMismatch,
-				fmt.Sprintf("The destination %s is %s but the rule binds an %s address. A rule works "+
-					"in one address family.", addr, familyLabel(destFamily), familyLabel(family)),
+			message := i18n.T(ctx, "The destination %s is IPv4 but the rule binds an IPv6 address. A rule "+
+				"works in one address family.", addr)
+			if destFamily == rules.FamilyIPv6 {
+				message = i18n.T(ctx, "The destination %s is IPv6 but the rule binds an IPv4 address. A "+
+					"rule works in one address family.", addr)
+			}
+			errs.Add(field, CodeAddressFamilyMismatch, message,
 				map[string]any{"bind_family": family, "destination_family": destFamily})
 		} else if family == "" {
 			family = rules.FamilyOf(addr)
@@ -270,10 +289,11 @@ func validateRouteAddresses(in RouteInput, errs *Errors) {
 	}
 
 	if in.NatModeID == model.NatModeSnat {
-		validateSnatAddressSyntax(in, family, errs)
+		validateSnatAddressSyntax(ctx, in, family, errs)
 	} else if strings.TrimSpace(in.SnatAddress) != "" {
 		errs.Add("snat_address", CodeSnatAddressUnused,
-			"A source address is only used when the NAT mode is SNAT. Choose SNAT, or clear the address.",
+			i18n.T(ctx, "A source address is only used when the NAT mode is SNAT. Choose SNAT, or clear "+
+				"the address."),
 			nil)
 	}
 
@@ -283,44 +303,48 @@ func validateRouteAddresses(in RouteInput, errs *Errors) {
 			declared = rules.FamilyIPv6
 		}
 		if declared != family {
-			errs.Add("address_family_id", CodeAddressFamilyMismatch,
-				fmt.Sprintf("The rule is declared as %s but its addresses are %s.",
-					familyLabel(declared), familyLabel(family)), nil)
+			message := i18n.T(ctx, "The rule is declared as IPv4 but its addresses are IPv6.")
+			if declared == rules.FamilyIPv6 {
+				message = i18n.T(ctx, "The rule is declared as IPv6 but its addresses are IPv4.")
+			}
+			errs.Add("address_family_id", CodeAddressFamilyMismatch, message, nil)
 		}
 	}
 }
 
-func validateSnatAddressSyntax(in RouteInput, family string, errs *Errors) {
+func validateSnatAddressSyntax(ctx context.Context, in RouteInput, family string, errs *Errors) {
 	address := strings.TrimSpace(in.SnatAddress)
 	if address == "" {
 		errs.Add("snat_address", CodeSnatAddressRequired,
-			"SNAT rewrites the source address to one you choose, so it needs that address. "+
-				"Use masquerade instead to have the outgoing interface's address used automatically.", nil)
+			i18n.T(ctx, "SNAT rewrites the source address to one you choose, so it needs that address. "+
+				"Use masquerade instead to have the outgoing interface's address used automatically."), nil)
 		return
 	}
 	addr, err := netip.ParseAddr(address)
 	if err != nil {
 		errs.Add("snat_address", CodeInvalidSnatAddress,
-			fmt.Sprintf("%q is not an IP address.", in.SnatAddress), nil)
+			i18n.T(ctx, "%q is not an IP address.", in.SnatAddress), nil)
 		return
 	}
 	addr = addr.Unmap()
 	switch {
 	case addr.IsUnspecified(), addr.IsMulticast(), addr.IsLoopback():
 		errs.Add("snat_address", CodeInvalidSnatAddress,
-			fmt.Sprintf("%s cannot be used as a source address for relayed traffic.", addr), nil)
+			i18n.T(ctx, "%s cannot be used as a source address for relayed traffic.", addr), nil)
 	case family != "" && rules.FamilyOf(addr) != family:
-		errs.Add("snat_address", CodeAddressFamilyMismatch,
-			fmt.Sprintf("The source address %s is %s but the rule works in %s.",
-				addr, familyLabel(rules.FamilyOf(addr)), familyLabel(family)), nil)
+		message := i18n.T(ctx, "The source address %s is IPv4 but the rule works in IPv6.", addr)
+		if rules.FamilyOf(addr) == rules.FamilyIPv6 {
+			message = i18n.T(ctx, "The source address %s is IPv6 but the rule works in IPv4.", addr)
+		}
+		errs.Add("snat_address", CodeAddressFamilyMismatch, message, nil)
 	}
 }
 
 // validateRoutePorts applies the port half of §6.1, including the range width
 // rule: ranges map one to one, so widths that differ have no mapping at all.
-func validateRoutePorts(in RouteInput, errs *Errors) {
+func validateRoutePorts(ctx context.Context, in RouteInput, errs *Errors) {
 	bind := in.BindPorts()
-	validatePortRange("bind_port", "bind_port_range_end", bind, errs)
+	validatePortRange(ctx, "bind_port", "bind_port_range_end", bind, errs)
 
 	for i, d := range in.EffectiveDestinations() {
 		portField, endField := "destination_port", "destination_port_range_end"
@@ -329,14 +353,14 @@ func validateRoutePorts(in RouteInput, errs *Errors) {
 			endField = fmt.Sprintf("destinations.%d.port_range_end", i-1)
 		}
 		ports := rules.PortRange{Port: d.Port, End: d.PortRangeEnd}
-		if !validatePortRange(portField, endField, ports, errs) {
+		if !validatePortRange(ctx, portField, endField, ports, errs) {
 			continue
 		}
 		if bind.Port < MinPort || bind.Width() == ports.Width() {
 			continue
 		}
 		errs.Add(endField, CodePortRangeWidthMismatch,
-			fmt.Sprintf("The bind range %s covers %d port(s) and the destination range %s covers %d. "+
+			i18n.T(ctx, "The bind range %s covers %d port(s) and the destination range %s covers %d. "+
 				"A range is mapped one port to one port, so the two have to be the same width: either "+
 				"make them match, or forward a single port.",
 				bind, bind.Width(), ports, ports.Width()),
@@ -347,93 +371,97 @@ func validateRoutePorts(in RouteInput, errs *Errors) {
 	}
 }
 
-func validatePortRange(portField, endField string, r rules.PortRange, errs *Errors) bool {
+func validatePortRange(ctx context.Context, portField, endField string, r rules.PortRange, errs *Errors) bool {
 	ok := true
 	if r.Port < MinPort || r.Port > MaxPort {
-		errs.Addf(portField, CodeInvalidPort, "A port must be between %d and %d.", MinPort, MaxPort)
+		errs.Add(portField, CodeInvalidPort, i18n.T(ctx, "A port must be between %d and %d.", MinPort, MaxPort), nil)
 		ok = false
 	}
 	if r.End == 0 {
 		return ok
 	}
 	if r.End < MinPort || r.End > MaxPort {
-		errs.Addf(endField, CodeInvalidPort, "A port must be between %d and %d.", MinPort, MaxPort)
+		errs.Add(endField, CodeInvalidPort, i18n.T(ctx, "A port must be between %d and %d.", MinPort, MaxPort), nil)
 		return false
 	}
 	if r.End <= r.Port {
-		errs.Addf(endField, CodeInvalidPortRange,
-			"The end of a port range must be above its start; %d is not above %d. Leave it empty to "+
-				"forward a single port.", r.End, r.Port)
+		errs.Add(endField, CodeInvalidPortRange,
+			i18n.T(ctx, "The end of a port range must be above its start; %d is not above %d. Leave it "+
+				"empty to forward a single port.", r.End, r.Port), nil)
 		return false
 	}
 	return ok
 }
 
-func validateRouteNumbers(in RouteInput, errs *Errors) {
+func validateRouteNumbers(ctx context.Context, in RouteInput, errs *Errors) {
 	if in.FwMark != nil && (*in.FwMark < 0 || *in.FwMark > MaxFwMark) {
-		errs.Addf("fwmark", CodeInvalidFwMark, "A firewall mark must be between 0 and %d.", int64(MaxFwMark))
+		errs.Add("fwmark", CodeInvalidFwMark,
+			i18n.T(ctx, "A firewall mark must be between 0 and %d.", int64(MaxFwMark)), nil)
 	}
 	if in.MaxConnectionsPerSource != nil &&
 		(*in.MaxConnectionsPerSource < 1 || *in.MaxConnectionsPerSource > MaxConnectionsPerSource) {
-		errs.Addf("max_connections_per_source", CodeInvalidConnectionLimit,
-			"The concurrent connection limit must be between 1 and %d. Leave it empty for no limit.",
-			MaxConnectionsPerSource)
+		errs.Add("max_connections_per_source", CodeInvalidConnectionLimit,
+			i18n.T(ctx, "The concurrent connection limit must be between 1 and %d. Leave it empty for no "+
+				"limit.", MaxConnectionsPerSource), nil)
 	}
 	if in.ConnectionRateLimit != nil &&
 		(*in.ConnectionRateLimit < 1 || *in.ConnectionRateLimit > MaxConnectionRateLimit) {
-		errs.Addf("connection_rate_limit", CodeInvalidConnectionLimit,
-			"The connection rate limit is in new connections per minute and must be between 1 and %d. "+
-				"Leave it empty for no limit.", MaxConnectionRateLimit)
+		errs.Add("connection_rate_limit", CodeInvalidConnectionLimit,
+			i18n.T(ctx, "The connection rate limit is in new connections per minute and must be between 1 "+
+				"and %d. Leave it empty for no limit.", MaxConnectionRateLimit), nil)
 	}
 
 	if len(in.Destinations) > MaxDestinations {
-		errs.Addf("destinations", CodeInvalidDestination,
-			"A rule may have at most %d destinations.", MaxDestinations)
+		errs.Add("destinations", CodeInvalidDestination,
+			i18n.T(ctx, "A rule may have at most %d destinations.", MaxDestinations), nil)
 	}
 	for i, d := range in.Destinations {
 		if d.Weight < 0 || d.Weight > MaxDestinationWeight {
-			errs.Addf(fmt.Sprintf("destinations.%d.weight", i), CodeInvalidWeight,
-				"A weight must be between 1 and %d. Leave it empty for an equal share.",
-				MaxDestinationWeight)
+			errs.Add(fmt.Sprintf("destinations.%d.weight", i), CodeInvalidWeight,
+				i18n.T(ctx, "A weight must be between 1 and %d. Leave it empty for an equal share.",
+					MaxDestinationWeight), nil)
 		}
 	}
 
 	if len(in.AllowedSources) > MaxAllowedSources {
-		errs.Addf("allowed_sources", CodeInvalidCidr,
-			"A rule may have at most %d allowlist entries.", MaxAllowedSources)
+		errs.Add("allowed_sources", CodeInvalidCidr,
+			i18n.T(ctx, "A rule may have at most %d allowlist entries.", MaxAllowedSources), nil)
 	}
 	if in.BindInterface != "" {
-		if err := InterfaceName(in.BindInterface); err != nil {
-			errs.Addf("bind_interface", CodeInvalidName, "The interface name %s.", err.Error())
+		if message := InterfaceNameMessage(ctx, in.BindInterface); message != "" {
+			errs.Add("bind_interface", CodeInvalidName, message, nil)
 		}
 	}
 }
 
-func validateAllowedSources(in RouteInput, errs *Errors) {
+func validateAllowedSources(ctx context.Context, in RouteInput, errs *Errors) {
 	family := in.Family()
 	seen := map[string]bool{}
 	for i, source := range in.AllowedSources {
 		field := fmt.Sprintf("allowed_sources.%d.cidr", i)
 		text := strings.TrimSpace(source.Cidr)
 		if text == "" {
-			errs.Add(field, CodeInvalidCidr, "An allowlist entry needs an address or a CIDR range.", nil)
+			errs.Add(field, CodeInvalidCidr,
+				i18n.T(ctx, "An allowlist entry needs an address or a CIDR range."), nil)
 			continue
 		}
 		prefix, err := parseCidrOrAddress(text)
 		if err != nil {
 			errs.Add(field, CodeInvalidCidr,
-				fmt.Sprintf("%q is not an address or a CIDR range such as 10.0.0.0/8.", source.Cidr), nil)
+				i18n.T(ctx, "%q is not an address or a CIDR range such as 10.0.0.0/8.", source.Cidr), nil)
 			continue
 		}
 		if entryFamily := rules.FamilyOf(prefix.Addr()); family != "" && entryFamily != family {
-			errs.Add(field, CodeAddressFamilyMismatch,
-				fmt.Sprintf("%s is %s but this rule works in %s.",
-					prefix, familyLabel(entryFamily), familyLabel(family)), nil)
+			message := i18n.T(ctx, "%s is IPv4 but this rule works in IPv6.", prefix)
+			if entryFamily == rules.FamilyIPv6 {
+				message = i18n.T(ctx, "%s is IPv6 but this rule works in IPv4.", prefix)
+			}
+			errs.Add(field, CodeAddressFamilyMismatch, message, nil)
 			continue
 		}
 		if seen[prefix.String()] {
 			errs.Add(field, CodeInvalidCidr,
-				fmt.Sprintf("%s is listed more than once.", prefix), nil)
+				i18n.T(ctx, "%s is listed more than once.", prefix), nil)
 		}
 		seen[prefix.String()] = true
 	}
@@ -457,13 +485,6 @@ func parseCidrOrAddress(text string) (netip.Prefix, error) {
 	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
-func familyLabel(family string) string {
-	if family == rules.FamilyIPv6 {
-		return "IPv6"
-	}
-	return "IPv4"
-}
-
 // ---------------------------------------------------------------- live state
 
 // CollectRouteState gathers the live picture every stateful rule checks
@@ -473,14 +494,14 @@ func (v *RouteValidator) CollectRouteState(ctx context.Context) (RouteState, err
 	if v.Links != nil {
 		links, err := v.Links.List(ctx)
 		if err != nil {
-			return st, fmt.Errorf("reading interfaces: %w", err)
+			return st, i18n.Errorf(ctx, "reading interfaces: %w", err)
 		}
 		st.Links = links
 	}
 	if v.Repo != nil {
 		routes, err := v.Repo.ExistingRoutes(ctx)
 		if err != nil {
-			return st, fmt.Errorf("reading stored forwarding rules: %w", err)
+			return st, i18n.Errorf(ctx, "reading stored forwarding rules: %w", err)
 		}
 		st.Routes = routes
 	}
@@ -496,7 +517,7 @@ func (v *RouteValidator) CollectRouteState(ctx context.Context) (RouteState, err
 
 // Validate runs both phases. Static rules run first and short-circuit.
 func (v *RouteValidator) Validate(ctx context.Context, in RouteInput) (Result, error) {
-	if errs := ValidateRouteStatic(in); !errs.Empty() {
+	if errs := ValidateRouteStaticContext(ctx, in); !errs.Empty() {
 		return Result{}, errs
 	}
 	st, err := v.CollectRouteState(ctx)
@@ -513,27 +534,27 @@ func (v *RouteValidator) ValidateAgainst(ctx context.Context, in RouteInput, st 
 	var result Result
 	errs := &Errors{}
 
-	v.checkTitleCollision(in, st, errs)
+	v.checkTitleCollision(ctx, in, st, errs)
 	v.checkTunnel(ctx, in, errs)
-	v.checkListenerConflicts(in, st, errs)
-	v.checkPortConflicts(in, st, errs, &result)
-	v.checkSnatAddressPresent(in, st, errs)
-	v.checkBindAddressPresent(in, st, errs, &result)
-	v.checkBindInterface(in, st, errs)
-	v.checkLoopbackDestination(in, errs, &result)
+	v.checkListenerConflicts(ctx, in, st, errs)
+	v.checkPortConflicts(ctx, in, st, errs, &result)
+	v.checkSnatAddressPresent(ctx, in, st, errs)
+	v.checkBindAddressPresent(ctx, in, st, errs, &result)
+	v.checkBindInterface(ctx, in, st, errs)
+	v.checkLoopbackDestination(ctx, in, errs, &result)
 
 	if !errs.Empty() {
 		return result, errs
 	}
 
-	v.addRouteWarnings(in, st, &result)
+	v.addRouteWarnings(ctx, in, st, &result)
 	return result, nil
 }
 
 // checkTitleCollision keeps rule names unique among live rows, which the
 // partial unique index also enforces; catching it here means the operator gets
 // a field-level message rather than a constraint violation.
-func (v *RouteValidator) checkTitleCollision(in RouteInput, st RouteState, errs *Errors) {
+func (v *RouteValidator) checkTitleCollision(ctx context.Context, in RouteInput, st RouteState, errs *Errors) {
 	title := strings.TrimSpace(in.RouteRuleTitle)
 	for _, existing := range st.Routes {
 		if existing.RouteRuleID == in.RouteRuleID {
@@ -541,7 +562,7 @@ func (v *RouteValidator) checkTitleCollision(in RouteInput, st RouteState, errs 
 		}
 		if strings.EqualFold(strings.TrimSpace(existing.Title), title) {
 			errs.Add("route_rule_title", CodeRouteTitleConflict,
-				fmt.Sprintf("A forwarding rule named %q already exists.", existing.Title),
+				i18n.T(ctx, "A forwarding rule named %q already exists.", existing.Title),
 				map[string]any{"route_rule_id": existing.RouteRuleID})
 			return
 		}
@@ -560,15 +581,15 @@ func (v *RouteValidator) checkTunnel(ctx context.Context, in RouteInput, errs *E
 	if err != nil || exists {
 		return
 	}
-	errs.Addf("tunnel_id", CodeUnknownTunnel,
-		"There is no tunnel %d in this panel. Choose one of its tunnels, or enter the destination "+
-			"address directly.", *in.TunnelID)
+	errs.Add("tunnel_id", CodeUnknownTunnel,
+		i18n.T(ctx, "There is no tunnel %d in this panel. Choose one of its tunnels, or enter the "+
+			"destination address directly.", *in.TunnelID), nil)
 }
 
 // checkPortConflicts applies §6.2: two enabled rules may not claim the same
 // listener, and the check is range overlap rather than equality, because
 // 20000-20100 and 20050 collide just as surely as two rules on port 2044.
-func (v *RouteValidator) checkPortConflicts(in RouteInput, st RouteState, errs *Errors, result *Result) {
+func (v *RouteValidator) checkPortConflicts(ctx context.Context, in RouteInput, st RouteState, errs *Errors, result *Result) {
 	if !in.IsEnabled {
 		// A disabled rule generates nothing, so it holds no port. Refusing to
 		// store one would make preparing a replacement impossible.
@@ -588,11 +609,16 @@ func (v *RouteValidator) checkPortConflicts(in RouteInput, st RouteState, errs *
 		if !portRangesOverlap(want, existing.Ports()) {
 			continue
 		}
-		errs.Add("bind_port", CodeRoutePortConflict,
-			fmt.Sprintf("The rule %q already forwards %s on %s port %s, which overlaps this rule's %s. "+
-				"Two enabled rules cannot claim the same listener.",
-				existing.Title, describeBind(existing.BindAddress),
-				model.RouteProtocolName(existing.RouteProtocolID), existing.Ports(), want),
+		protocol := protocolLabel(existing.RouteProtocolID)
+		message := i18n.T(ctx, "The rule %q already forwards %s port %s on %s, which overlaps this rule's "+
+			"port %s. Two enabled rules cannot claim the same listener.",
+			existing.Title, protocol, existing.Ports(), strings.TrimSpace(existing.BindAddress), want)
+		if bindsEveryAddress(existing.BindAddress) {
+			message = i18n.T(ctx, "The rule %q already forwards %s port %s on every local address, which "+
+				"overlaps this rule's port %s. Two enabled rules cannot claim the same listener.",
+				existing.Title, protocol, existing.Ports(), want)
+		}
+		errs.Add("bind_port", CodeRoutePortConflict, message,
 			map[string]any{
 				"route_rule_id": existing.RouteRuleID,
 				"title":         existing.Title,
@@ -607,7 +633,7 @@ func (v *RouteValidator) checkPortConflicts(in RouteInput, st RouteState, errs *
 // breaks a working service if it is skipped: DNAT in prerouting takes
 // precedence over a local listener, so forwarding a port something on this
 // server is already listening on sends that service's traffic elsewhere.
-func (v *RouteValidator) checkListenerConflicts(in RouteInput, st RouteState, errs *Errors) {
+func (v *RouteValidator) checkListenerConflicts(ctx context.Context, in RouteInput, st RouteState, errs *Errors) {
 	if !in.IsEnabled || !st.ListenersRead {
 		return
 	}
@@ -631,11 +657,13 @@ func (v *RouteValidator) checkListenerConflicts(in RouteInput, st RouteState, er
 			// being silently ignored.
 			continue
 		}
+		// DescribeIn names the listener as a sentence of its own, in the
+		// request's language like everything after it.
 		errs.Add("bind_port", CodePortInUse,
-			fmt.Sprintf("%s. Forwarding that port would send its traffic to the destination instead, "+
+			i18n.T(ctx, "%s. Forwarding that port would send its traffic to the destination instead, "+
 				"because destination NAT happens before a local socket is consulted, and that service "+
 				"would stop working with no error anywhere. Stop or move it first, or set force if "+
-				"that is what you intend.", l.Describe()),
+				"that is what you intend.", l.DescribeIn(ctx)),
 			map[string]any{
 				"process_name": l.ProcessName, "process_id": l.ProcessID,
 				"address": l.Address, "port": l.Port, "protocol": string(l.Protocol),
@@ -646,7 +674,7 @@ func (v *RouteValidator) checkListenerConflicts(in RouteInput, st RouteState, er
 
 // checkSnatAddressPresent applies the rest of the SNAT rule: the address has to
 // be on this host, or the rewritten traffic has a source nothing will answer.
-func (v *RouteValidator) checkSnatAddressPresent(in RouteInput, st RouteState, errs *Errors) {
+func (v *RouteValidator) checkSnatAddressPresent(ctx context.Context, in RouteInput, st RouteState, errs *Errors) {
 	if in.NatModeID != model.NatModeSnat {
 		return
 	}
@@ -658,7 +686,7 @@ func (v *RouteValidator) checkSnatAddressPresent(in RouteInput, st RouteState, e
 		return
 	}
 	errs.Add("snat_address", CodeSnatAddressNotOnHost,
-		fmt.Sprintf("%s is not assigned to any interface on this server. Relayed traffic would leave "+
+		i18n.T(ctx, "%s is not assigned to any interface on this server. Relayed traffic would leave "+
 			"with a source address that nothing here answers for, and the replies would never come "+
 			"back.", address),
 		map[string]any{"snat_address": address})
@@ -667,27 +695,27 @@ func (v *RouteValidator) checkSnatAddressPresent(in RouteInput, st RouteState, e
 // checkBindAddressPresent warns when a rule binds an address this host does not
 // have. It is not an error: a floating address may be assigned later, and the
 // rule is harmless until it is.
-func (v *RouteValidator) checkBindAddressPresent(in RouteInput, st RouteState, errs *Errors, result *Result) {
+func (v *RouteValidator) checkBindAddressPresent(ctx context.Context, in RouteInput, st RouteState, errs *Errors, result *Result) {
 	address := strings.TrimSpace(in.BindAddress)
 	if address == "" || isAnyAddress(address) || len(st.Links) == 0 || st.HasLocalAddress(address) {
 		return
 	}
 	result.AddWarning(Warning{
 		Code: WarnBindAddressNotFound, Field: "bind_address",
-		Message: fmt.Sprintf("The bind address %s is not currently assigned to any interface on this "+
+		Message: i18n.T(ctx, "The bind address %s is not currently assigned to any interface on this "+
 			"server, so nothing will arrive on it. That is legitimate for a floating address that is "+
 			"assigned later.", address),
 		Details: map[string]any{"bind_address": address},
 	})
 }
 
-func (v *RouteValidator) checkBindInterface(in RouteInput, st RouteState, errs *Errors) {
+func (v *RouteValidator) checkBindInterface(ctx context.Context, in RouteInput, st RouteState, errs *Errors) {
 	name := strings.TrimSpace(in.BindInterface)
 	if name == "" || len(st.Links) == 0 || st.HasInterface(name) {
 		return
 	}
 	errs.Add("bind_interface", CodeInterfaceNotFound,
-		fmt.Sprintf("There is no interface named %q on this server, so the rule would match nothing. "+
+		i18n.T(ctx, "There is no interface named %q on this server, so the rule would match nothing. "+
 			"Leave it empty to accept traffic arriving on any interface.", name),
 		map[string]any{"interface_name": name})
 }
@@ -696,7 +724,7 @@ func (v *RouteValidator) checkBindInterface(in RouteInput, st RouteState, errs *
 // 127.0.0.0/8 additionally needs net.ipv4.conf.*.route_localnet, which the
 // panel will not enable by itself (§6.3.4), so the operator is told what they
 // would have to do rather than being handed a rule that silently drops traffic.
-func (v *RouteValidator) checkLoopbackDestination(in RouteInput, errs *Errors, result *Result) {
+func (v *RouteValidator) checkLoopbackDestination(ctx context.Context, in RouteInput, errs *Errors, result *Result) {
 	for i, d := range in.EffectiveDestinations() {
 		addr, err := netip.ParseAddr(strings.TrimSpace(d.Address))
 		if err != nil || !addr.Unmap().IsLoopback() {
@@ -706,10 +734,6 @@ func (v *RouteValidator) checkLoopbackDestination(in RouteInput, errs *Errors, r
 		if i > 0 {
 			field = fmt.Sprintf("destinations.%d.address", i-1)
 		}
-		message := fmt.Sprintf("%s is a loopback address. Forwarding to it needs "+
-			"net.ipv4.conf.<interface>.route_localnet turned on, which the panel will not do for you: "+
-			"it makes the kernel treat 127.0.0.0/8 as routable on that interface and exposes every "+
-			"service bound to localhost.", addr)
 		details := map[string]any{
 			"destination_address": addr.String(),
 			"sysctl":              "net.ipv4.conf.<interface>.route_localnet",
@@ -717,25 +741,33 @@ func (v *RouteValidator) checkLoopbackDestination(in RouteInput, errs *Errors, r
 		if in.Force {
 			result.AddWarning(Warning{
 				Code: WarnLoopbackDestination, Field: field,
-				Message: message + " You chose to proceed anyway; set that sysctl yourself for the " +
-					"rule to carry traffic.",
+				Message: i18n.T(ctx, "%s is a loopback address. Forwarding to it needs "+
+					"net.ipv4.conf.<interface>.route_localnet turned on, which the panel will not do for "+
+					"you: it makes the kernel treat 127.0.0.0/8 as routable on that interface and exposes "+
+					"every service bound to localhost. You chose to proceed anyway; set that sysctl "+
+					"yourself for the rule to carry traffic.", addr),
 				Details: details,
 			})
 			continue
 		}
-		errs.Add(field, CodeLoopbackDestination, message+" Set force to proceed anyway.", details)
+		errs.Add(field, CodeLoopbackDestination,
+			i18n.T(ctx, "%s is a loopback address. Forwarding to it needs "+
+				"net.ipv4.conf.<interface>.route_localnet turned on, which the panel will not do for you: "+
+				"it makes the kernel treat 127.0.0.0/8 as routable on that interface and exposes every "+
+				"service bound to localhost. Set force to proceed anyway.", addr),
+			details)
 	}
 }
 
 // addRouteWarnings collects the advisories a successful validation returns:
 // what the chosen NAT mode does to the client address, what binding every
 // address exposes, and when MSS clamping should be on.
-func (v *RouteValidator) addRouteWarnings(in RouteInput, st RouteState, result *Result) {
+func (v *RouteValidator) addRouteWarnings(ctx context.Context, in RouteInput, st RouteState, result *Result) {
 	if isAnyAddress(in.BindAddress) {
 		result.AddWarning(Warning{
 			Code: WarnBindAnyAddress, Field: "bind_address",
-			Message: "This rule binds every local address, so the relay is reachable on every interface " +
-				"this server has, including any it gains later. Name one address to limit it.",
+			Message: i18n.T(ctx, "This rule binds every local address, so the relay is reachable on every "+
+				"interface this server has, including any it gains later. Name one address to limit it."),
 		})
 	}
 
@@ -743,27 +775,27 @@ func (v *RouteValidator) addRouteWarnings(in RouteInput, st RouteState, result *
 	case model.NatModeMasquerade, model.NatModeSnat:
 		result.AddWarning(Warning{
 			Code: WarnNatHidesClient, Field: "nat_mode_id",
-			Message: "The source address of relayed traffic is rewritten, so the destination sees this " +
-				"server rather than the client. Choose None to preserve the client address — but only " +
-				"if the destination's return path comes back through this server, typically the far " +
-				"end of a tunnel.",
+			Message: i18n.T(ctx, "The source address of relayed traffic is rewritten, so the destination "+
+				"sees this server rather than the client. Choose None to preserve the client address — "+
+				"but only if the destination's return path comes back through this server, typically "+
+				"the far end of a tunnel."),
 		})
 	case model.NatModeNone:
 		result.AddWarning(Warning{
 			Code: WarnNatPreservesClient, Field: "nat_mode_id",
-			Message: "The client address is preserved, which only works when the destination routes its " +
-				"replies back through this server. If it does not, connections will be established and " +
-				"then hang.",
+			Message: i18n.T(ctx, "The client address is preserved, which only works when the destination "+
+				"routes its replies back through this server. If it does not, connections will be "+
+				"established and then hang."),
 		})
 	}
 
 	if in.TunnelID != nil && !in.IsClampMssToPmtu {
 		result.AddWarning(Warning{
 			Code: WarnMssClampRecommended, Field: "is_clamp_mss_to_pmtu",
-			Message: "This rule sends traffic through a tunnel, whose MTU is smaller than the " +
-				"interface the client is on. Without MSS clamping, connections establish normally and " +
-				"then stall on the first large transfer, which is the single most common way a working " +
-				"tunnel looks broken.",
+			Message: i18n.T(ctx, "This rule sends traffic through a tunnel, whose MTU is smaller than the "+
+				"interface the client is on. Without MSS clamping, connections establish normally and "+
+				"then stall on the first large transfer, which is the single most common way a working "+
+				"tunnel looks broken."),
 		})
 	}
 
@@ -771,8 +803,8 @@ func (v *RouteValidator) addRouteWarnings(in RouteInput, st RouteState, result *
 		if listener, found := listenerFor(in, st); found {
 			result.AddWarning(Warning{
 				Code: WarnPortInUse, Field: "bind_port",
-				Message: listener.Describe() + ". You chose to proceed anyway: that service will stop " +
-					"receiving traffic on this port as soon as the rule is applied.",
+				Message: i18n.T(ctx, "%s. You chose to proceed anyway: that service will stop receiving "+
+					"traffic on this port as soon as the rule is applied.", listener.DescribeIn(ctx)),
 				Details: map[string]any{
 					"process_name": listener.ProcessName, "process_id": listener.ProcessID,
 					"port": listener.Port,
@@ -852,11 +884,24 @@ func isAnyAddress(address string) bool {
 	return err == nil && addr.IsUnspecified()
 }
 
-func describeBind(address string) string {
-	if isAnyAddress(strings.TrimSpace(address)) || strings.TrimSpace(address) == "" {
-		return "every local address"
+// bindsEveryAddress reports whether a stored rule listens on every local
+// address: the unspecified address, or none named at all.
+func bindsEveryAddress(address string) bool {
+	return isAnyAddress(address) || strings.TrimSpace(address) == ""
+}
+
+// protocolLabel names a rule's protocol the way a sentence quotes it. The names
+// are protocol terminology and read the same in every language.
+func protocolLabel(id int64) string {
+	switch id {
+	case model.RouteProtocolTCP:
+		return "TCP"
+	case model.RouteProtocolUDP:
+		return "UDP"
+	case model.RouteProtocolBoth:
+		return "TCP/UDP"
 	}
-	return address
+	return strings.ToUpper(model.RouteProtocolName(id))
 }
 
 // DefaultBindAddress returns the address a rule binds when the request names

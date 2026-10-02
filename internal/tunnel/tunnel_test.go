@@ -555,7 +555,7 @@ func TestPlanGenerationForEachOperation(t *testing.T) {
 	}
 
 	// Delete: stop, disable, remove the file, reload, delete the interface.
-	deletePlan := h.service.planner.PlanDelete(created.Tunnel, false, false)
+	deletePlan := h.service.planner.PlanDelete(ctx, created.Tunnel, false, false)
 	for _, kind := range []string{StepUnitStop, StepUnitDisable, StepFileRemove, StepDaemonReload, StepLinkDelete} {
 		if !contains(stepKinds(deletePlan), kind) {
 			t.Fatalf("the delete plan is missing %s: %v", kind, stepKinds(deletePlan))
@@ -572,7 +572,7 @@ func TestPlanGenerationForEachOperation(t *testing.T) {
 	desired := created.Tunnel
 	desired.Mtu = 1400
 	diffs := DiffTunnel(created.Tunnel, mergedInput(desired))
-	update := h.service.planner.PlanUpdate(created.Tunnel, desired, KeepaliveFor{}, diffs, false)
+	update := h.service.planner.PlanUpdate(ctx, created.Tunnel, desired, KeepaliveFor{}, diffs, false)
 	if update.RequiresRecreate {
 		t.Fatal("an MTU change must not require a rebuild")
 	}
@@ -600,7 +600,7 @@ func TestWhichChangesForceARebuild(t *testing.T) {
 	for field, mutate := range inPlace {
 		desired := base
 		mutate(&desired)
-		if recreate, reasons := RequiresRecreate(DiffTunnel(created.Tunnel, desired)); recreate {
+		if recreate, reasons := RequiresRecreate(context.Background(), DiffTunnel(created.Tunnel, desired)); recreate {
 			t.Fatalf("changing %s must be applied in place, got %v", field, reasons)
 		}
 	}
@@ -622,7 +622,7 @@ func TestWhichChangesForceARebuild(t *testing.T) {
 	for field, mutate := range rebuild {
 		desired := base
 		mutate(&desired)
-		if recreate, _ := RequiresRecreate(DiffTunnel(created.Tunnel, desired)); !recreate {
+		if recreate, _ := RequiresRecreate(context.Background(), DiffTunnel(created.Tunnel, desired)); !recreate {
 			t.Fatalf("changing %s cannot be done on a running tunnel and must force a rebuild", field)
 		}
 	}
@@ -716,7 +716,7 @@ func TestServiceRefusesToTouchAProtectedInterface(t *testing.T) {
 	rec.IsManaged = true
 	rec.PersistenceTypeID = model.PersistenceTypeRuntime
 
-	plan := h.service.planner.PlanDown(rec)
+	plan := h.service.planner.PlanDown(ctx, rec)
 	err := h.service.guardPlan(ctx, plan, rec, false)
 	v, ok := safety.AsViolation(err)
 	if !ok {

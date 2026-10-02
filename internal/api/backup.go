@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/alloc"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/validate"
@@ -49,8 +50,9 @@ func (s *Server) handleBackupExport(w http.ResponseWriter, r *http.Request) {
 	backup := Backup{Version: BackupVersion, ExportedAt: model.NowUTC()}
 	backup.Panel.Version = s.build.Version
 	backup.Settings = s.settings.All()
-	backup.Note = "This backup carries configuration only. It contains no operator accounts, no " +
-		"password hashes and no signing key, so restoring it does not restore access to the panel."
+	backup.Note = i18n.T(r.Context(), "This backup carries configuration only. It contains no operator "+
+		"accounts, no password hashes and no signing key, so restoring it does not restore access to "+
+		"the panel.")
 
 	if s.tunnels != nil {
 		pools, err := s.tunnels.Repo().Pools(r.Context())
@@ -119,12 +121,13 @@ func (s *Server) handleBackupImport(w http.ResponseWriter, r *http.Request) {
 
 	if req.Backup.Version == 0 {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			"This does not look like a panel backup: it carries no version.", "backup.version", nil)
+			i18n.T(r.Context(), "This does not look like a panel backup: it carries no version."),
+			"backup.version", nil)
 		return
 	}
 	if req.Backup.Version != BackupVersion {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			fmt.Sprintf("This backup is version %d and this panel understands version %d.",
+			i18n.T(r.Context(), "This backup is version %d and this panel understands version %d.",
 				req.Backup.Version, BackupVersion), "backup.version", nil)
 		return
 	}
@@ -170,9 +173,9 @@ func (s *Server) handleBackupImport(w http.ResponseWriter, r *http.Request) {
 		"dry_run":  req.DryRun,
 		"actions":  actions,
 		"failures": failures,
-		"note": "Settings and pools are applied directly. Tunnels are created through the ordinary " +
-			"pipeline, so each one is validated, applied and verified exactly as if it had been " +
-			"created by hand.",
+		"note": i18n.T(r.Context(), "Settings and pools are applied directly. Tunnels are created "+
+			"through the ordinary pipeline, so each one is validated, applied and verified exactly as "+
+			"if it had been created by hand."),
 	})
 }
 
@@ -185,7 +188,7 @@ func (s *Server) importSettings(r *http.Request, req importRequest) []importActi
 		updates[key] = value
 	}
 
-	if _, verr := s.settings.Validate(updates); verr != nil {
+	if _, verr := s.settings.Validate(r.Context(), updates); verr != nil {
 		for key, message := range verr.Errors {
 			actions = append(actions, importAction{
 				Kind: "setting", Target: key, Action: "skip", Error: message,
@@ -199,7 +202,7 @@ func (s *Server) importSettings(r *http.Request, req importRequest) []importActi
 
 	if req.DryRun {
 		actions = append(actions, importAction{
-			Kind: "setting", Target: fmt.Sprintf("%d settings", len(updates)), Action: "would apply",
+			Kind: "setting", Target: i18n.T(r.Context(), "%d settings", len(updates)), Action: "would apply",
 		})
 		return actions
 	}
@@ -212,13 +215,13 @@ func (s *Server) importSettings(r *http.Request, req importRequest) []importActi
 	changed, err := s.settings.Update(r.Context(), updates, userID)
 	if err != nil {
 		actions = append(actions, importAction{
-			Kind: "setting", Target: "settings", Action: "failed", Error: err.Error(),
+			Kind: "setting", Target: i18n.T(r.Context(), "settings"), Action: "failed", Error: err.Error(),
 		})
 		return actions
 	}
 	actions = append(actions, importAction{
-		Kind: "setting", Target: fmt.Sprintf("%d settings", len(changed)), Action: "applied",
-		Detail: "settings whose value already matched were left alone",
+		Kind: "setting", Target: i18n.T(r.Context(), "%d settings", len(changed)), Action: "applied",
+		Detail: i18n.T(r.Context(), "settings whose value already matched were left alone"),
 	})
 	return actions
 }
@@ -232,7 +235,7 @@ func (s *Server) importPools(r *http.Request, req importRequest) []importAction 
 	existing, err := s.tunnels.Repo().Pools(r.Context())
 	if err != nil {
 		return append(actions, importAction{
-			Kind: "pool", Target: "pools", Action: "failed", Error: err.Error(),
+			Kind: "pool", Target: i18n.T(r.Context(), "pools"), Action: "failed", Error: err.Error(),
 		})
 	}
 	byCidr := map[string]alloc.Pool{}
@@ -244,7 +247,7 @@ func (s *Server) importPools(r *http.Request, req importRequest) []importAction 
 		if _, exists := byCidr[pool.Cidr]; exists {
 			actions = append(actions, importAction{
 				Kind: "pool", Target: pool.Cidr, Action: "skip",
-				Detail: "a pool with this range already exists",
+				Detail: i18n.T(r.Context(), "a pool with this range already exists"),
 			})
 			continue
 		}
@@ -275,7 +278,7 @@ func (s *Server) importTunnels(r *http.Request, req importRequest) []importActio
 	existing, err := s.tunnels.Repo().List(r.Context())
 	if err != nil {
 		return append(actions, importAction{
-			Kind: "tunnel", Target: "tunnels", Action: "failed", Error: err.Error(),
+			Kind: "tunnel", Target: i18n.T(r.Context(), "tunnels"), Action: "failed", Error: err.Error(),
 		})
 	}
 	byName := map[string]bool{}
@@ -288,7 +291,7 @@ func (s *Server) importTunnels(r *http.Request, req importRequest) []importActio
 		if byName[name] {
 			actions = append(actions, importAction{
 				Kind: "tunnel", Target: name, Action: "skip",
-				Detail: "a tunnel of this name already exists here; it was left alone",
+				Detail: i18n.T(r.Context(), "a tunnel of this name already exists here; it was left alone"),
 			})
 			continue
 		}
@@ -305,7 +308,7 @@ func (s *Server) importTunnels(r *http.Request, req importRequest) []importActio
 				action.Action = "would fail"
 				action.Error = err.Error()
 			} else {
-				action.Detail = fmt.Sprintf("%d operations", len(preview.Plan.Steps))
+				action.Detail = i18n.T(r.Context(), "%d operations", len(preview.Plan.Steps))
 			}
 			actions = append(actions, action)
 			continue
@@ -320,9 +323,12 @@ func (s *Server) importTunnels(r *http.Request, req importRequest) []importActio
 			})
 			continue
 		}
+		detail := i18n.T(r.Context(), "verified: true")
+		if !result.Verify.Ok {
+			detail = i18n.T(r.Context(), "verified: false")
+		}
 		actions = append(actions, importAction{
-			Kind: "tunnel", Target: result.Tunnel.InterfaceName, Action: "created",
-			Detail: fmt.Sprintf("verified: %v", result.Verify.Ok),
+			Kind: "tunnel", Target: result.Tunnel.InterfaceName, Action: "created", Detail: detail,
 		})
 		byName[result.Tunnel.InterfaceName] = true
 	}

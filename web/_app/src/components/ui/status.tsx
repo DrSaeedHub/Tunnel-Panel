@@ -70,7 +70,13 @@ export function StatusPill({
     </span>
   )
 
-  return explanation ? <Tooltip content={explanation}>{pill}</Tooltip> : pill
+  // The reason is the monitor's own sentence, laid out by its own direction;
+  // the fallback is this interface's copy and follows the page.
+  return explanation ? (
+    <Tooltip content={reason ? <span dir="auto" className="block">{reason}</span> : explanation}>{pill}</Tooltip>
+  ) : (
+    pill
+  )
 }
 
 const APPLY_PRESENTATION: Record<number, { key: string; tone: Tone; Icon: typeof CheckCircle2 }> = {
@@ -186,5 +192,5 @@ export function RouteStatusPill({
     </span>
   )
 
-  return detail ? <Tooltip content={detail}>{pill}</Tooltip> : pill
+  return detail ? <Tooltip content={<span dir="auto" className="block">{detail}</span>}>{pill}</Tooltip> : pill
 }

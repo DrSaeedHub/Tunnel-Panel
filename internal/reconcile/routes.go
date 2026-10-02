@@ -2,11 +2,10 @@ package reconcile
 
 import (
 	"context"
-	"fmt"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/route"
 	"github.com/drs/gre-panel/internal/rules"
@@ -130,7 +129,7 @@ func (s *Service) RouteReport(ctx context.Context) ([]RouteItem, RouteFindings, 
 
 	live, err := s.ruleBackend.ReadBack(ctx)
 	if err != nil {
-		findings.Detail = "the panel's own netfilter namespace could not be read: " + err.Error()
+		findings.Detail = i18n.T(ctx, "the panel's own netfilter namespace could not be read: %v", err)
 		findings.Notes = append(findings.Notes, findings.Detail)
 		return nil, findings, nil
 	}
@@ -138,8 +137,8 @@ func (s *Service) RouteReport(ctx context.Context) ([]RouteItem, RouteFindings, 
 	findings.MissingJumps = live.MissingJumps
 
 	foreign := s.foreignView(ctx, &findings)
-	items := s.classifyRoutes(records, live, foreign)
-	items = append(items, unmanagedRouteItems(records, live)...)
+	items := s.classifyRoutes(ctx, records, live, foreign)
+	items = append(items, unmanagedRouteItems(ctx, records, live)...)
 
 	sort.SliceStable(items, func(i, j int) bool {
 		left, right := int64(0), int64(0)
@@ -154,7 +153,7 @@ func (s *Service) RouteReport(ctx context.Context) ([]RouteItem, RouteFindings, 
 
 	s.forwardingFindings(ctx, desired, &findings)
 	collectShadows(items, &findings)
-	addRouteNotes(items, &findings)
+	addRouteNotes(ctx, items, &findings)
 	return items, findings, nil
 }
 
@@ -163,10 +162,11 @@ func (s *Service) RouteReport(ctx context.Context) ([]RouteItem, RouteFindings, 
 func (s *Service) foreignView(ctx context.Context, findings *RouteFindings) rules.ForeignView {
 	view, err := s.ruleBackend.Foreign(ctx)
 	if err != nil || !view.Readable {
-		detail := "the rest of this host's netfilter rules could not be read, so a rule shadowing " +
-			"the panel's would not have been noticed"
+		detail := i18n.T(ctx, "the rest of this host's netfilter rules could not be read, so a rule "+
+			"shadowing the panel's would not have been noticed")
 		if err != nil {
-			detail += ": " + err.Error()
+			detail = i18n.T(ctx, "the rest of this host's netfilter rules could not be read, so a rule "+
+				"shadowing the panel's would not have been noticed: %v", err)
 		}
 		findings.Notes = append(findings.Notes, detail)
 		return rules.ForeignView{}
@@ -177,7 +177,7 @@ func (s *Service) foreignView(ctx context.Context, findings *RouteFindings) rule
 }
 
 // classifyRoutes decides the status of every stored rule.
-func (s *Service) classifyRoutes(records []route.Record, live rules.Live,
+func (s *Service) classifyRoutes(ctx context.Context, records []route.Record, live rules.Live,
 	foreign rules.ForeignView) []RouteItem {
 
 	byRule := map[int64][]rules.LiveRule{}
@@ -208,10 +208,14 @@ func (s *Service) classifyRoutes(records []route.Record, live rules.Live,
 		case rec.ApplyStatusID == model.ApplyStatusInconsistent:
 			item.ReconcileStatusID = model.ReconcileStatusInconsistent
 			item.Status = StatusInconsistent
-			item.Detail = "the last change to this rule failed and could not be undone. The host's " +
-				"ruleset may be half-configured; reapply, or put it right by hand and then forget it."
 			if rec.LastApplyError != nil {
-				item.Detail += " The failure was: " + *rec.LastApplyError
+				item.Detail = i18n.T(ctx, "the last change to this rule failed and could not be undone. "+
+					"The host's ruleset may be half-configured; reapply, or put it right by hand and then "+
+					"forget it. The failure was: %s", *rec.LastApplyError)
+			} else {
+				item.Detail = i18n.T(ctx, "the last change to this rule failed and could not be undone. "+
+					"The host's ruleset may be half-configured; reapply, or put it right by hand and then "+
+					"forget it.")
 			}
 
 		case !rec.IsEnabled && len(installed) > 0:
@@ -219,25 +223,27 @@ func (s *Service) classifyRoutes(records []route.Record, live rules.Live,
 			// the panel believes it is not.
 			item.ReconcileStatusID = model.ReconcileStatusDrifted
 			item.Status = StatusDrifted
-			item.Detail = fmt.Sprintf("%s is disabled in the panel but %d of its rules are still "+
+			item.Detail = i18n.T(ctx, "%s is disabled in the panel but %d of its rules are still "+
 				"installed, so it is still forwarding traffic.", rec.RouteRuleTitle, len(installed))
 			item.Diffs = []FieldDiff{{
-				Field: "installed", Desired: "no rules", Actual: strconv.Itoa(len(installed)) + " rules",
+				Field: "installed", Desired: i18n.T(ctx, "no rules"),
+				Actual: i18n.T(ctx, "%d rules", len(installed)),
 			}}
 
 		case !rec.IsEnabled:
 			item.ReconcileStatusID = model.ReconcileStatusInSync
 			item.Status = StatusInSync
-			item.Detail = "the rule is disabled and nothing of it is installed, which is what disabled means"
+			item.Detail = i18n.T(ctx, "the rule is disabled and nothing of it is installed, which is what "+
+				"disabled means")
 
 		case len(installed) == 0:
 			item.ReconcileStatusID = model.ReconcileStatusMissing
 			item.Status = StatusMissing
-			item.Detail = fmt.Sprintf("%s is enabled but none of its rules are in the kernel. Reapply "+
+			item.Detail = i18n.T(ctx, "%s is enabled but none of its rules are in the kernel. Reapply "+
 				"to install them again, or forget the rule to drop the record.", rec.RouteRuleTitle)
 
 		default:
-			if diffs := missingRuleDiffs(rec, live); len(diffs) > 0 {
+			if diffs := missingRuleDiffs(ctx, rec, live); len(diffs) > 0 {
 				item.ReconcileStatusID = model.ReconcileStatusDrifted
 				item.Status = StatusDrifted
 				item.Diffs = diffs
@@ -245,18 +251,19 @@ func (s *Service) classifyRoutes(records []route.Record, live rules.Live,
 				for _, d := range diffs {
 					fields = append(fields, d.Field)
 				}
-				item.Detail = fmt.Sprintf("the installed rules for %s differ from what the panel "+
+				item.Detail = i18n.T(ctx, "the installed rules for %s differ from what the panel "+
 					"intends in %s", rec.RouteRuleTitle, strings.Join(fields, ", "))
 				break
 			}
 			item.ReconcileStatusID = model.ReconcileStatusInSync
 			item.Status = StatusInSync
-			item.Detail = fmt.Sprintf("every rule %s needs is installed", rec.RouteRuleTitle)
+			item.Detail = i18n.T(ctx, "every rule %s needs is installed", rec.RouteRuleTitle)
 		}
 
+		// A sentence of its own, said after whichever one the status gave.
 		if len(item.Shadows) > 0 {
-			item.Detail += fmt.Sprintf(" A rule this panel does not own claims the same traffic: %s. "+
-				"Nothing was changed.", item.Shadows[0].Describe())
+			item.Detail += " " + i18n.T(ctx, "A rule this panel does not own claims the same traffic: "+
+				"%s. Nothing was changed.", item.Shadows[0].DescribeIn(ctx))
 		}
 		items = append(items, item)
 	}
@@ -267,11 +274,11 @@ func (s *Service) classifyRoutes(records []route.Record, live rules.Live,
 //
 // It asks the route package the same question verification asks after an apply,
 // so drift and a failed apply can never disagree about what "installed" means.
-func missingRuleDiffs(rec route.Record, live rules.Live) []FieldDiff {
+func missingRuleDiffs(ctx context.Context, rec route.Record, live rules.Live) []FieldDiff {
 	var diffs []FieldDiff
-	for _, absent := range route.MissingRules(rec.Spec(), live) {
+	for _, absent := range route.MissingRulesIn(ctx, rec.Spec(), live) {
 		diffs = append(diffs, FieldDiff{
-			Field: absent.Role, Desired: absent.Describes, Actual: "missing from the kernel",
+			Field: absent.Role, Desired: absent.Describes, Actual: i18n.T(ctx, "missing from the kernel"),
 		})
 	}
 	return diffs
@@ -284,7 +291,7 @@ func missingRuleDiffs(rec route.Record, live rules.Live) []FieldDiff {
 // of a ruleset installed by an older version. They are reported, never deleted
 // on sight: the remedy is a reapply, which replaces the namespace with the
 // stored state and takes them with it.
-func unmanagedRouteItems(records []route.Record, live rules.Live) []RouteItem {
+func unmanagedRouteItems(ctx context.Context, records []route.Record, live rules.Live) []RouteItem {
 	known := map[int64]bool{}
 	for _, rec := range records {
 		known[rec.RouteRuleID] = true
@@ -316,24 +323,24 @@ func unmanagedRouteItems(records []route.Record, live rules.Live) []RouteItem {
 		orphan := id
 		items = append(items, RouteItem{
 			RouteRuleID:       &orphan,
-			Title:             "forwarding rule " + strconv.FormatInt(id, 10),
+			Title:             i18n.T(ctx, "forwarding rule %d", id),
 			ReconcileStatusID: model.ReconcileStatusUnmanaged,
 			Status:            StatusUnmanaged,
 			Installed:         counts[id],
 			Actions:           []string{ActionReapply},
-			Detail: fmt.Sprintf("%d rule(s) in the panel's own namespace carry the identity of "+
+			Detail: i18n.T(ctx, "%d rule(s) in the panel's own namespace carry the identity of "+
 				"forwarding rule %d, which the panel has no record of. Reapplying replaces the "+
 				"namespace with the stored rules and takes these with it.", counts[id], id),
 		})
 	}
 	if unattributed > 0 {
 		items = append(items, RouteItem{
-			Title:             "unattributed rules",
+			Title:             i18n.T(ctx, "unattributed rules"),
 			ReconcileStatusID: model.ReconcileStatusUnmanaged,
 			Status:            StatusUnmanaged,
 			Installed:         unattributed,
 			Actions:           []string{ActionReapply},
-			Detail: fmt.Sprintf("%d rule(s) in the panel's own namespace carry no identity comment, "+
+			Detail: i18n.T(ctx, "%d rule(s) in the panel's own namespace carry no identity comment, "+
 				"so they cannot be attributed to any forwarding rule. Reapplying replaces the "+
 				"namespace with the stored rules.", unattributed),
 		})
@@ -352,17 +359,18 @@ func (s *Service) forwardingFindings(ctx context.Context, desired rules.Ruleset,
 	findings.ForwardingPanelManaged = status.PanelManaged
 
 	if findings.ForwardingExpected && !status.IPv4Forwarding {
-		note := fmt.Sprintf("%d forwarding rule(s) are enabled but net.ipv4.ip_forward is off, so none "+
+		note := i18n.T(ctx, "%d forwarding rule(s) are enabled but net.ipv4.ip_forward is off, so none "+
 			"of them can carry traffic.", len(desired.Routes))
 		if status.PanelManaged {
-			note += " The panel's own sysctl file is in place, so something outside the panel turned " +
-				"it off since. Nothing was changed here."
+			note = i18n.T(ctx, "%d forwarding rule(s) are enabled but net.ipv4.ip_forward is off, so "+
+				"none of them can carry traffic. The panel's own sysctl file is in place, so something "+
+				"outside the panel turned it off since. Nothing was changed here.", len(desired.Routes))
 		}
 		findings.Notes = append(findings.Notes, note)
 	}
 	if desired.HasIPv6() && !status.IPv6Forwarding {
 		findings.Notes = append(findings.Notes,
-			"An enabled rule forwards IPv6, but net.ipv6.conf.all.forwarding is off.")
+			i18n.T(ctx, "An enabled rule forwards IPv6, but net.ipv6.conf.all.forwarding is off."))
 	}
 }
 
@@ -392,16 +400,16 @@ func collectShadows(items []RouteItem, findings *RouteFindings) {
 }
 
 // addRouteNotes turns the counts into the sentences an operator reads.
-func addRouteNotes(items []RouteItem, findings *RouteFindings) {
+func addRouteNotes(ctx context.Context, items []RouteItem, findings *RouteFindings) {
 	if len(findings.MissingJumps) > 0 {
-		findings.Notes = append(findings.Notes, fmt.Sprintf(
+		findings.Notes = append(findings.Notes, i18n.T(ctx,
 			"The panel's chains are not reached from %s. Its rules are present and correct and none "+
 				"of them is being consulted, which is what happens after another tool flushes a "+
 				"built-in chain. Reapply any rule to put the jump rules back.",
 			strings.Join(findings.MissingJumps, ", ")))
 	}
 	if len(findings.ForeignShadows) > 0 {
-		findings.Notes = append(findings.Notes, fmt.Sprintf(
+		findings.Notes = append(findings.Notes, i18n.T(ctx,
 			"%d rule(s) this panel does not own claim traffic the panel's rules also claim. They are "+
 				"reported and never removed: something else on this host owns them.",
 			len(findings.ForeignShadows)))
@@ -412,7 +420,7 @@ func addRouteNotes(items []RouteItem, findings *RouteFindings) {
 		counts[item.Status]++
 	}
 	if counts[StatusUnmanaged] > 0 {
-		findings.Notes = append(findings.Notes, fmt.Sprintf(
+		findings.Notes = append(findings.Notes, i18n.T(ctx,
 			"%d entry in the panel's own namespace has no forwarding rule behind it. Reapplying "+
 				"replaces the namespace with the stored rules.", counts[StatusUnmanaged]))
 	}

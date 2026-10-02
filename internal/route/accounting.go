@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/metrics"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/rules"
@@ -20,10 +21,12 @@ import (
 // panel's own totals are the ones that survive all of that. Presenting either
 // as the other is the correctness bug §5.2 exists to prevent, so both are
 // returned, labelled, and never added together.
-const SinceBootMeaning = "The since-boot figures are the kernel's own counters, which are zeroed " +
+//
+// It is kept in English and said with i18n.Tr where it is returned.
+var SinceBootMeaning = i18n.N("The since-boot figures are the kernel's own counters, which are zeroed " +
 	"every time the ruleset is rebuilt — on every edit, enable, disable and reboot. The " +
 	"since-creation figures are the panel's, folded across every one of those resets. They are two " +
-	"different measurements and are never added together."
+	"different measurements and are never added together.")
 
 // historyPoints is how many samples the in-memory ring buffer keeps per rule,
 // which is what the sparklines are drawn from. At the default one-second

@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/drs/gre-panel/internal/config"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // DefaultReleaseBase mirrors the installer's own default, and cmd/tnp's copy of
@@ -117,10 +119,12 @@ type Checker struct {
 	log      *slog.Logger
 	now      func() time.Time
 
-	mu       sync.Mutex
-	latest   Release
-	checked  time.Time
-	lastErr  string
+	mu      sync.Mutex
+	latest  Release
+	checked time.Time
+	// lastErr is the last check's failure, kept as an error rather than as
+	// text so it is said in the language of whoever reads it.
+	lastErr  error
 	checking bool
 }
 
@@ -228,7 +232,7 @@ func (c *Checker) Status(ctx context.Context) Status {
 	if c.Enabled() && c.stale() {
 		c.refreshInBackground(ctx)
 	}
-	return c.snapshot()
+	return c.snapshot(ctx)
 }
 
 // Refresh asks the release host now and waits for the answer. This is the
@@ -237,10 +241,10 @@ func (c *Checker) Refresh(ctx context.Context) Status {
 	if !c.begin() {
 		// Another check is already in flight; its answer is the one this
 		// caller would have got anyway.
-		return c.snapshot()
+		return c.snapshot(ctx)
 	}
 	c.fetch(ctx)
-	return c.snapshot()
+	return c.snapshot(ctx)
 }
 
 // stale reports whether the cached answer is old enough to ask again. A failed
@@ -293,12 +297,42 @@ func (c *Checker) fetch(ctx context.Context) {
 	c.checking = false
 	c.checked = c.now()
 	if err != nil {
-		c.lastErr = err.Error()
+		c.lastErr = err
 		c.log.Debug("checking for a panel update failed", "error", err, "source", c.source)
 		return
 	}
-	c.lastErr = ""
+	c.lastErr = nil
 	c.latest = release
+}
+
+// checkFailure is a check that produced no answer. It is said when it is
+// reported rather than when it happened: the answer is kept for hours and read
+// by whoever opens the dashboard next, in whatever language they read it in.
+type checkFailure struct {
+	say func(ctx context.Context) string
+	err error
+}
+
+// Error is the English, which is what the log gets.
+func (f *checkFailure) Error() string {
+	return f.say(i18n.WithLanguage(context.Background(), i18n.English))
+}
+
+func (f *checkFailure) Unwrap() error { return f.err }
+
+// failed records why a check produced no answer. cause is what went wrong
+// underneath, or nil when the release host's answer was itself the problem.
+func failed(cause error, say func(ctx context.Context) string) error {
+	return &checkFailure{say: say, err: cause}
+}
+
+// sayFailure is a check's failure in the language ctx carries.
+func sayFailure(ctx context.Context, err error) string {
+	var failure *checkFailure
+	if errors.As(err, &failure) {
+		return failure.say(ctx)
+	}
+	return err.Error()
 }
 
 // githubRelease is the half of GitHub's release object this reads.
@@ -325,25 +359,38 @@ func (c *Checker) lookup(ctx context.Context) (Release, error) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return Release{}, fmt.Errorf("the release host could not be reached: %w", err)
+		return Release{}, failed(err, func(ctx context.Context) string {
+			return i18n.T(ctx, "the release host could not be reached: %v", err)
+		})
 	}
 	defer resp.Body.Close() //nolint:errcheck // read-only
 
+	source, status := c.source, resp.StatusCode
 	switch {
-	case resp.StatusCode == http.StatusNotFound:
-		return Release{}, fmt.Errorf("%s has no releases, or is not a repository this panel can see", c.source)
-	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests:
-		return Release{}, fmt.Errorf("the release host is rate limiting this address; the next check will try again")
-	case resp.StatusCode != http.StatusOK:
-		return Release{}, fmt.Errorf("the release host answered HTTP %d", resp.StatusCode)
+	case status == http.StatusNotFound:
+		return Release{}, failed(nil, func(ctx context.Context) string {
+			return i18n.T(ctx, "%s has no releases, or is not a repository this panel can see", source)
+		})
+	case status == http.StatusForbidden || status == http.StatusTooManyRequests:
+		return Release{}, failed(nil, func(ctx context.Context) string {
+			return i18n.T(ctx, "the release host is rate limiting this address; the next check will try again")
+		})
+	case status != http.StatusOK:
+		return Release{}, failed(nil, func(ctx context.Context) string {
+			return i18n.T(ctx, "the release host answered HTTP %d", status)
+		})
 	}
 
 	var body githubRelease
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
-		return Release{}, fmt.Errorf("the release host's answer could not be read: %w", err)
+		return Release{}, failed(err, func(ctx context.Context) string {
+			return i18n.T(ctx, "the release host's answer could not be read: %v", err)
+		})
 	}
 	if strings.TrimSpace(body.TagName) == "" {
-		return Release{}, fmt.Errorf("the release host named no version")
+		return Release{}, failed(nil, func(ctx context.Context) string {
+			return i18n.T(ctx, "the release host named no version")
+		})
 	}
 
 	notes := body.Body
@@ -359,8 +406,9 @@ func (c *Checker) lookup(ctx context.Context) (Release, error) {
 	}, nil
 }
 
-// snapshot renders the current knowledge as the answer an API caller gets.
-func (c *Checker) snapshot() Status {
+// snapshot renders the current knowledge as the answer an API caller gets, in
+// the language ctx carries.
+func (c *Checker) snapshot(ctx context.Context) Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -368,9 +416,11 @@ func (c *Checker) snapshot() Status {
 		CurrentVersion: c.current,
 		Latest:         c.latest,
 		Checking:       c.checking,
-		Error:          c.lastErr,
 		Source:         c.source,
 		Enabled:        c.Enabled(),
+	}
+	if c.lastErr != nil {
+		out.Error = sayFailure(ctx, c.lastErr)
 	}
 	if !c.checked.IsZero() {
 		out.CheckedAt = c.checked.UTC().Format(time.RFC3339)
@@ -386,7 +436,7 @@ func (c *Checker) snapshot() Status {
 	// A "no" that is not "up to date" is worth saying out loud, because the
 	// two look identical from a footer that only shows a version number.
 	if running, ok := ParseVersion(c.current); !ok || !running.IsRelease() {
-		out.Note = "This build did not come from a release, so it cannot be compared against one."
+		out.Note = i18n.T(ctx, "This build did not come from a release, so it cannot be compared against one.")
 	}
 	return out
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Default binary paths, used only when nothing better was resolved at startup.
@@ -75,17 +76,21 @@ func (t *Iptables) Name() string {
 func (t *Iptables) Path() string  { return filepath.Join(t.Dir, IptablesFileName) }
 func (t *Iptables) Path6() string { return filepath.Join(t.Dir, Ip6tablesFileName) }
 
-// Capabilities reports what this backend can do here.
+// Capabilities reports what this backend can do here. Its detail is said in
+// the panel's language, since nothing hands it a request.
 func (t *Iptables) Capabilities() Capabilities {
 	available := strings.TrimSpace(t.Bin) != "" && strings.TrimSpace(t.RestoreBin) != ""
-	detail := "iptables with dedicated panel-owned chains, restored with --noflush so only " +
-		"the panel's own chains are rebuilt"
+	var detail string
 	switch {
 	case !available:
-		detail = "the iptables and iptables-restore binaries were not both found on this system"
+		detail = i18n.P("the iptables and iptables-restore binaries were not both found on this system")
 	case t.Legacy:
-		detail += "; these binaries speak to the legacy netfilter backend, which does not share " +
-			"tables with nftables rules on this host"
+		detail = i18n.P("iptables with dedicated panel-owned chains, restored with --noflush so only " +
+			"the panel's own chains are rebuilt; these binaries speak to the legacy netfilter backend, " +
+			"which does not share tables with nftables rules on this host")
+	default:
+		detail = i18n.P("iptables with dedicated panel-owned chains, restored with --noflush so only " +
+			"the panel's own chains are rebuilt")
 	}
 	return Capabilities{
 		Name:      t.Name(),
@@ -117,9 +122,10 @@ func (t *Iptables) Capabilities() Capabilities {
 	}
 }
 
-func (t *Iptables) ready() error {
+func (t *Iptables) ready(ctx context.Context) error {
 	if strings.TrimSpace(t.Bin) == "" || strings.TrimSpace(t.RestoreBin) == "" {
-		return fmt.Errorf("%w: iptables and iptables-restore were not both found", ErrUnavailable)
+		return &saidError{i18n.T(ctx, "rules: no netfilter backend is available on this host: iptables "+
+			"and iptables-restore were not both found"), ErrUnavailable}
 	}
 	return nil
 }
@@ -226,7 +232,7 @@ func (t *Iptables) jumpAssertions() []Assertion {
 	for _, b := range bins {
 		for _, j := range jumpTargets() {
 			out = append(out, Assertion{
-				Description: fmt.Sprintf("%s jump from the %s table's %s chain into %s",
+				Description: i18n.P("%s jump from the %s table's %s chain into %s",
 					b.family, j.table, j.chain, j.target),
 				Check:   []string{b.bin, "-t", j.table, "-C", j.chain, "-j", j.target},
 				Install: []string{b.bin, "-t", j.table, "-I", j.chain, j.position, "-j", j.target},
@@ -512,8 +518,8 @@ func iptDnatRules(s RouteSpec, proto Protocol) ([]iptDnat, error) {
 	}
 	for _, d := range live {
 		if d.Ports.IsRange() {
-			return nil, fmt.Errorf("%w: load balancing across a port range (%s on %s)",
-				ErrUnsupported, d.Ports, d.Address)
+			return nil, &saidError{i18n.P("rules: unsupported by this backend: load balancing across a "+
+				"port range (%s on %s)", d.Ports, d.Address), ErrUnsupported}
 		}
 	}
 
@@ -525,9 +531,10 @@ func iptDnatRules(s RouteSpec, proto Protocol) ([]iptDnat, error) {
 		// one and refused with an explanation when they do not.
 		first, last, ok := contiguousRange(live)
 		if !ok {
-			return nil, fmt.Errorf("%w: source-hash load balancing on the iptables backend needs the "+
-				"destinations to be a contiguous address range sharing one port; use round robin, or "+
-				"run the nftables backend, which hashes across any set of destinations", ErrUnsupported)
+			return nil, &saidError{i18n.P("rules: unsupported by this backend: source-hash load " +
+				"balancing on the iptables backend needs the destinations to be a contiguous address " +
+				"range sharing one port; use round robin, or run the nftables backend, which hashes " +
+				"across any set of destinations"), ErrUnsupported}
 		}
 		return []iptDnat{{target: []string{"-j", "DNAT",
 			"--to-destination", fmt.Sprintf("%s-%s:%d", first, last, live[0].Ports.Port),
@@ -560,7 +567,8 @@ func iptDnatRules(s RouteSpec, proto Protocol) ([]iptDnat, error) {
 		}
 		return out, nil
 	}
-	return nil, fmt.Errorf("%w: load balancing mode %q", ErrUnsupported, s.LoadBalance)
+	return nil, &saidError{i18n.P("rules: unsupported by this backend: load balancing mode %q",
+		s.LoadBalance), ErrUnsupported}
 }
 
 // contiguousRange reports whether the destinations are consecutive addresses on
@@ -632,7 +640,7 @@ func orFallback(value, fallback string) string {
 // The order matters: the chains have to exist before anything jumps into them,
 // or the jump is refused and the panel would report a ruleset it does not have.
 func (t *Iptables) Apply(ctx context.Context, payload Payload) error {
-	if err := t.ready(); err != nil {
+	if err := t.ready(ctx); err != nil {
 		return err
 	}
 	for _, part := range payload.Parts {
@@ -646,7 +654,7 @@ func (t *Iptables) Apply(ctx context.Context, payload Payload) error {
 			return err
 		}
 		if _, err := t.Runner.Run(ctx, part.Argv); err != nil {
-			return fmt.Errorf("restoring the panel's %s rules: %w", part.Kind, err)
+			return i18n.Errorf(ctx, "restoring the panel's %s rules: %w", part.Kind, err)
 		}
 	}
 
@@ -661,7 +669,7 @@ func (t *Iptables) Apply(ctx context.Context, payload Payload) error {
 			continue // already there; adding it again is what duplicates rules
 		}
 		if _, err := t.Runner.Run(ctx, assertion.Install); err != nil {
-			return fmt.Errorf("installing the %s: %w", assertion.Description, err)
+			return i18n.Errorf(ctx, "installing the %s: %w", assertion.Description, err)
 		}
 	}
 	return nil
@@ -674,7 +682,7 @@ func (t *Iptables) ipv6Available() bool {
 // ReadBack lists the panel's own chains, and reports any jump rule missing from
 // a built-in chain — the classic failure after another tool flushes one.
 func (t *Iptables) ReadBack(ctx context.Context) (Live, error) {
-	if err := t.ready(); err != nil {
+	if err := t.ready(ctx); err != nil {
 		return Live{}, err
 	}
 	live := Live{Backend: t.Name()}
@@ -761,13 +769,13 @@ func tablesOf(chain string) []string {
 // a count to a rule a matter of reading the identity comment rather than
 // correlating two different listings.
 func (t *Iptables) Counters(ctx context.Context) (map[int64]Counter, error) {
-	if err := t.ready(); err != nil {
+	if err := t.ready(ctx); err != nil {
 		return nil, err
 	}
 	saveBin := t.saveBin()
 	res, err := t.Runner.Run(ctx, []string{saveBin, "-c", "-t", "filter"})
 	if err != nil {
-		return nil, fmt.Errorf("reading the panel's counters: %w", err)
+		return nil, i18n.Errorf(ctx, "reading the panel's counters: %w", err)
 	}
 	return ParseIptablesCounters(res.Stdout), nil
 }
@@ -834,7 +842,7 @@ func ParseIptablesCounters(text string) map[int64]Counter {
 // exist, and a filter rule cannot take a packet the panel's prerouting rule
 // would otherwise have redirected. Nothing found is ever modified.
 func (t *Iptables) Foreign(ctx context.Context) (ForeignView, error) {
-	if err := t.ready(); err != nil {
+	if err := t.ready(ctx); err != nil {
 		return ForeignView{Detail: err.Error()}, err
 	}
 	view := ForeignView{}
@@ -843,8 +851,8 @@ func (t *Iptables) Foreign(ctx context.Context) (ForeignView, error) {
 	res, err := t.Runner.Run(ctx, []string{saveBin, "-t", "nat"})
 	if err != nil {
 		return ForeignView{
-			Detail: "the host's nat table could not be listed: " + strings.TrimSpace(res.Stderr),
-		}, fmt.Errorf("listing the host nat table: %w", err)
+			Detail: i18n.T(ctx, "the host's nat table could not be listed: %s", strings.TrimSpace(res.Stderr)),
+		}, i18n.Errorf(ctx, "listing the host nat table: %w", err)
 	}
 	view.Readable = true
 	view.Rules = append(view.Rules, ParseIptablesForeign(res.Stdout, "nat")...)
@@ -873,7 +881,7 @@ func (t *Iptables) save6Bin() string {
 // taking out the jump rules that point at them. Anything already gone is
 // skipped rather than treated as a failure.
 func (t *Iptables) Flush(ctx context.Context) error {
-	if err := t.ready(); err != nil {
+	if err := t.ready(ctx); err != nil {
 		return err
 	}
 	bins := []string{t.Bin}
@@ -888,7 +896,7 @@ func (t *Iptables) Flush(ctx context.Context) error {
 			}
 			if _, err := t.Runner.Run(ctx,
 				[]string{bin, "-t", j.table, "-D", j.chain, "-j", j.target}); err != nil {
-				return fmt.Errorf("removing the jump from %s/%s: %w", j.table, j.chain, err)
+				return i18n.Errorf(ctx, "removing the jump from %s/%s: %w", j.table, j.chain, err)
 			}
 		}
 		for _, chain := range OwnedChains() {
@@ -897,7 +905,7 @@ func (t *Iptables) Flush(ctx context.Context) error {
 					continue // the chain is not there, so there is nothing to flush
 				}
 				if _, err := t.Runner.Run(ctx, []string{bin, "-t", table, "-X", chain}); err != nil {
-					return fmt.Errorf("removing the chain %s: %w", chain, err)
+					return i18n.Errorf(ctx, "removing the chain %s: %w", chain, err)
 				}
 			}
 		}

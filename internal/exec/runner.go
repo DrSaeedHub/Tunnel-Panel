@@ -14,13 +14,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	osexec "os/exec"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // DefaultTimeout bounds any call whose context carries no earlier deadline.
@@ -132,14 +132,16 @@ func (c *CommandRunner) Run(ctx context.Context, argv []string) (Result, error) 
 	record(ctx, res, runErr)
 
 	if runErr != nil {
-		return res, wrap(res, runErr)
+		return res, wrap(ctx, res, runErr)
 	}
 	return res, nil
 }
 
 // wrap turns a process failure into an error whose message names the command
-// and quotes the tail of stderr, which is what an operator needs to see.
-func wrap(res Result, err error) error {
+// and quotes the tail of stderr, which is what an operator needs to see. The
+// sentence is said in the language of the request; what the program printed
+// is quoted as it is.
+func wrap(ctx context.Context, res Result, err error) error {
 	detail := strings.TrimSpace(res.Stderr)
 	if detail == "" {
 		detail = strings.TrimSpace(res.Stdout)
@@ -148,9 +150,9 @@ func wrap(res Result, err error) error {
 		detail = err.Error()
 	}
 	if res.TimedOut {
-		return fmt.Errorf("%s timed out after %s: %s", res.Argv[0], res.Duration.Round(time.Millisecond), detail)
+		return i18n.Errorf(ctx, "%s timed out after %s: %s", res.Argv[0], res.Duration.Round(time.Millisecond), detail)
 	}
-	return fmt.Errorf("%s exited %d: %s", res.Argv[0], res.ExitCode, detail)
+	return i18n.Errorf(ctx, "%s exited %d: %s", res.Argv[0], res.ExitCode, detail)
 }
 
 // record appends the invocation to the trace on the context, if there is one.

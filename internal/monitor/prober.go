@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 )
 
@@ -138,10 +139,10 @@ func (p *prober) Snapshot() Snapshot {
 func (p *prober) run(ctx context.Context) error {
 	cfg := p.Config()
 
-	if err := sameFamily(cfg.Source, cfg.Target); err != nil {
+	if err := sameFamily(ctx, cfg.Source, cfg.Target); err != nil {
 		return err
 	}
-	target, isIPv6, err := targetAddr(cfg.Target)
+	target, isIPv6, err := targetAddr(ctx, cfg.Target)
 	if err != nil {
 		return err
 	}
@@ -229,7 +230,7 @@ func (p *prober) send(ctx context.Context, conn PacketConn, target net.Addr) err
 			// A send failure is recorded against the probe rather than killing
 			// the prober: a transient ENETUNREACH while an interface is being
 			// rebuilt is a loss, not a fault.
-			p.window.Error(sequence, "the probe could not be sent: "+err.Error())
+			p.window.Error(sequence, i18n.P("the probe could not be sent: %s", err))
 		}
 
 		sequence = (sequence + 1) % maxSequence

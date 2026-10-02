@@ -203,6 +203,11 @@ export interface SettingSchemaEntry {
   key: string
   type: SettingKind
   category: string
+  /**
+   * The setting's name, in the language of the request. Absent from a backend
+   * that predates it, in which case the label is worked out from the key.
+   */
+  label?: string
   description: string
   default: unknown
   constraints: SettingConstraints
@@ -376,10 +381,15 @@ export interface VerifyReport {
   oper_state?: string
 }
 
+/**
+ * One component of the encapsulation overhead (MtuTerm in internal/validate).
+ * The name is a fixed English phrase -- "outer IPv4 header", "GRE key" -- that
+ * the locale tables translate; the type used to say label/detail, which the
+ * backend never sends, so the breakdown tooltip listed nothing but ": 20 B".
+ */
 export interface MtuTerm {
-  label: string
+  name: string
   bytes: number
-  detail?: string
 }
 
 export interface MtuAdvice {
@@ -897,10 +907,17 @@ export interface CountersResponse {
 
 // ---------------------------------------------------------------- reconcile
 
+/**
+ * One attribute that differs between what the panel stored and what the host
+ * holds (FieldDiff in internal/reconcile). The wire names are desired/actual;
+ * this type said expected/observed, so every diff rendered both values blank.
+ */
 export interface FieldDiff {
   field: string
-  expected: string
-  observed: string
+  /** What the panel has stored. */
+  desired: string
+  /** What the host actually holds. */
+  actual: string
 }
 
 export interface ReconcileItem {

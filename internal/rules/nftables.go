@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // DefaultNftBin is used only when nothing better was resolved at startup.
@@ -138,13 +139,14 @@ func (n *Nftables) Name() string { return BackendNftables }
 // Path is where this backend's rendered ruleset lives.
 func (n *Nftables) Path() string { return filepath.Join(n.Dir, NftFileName) }
 
-// Capabilities reports what this backend can do here.
+// Capabilities reports what this backend can do here. Its detail is said in
+// the panel's language, since nothing hands it a request.
 func (n *Nftables) Capabilities() Capabilities {
 	available := strings.TrimSpace(n.Bin) != ""
-	detail := "native nftables in a table owned entirely by the panel; changes are one atomic " +
-		"transaction and coexist with other tables on this host"
+	detail := i18n.P("native nftables in a table owned entirely by the panel; changes are one atomic " +
+		"transaction and coexist with other tables on this host")
 	if !available {
-		detail = "the nft binary was not found on this system"
+		detail = i18n.P("the nft binary was not found on this system")
 	}
 	return Capabilities{
 		Name:      BackendNftables,
@@ -219,9 +221,10 @@ func (n *Nftables) canSpellChain(name string) bool {
 	return true
 }
 
-func (n *Nftables) ready() error {
+func (n *Nftables) ready(ctx context.Context) error {
 	if strings.TrimSpace(n.Bin) == "" {
-		return fmt.Errorf("%w: the nft binary was not found", ErrUnavailable)
+		return &saidError{i18n.T(ctx, "rules: no netfilter backend is available on this host: the nft "+
+			"binary was not found"), ErrUnavailable}
 	}
 	return nil
 }
@@ -696,8 +699,8 @@ func nftDnatTarget(s RouteSpec) (string, error) {
 	// silently mapping every connection to the first port of the range.
 	for _, d := range live {
 		if d.Ports.IsRange() {
-			return "", fmt.Errorf("%w: load balancing across a port range (%s on %s)",
-				ErrUnsupported, d.Ports, d.Address)
+			return "", &saidError{i18n.P("rules: unsupported by this backend: load balancing across a "+
+				"port range (%s on %s)", d.Ports, d.Address), ErrUnsupported}
 		}
 	}
 
@@ -735,7 +738,8 @@ func nftDnatTarget(s RouteSpec) (string, error) {
 		return fmt.Sprintf("dnat %s to numgen inc mod %d map { %s }",
 			fam, total, strings.Join(entries, ", ")), nil
 	}
-	return "", fmt.Errorf("%w: load balancing mode %q", ErrUnsupported, s.LoadBalance)
+	return "", &saidError{i18n.P("rules: unsupported by this backend: load balancing mode %q",
+		s.LoadBalance), ErrUnsupported}
 }
 
 // nftAddressPort renders one destination as an address and port, bracketing an
@@ -813,7 +817,7 @@ func join(parts ...string) string {
 // A zero exit code is not treated as proof of anything: the caller verifies by
 // reading the ruleset back from the kernel.
 func (n *Nftables) Apply(ctx context.Context, payload Payload) error {
-	if err := n.ready(); err != nil {
+	if err := n.ready(ctx); err != nil {
 		return err
 	}
 	for _, part := range payload.Parts {
@@ -821,7 +825,7 @@ func (n *Nftables) Apply(ctx context.Context, payload Payload) error {
 			return err
 		}
 		if _, err := n.Runner.Run(ctx, part.Argv); err != nil {
-			return fmt.Errorf("applying the nftables ruleset: %w", err)
+			return i18n.Errorf(ctx, "applying the nftables ruleset: %w", err)
 		}
 	}
 	return nil
@@ -829,7 +833,7 @@ func (n *Nftables) Apply(ctx context.Context, payload Payload) error {
 
 // ReadBack returns the panel's table as the kernel holds it.
 func (n *Nftables) ReadBack(ctx context.Context) (Live, error) {
-	if err := n.ready(); err != nil {
+	if err := n.ready(ctx); err != nil {
 		return Live{}, err
 	}
 	res, err := n.Runner.Run(ctx, []string{n.Bin, "list", "table", TableFamily, TableName})
@@ -839,7 +843,7 @@ func (n *Nftables) ReadBack(ctx context.Context) (Live, error) {
 		if isMissingTable(res.Stderr) {
 			return Live{Backend: BackendNftables}, nil
 		}
-		return Live{Backend: BackendNftables}, fmt.Errorf("reading the panel's nftables table: %w", err)
+		return Live{Backend: BackendNftables}, i18n.Errorf(ctx, "reading the panel's nftables table: %w", err)
 	}
 	return parseNftLive(res.Stdout), nil
 }
@@ -891,7 +895,7 @@ func parseNftLive(out string) Live {
 // counter there would measure connections while claiming to measure bytes
 // (§5.1).
 func (n *Nftables) Counters(ctx context.Context) (map[int64]Counter, error) {
-	if err := n.ready(); err != nil {
+	if err := n.ready(ctx); err != nil {
 		return nil, err
 	}
 	res, err := n.Runner.Run(ctx, []string{n.Bin, "-j", "list", "counters", "table", TableFamily, TableName})
@@ -899,9 +903,13 @@ func (n *Nftables) Counters(ctx context.Context) (map[int64]Counter, error) {
 		if isMissingTable(res.Stderr) {
 			return map[int64]Counter{}, nil
 		}
-		return nil, fmt.Errorf("reading the panel's counters: %w", err)
+		return nil, i18n.Errorf(ctx, "reading the panel's counters: %w", err)
 	}
-	return parseNftCounters(res.Stdout)
+	counters, err := parseNftCounters(res.Stdout)
+	if err != nil {
+		return nil, i18n.Errorf(ctx, "reading the counter list: %w", err)
+	}
+	return counters, nil
 }
 
 // nftCounterList is the shape `nft -j list counters` returns: one object per
@@ -922,7 +930,8 @@ type nftCounterList struct {
 func parseNftCounters(out string) (map[int64]Counter, error) {
 	var parsed nftCounterList
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
-		return nil, fmt.Errorf("reading the counter list: %w", err)
+		// The caller says what was being read, in the request's language.
+		return nil, err
 	}
 	counters := map[int64]Counter{}
 	for _, entry := range parsed.Nftables {
@@ -971,14 +980,15 @@ func parseCounterName(name string) (int64, string, bool) {
 // prerouting, and modifies nothing: the panel never deletes a rule it does not
 // own, whatever it finds.
 func (n *Nftables) Foreign(ctx context.Context) (ForeignView, error) {
-	if err := n.ready(); err != nil {
+	if err := n.ready(ctx); err != nil {
 		return ForeignView{Detail: err.Error()}, err
 	}
 	res, err := n.Runner.Run(ctx, []string{n.Bin, "list", "ruleset"})
 	if err != nil {
 		return ForeignView{
-			Detail: "the host's nftables ruleset could not be listed: " + strings.TrimSpace(res.Stderr),
-		}, fmt.Errorf("listing the host ruleset: %w", err)
+			Detail: i18n.T(ctx, "the host's nftables ruleset could not be listed: %s",
+				strings.TrimSpace(res.Stderr)),
+		}, i18n.Errorf(ctx, "listing the host ruleset: %w", err)
 	}
 	found := ParseNftForeign(res.Stdout)
 	return ForeignView{Readable: true, Rules: found, Managers: managerNames(found)}, nil
@@ -987,12 +997,12 @@ func (n *Nftables) Foreign(ctx context.Context) (ForeignView, error) {
 // Flush removes the panel's table, and only the panel's table. Deleting a table
 // that is already gone is a success, not an error.
 func (n *Nftables) Flush(ctx context.Context) error {
-	if err := n.ready(); err != nil {
+	if err := n.ready(ctx); err != nil {
 		return err
 	}
 	res, err := n.Runner.Run(ctx, []string{n.Bin, "delete", "table", TableFamily, TableName})
 	if err != nil && !isMissingTable(res.Stderr) {
-		return fmt.Errorf("removing the panel's nftables table: %w", err)
+		return i18n.Errorf(ctx, "removing the panel's nftables table: %w", err)
 	}
 	return nil
 }

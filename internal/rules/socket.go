@@ -2,12 +2,15 @@ package rules
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Socket states as the kernel numbers them in /proc/net/tcp. Only LISTEN
@@ -36,19 +39,36 @@ type Listener struct {
 	Uid int `json:"uid"`
 }
 
-// Describe renders the listener the way an error message names it.
-func (l Listener) Describe() string {
-	where := fmt.Sprintf("%s:%d", l.Address, l.Port)
+// Describe renders the listener the way an error message names it, in the
+// panel's language.
+func (l Listener) Describe() string { return l.DescribeIn(context.Background()) }
+
+// DescribeIn is Describe in the language ctx carries.
+//
+// Each shape is its own sentence, because "every local address on port 80"
+// cannot be dropped into a Persian sentence where an address goes.
+func (l Listener) DescribeIn(ctx context.Context) string {
+	protocol := string(l.Protocol)
 	if l.IsAnyAddress() {
-		where = fmt.Sprintf("every local address on port %d", l.Port)
+		switch {
+		case l.ProcessName != "" && l.ProcessID != 0:
+			return i18n.T(ctx, "%s (pid %d) is listening on %s/every local address on port %d",
+				l.ProcessName, l.ProcessID, protocol, l.Port)
+		case l.ProcessName != "":
+			return i18n.T(ctx, "%s is listening on %s/every local address on port %d",
+				l.ProcessName, protocol, l.Port)
+		}
+		return i18n.T(ctx, "a process this panel cannot identify is listening on %s/every local "+
+			"address on port %d", protocol, l.Port)
 	}
+	where := fmt.Sprintf("%s:%d", l.Address, l.Port)
 	switch {
 	case l.ProcessName != "" && l.ProcessID != 0:
-		return fmt.Sprintf("%s (pid %d) is listening on %s/%s", l.ProcessName, l.ProcessID, l.Protocol, where)
+		return i18n.T(ctx, "%s (pid %d) is listening on %s/%s", l.ProcessName, l.ProcessID, protocol, where)
 	case l.ProcessName != "":
-		return fmt.Sprintf("%s is listening on %s/%s", l.ProcessName, l.Protocol, where)
+		return i18n.T(ctx, "%s is listening on %s/%s", l.ProcessName, protocol, where)
 	}
-	return fmt.Sprintf("a process this panel cannot identify is listening on %s/%s", l.Protocol, where)
+	return i18n.T(ctx, "a process this panel cannot identify is listening on %s/%s", protocol, where)
 }
 
 // IsAnyAddress reports whether the socket is bound to every local address, in

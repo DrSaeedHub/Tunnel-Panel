@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/persist"
@@ -67,12 +68,12 @@ func (r VerifyReport) Warnings() []validate.Warning {
 	return out
 }
 
-func (r *VerifyReport) add(check VerifyCheck) {
+func (r *VerifyReport) add(ctx context.Context, check VerifyCheck) {
 	r.Checks = append(r.Checks, check)
 	if check.Fatal && !check.Ok && !check.Skipped {
 		detail := check.Detail
 		if detail == "" {
-			detail = fmt.Sprintf("%s: expected %s, found %s", check.Name, check.Expected, check.Actual)
+			detail = i18n.T(ctx, "%s: expected %s, found %s", check.Name, check.Expected, check.Actual)
 		}
 		r.Failures = append(r.Failures, detail)
 	}
@@ -92,44 +93,44 @@ func (s *Service) Verify(ctx context.Context, rec Record) VerifyReport {
 
 	observed, err := s.links.Get(ctx, rec.InterfaceName)
 	if err != nil {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckLinkExists, Fatal: true,
-			Detail:   fmt.Sprintf("the interface %s does not exist", rec.InterfaceName),
-			Expected: rec.InterfaceName, Actual: "absent",
+			Detail:   i18n.T(ctx, "the interface %s does not exist", rec.InterfaceName),
+			Expected: rec.InterfaceName, Actual: i18n.T(ctx, "absent"),
 		})
 		report.Ok = false
 		return report
 	}
 	report.OperState = observed.OperState
-	report.add(VerifyCheck{Name: CheckLinkExists, Ok: true, Fatal: true, Actual: rec.InterfaceName})
+	report.add(ctx, VerifyCheck{Name: CheckLinkExists, Ok: true, Fatal: true, Actual: rec.InterfaceName})
 
 	// 1. The type matches what was requested. The detail is written for the
 	// case it is in: phrasing a passing check as a mismatch made the report
 	// read as though something were wrong when nothing was.
 	typeMatches := observed.Kind == desiredSpec.Kind
-	typeDetail := fmt.Sprintf("the interface %s is of type %s, as requested",
+	typeDetail := i18n.T(ctx, "the interface %s is of type %s, as requested",
 		rec.InterfaceName, observed.Kind)
 	if !typeMatches {
-		typeDetail = fmt.Sprintf("the interface %s is of type %s, but %s was requested",
+		typeDetail = i18n.T(ctx, "the interface %s is of type %s, but %s was requested",
 			rec.InterfaceName, observed.Kind, desiredSpec.Kind)
 	}
-	report.add(VerifyCheck{
+	report.add(ctx, VerifyCheck{
 		Name: CheckLinkType, Ok: typeMatches, Fatal: true,
 		Expected: desiredSpec.Kind, Actual: observed.Kind,
 		Detail: typeDetail,
 	})
 
 	// 2. Every requested parameter matches the actual one.
-	for _, check := range parameterChecks(desiredSpec, observed) {
-		report.add(check)
+	for _, check := range parameterChecks(ctx, desiredSpec, observed) {
+		report.add(ctx, check)
 	}
 
 	// 3. Every requested address is present with the right prefix length.
-	report.add(addressCheck(desiredAddresses, observed))
+	report.add(ctx, addressCheck(ctx, desiredAddresses, observed))
 
 	// 4. The flags include UP and LOWER_UP. Operational state is deliberately not
 	// part of the decision.
-	report.add(flagCheck(rec, observed))
+	report.add(ctx, flagCheck(ctx, rec, observed))
 
 	// 5. For systemd persistence the unit must be enabled and active, or the
 	// tunnel will not come back after a reboot and the panel would be reporting
@@ -142,46 +143,84 @@ func (s *Service) Verify(ctx context.Context, rec Record) VerifyReport {
 		// it applies. Telling an operator that an enabled unit "would not return
 		// after a reboot" is worse than saying nothing.
 		enabledOk := err == nil && enabled
-		enabledDetail := fmt.Sprintf("the unit %s is enabled, so the tunnel returns after a reboot", unit)
+		enabledDetail := i18n.T(ctx, "the unit %s is enabled, so the tunnel returns after a reboot", unit)
 		if !enabledOk {
-			enabledDetail = fmt.Sprintf("the unit %s is %s, so the tunnel would not return after a reboot",
-				unit, orUnknown(state))
+			enabledDetail = i18n.T(ctx, "the unit %s is %s, so the tunnel would not return after a reboot",
+				unit, orUnknown(ctx, state))
 		}
-		report.add(VerifyCheck{
+		// Expected stays systemd's own word, because Actual is what systemctl
+		// printed and the two are read side by side.
+		report.add(ctx, VerifyCheck{
 			Name: CheckUnitEnabled, Ok: enabledOk, Fatal: true,
 			Expected: "enabled", Actual: state,
 			Detail: enabledDetail,
 		})
 
 		active, state, err := s.store.IsActive(ctx, unit)
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckUnitActive, Ok: err == nil && active, Fatal: true,
 			Expected: "active", Actual: state,
-			Detail: fmt.Sprintf("the unit %s is %s", unit, orUnknown(state)),
+			Detail: i18n.T(ctx, "the unit %s is %s", unit, orUnknown(ctx, state)),
 		})
 	}
 
 	// 6. A short peer probe, reported and never fatal: the far end may
 	// legitimately not be configured yet.
-	report.add(s.peerCheck(ctx, rec))
+	report.add(ctx, s.peerCheck(ctx, rec))
 
 	report.Ok = len(report.Failures) == 0
 	return report
 }
 
+// The parameters the parameter check compares, each of which is named in its
+// own sentence when it does not match.
+const (
+	paramLocal = iota
+	paramRemote
+	paramTtl
+	paramHopLimit
+	paramMtu
+	paramIKey
+	paramOKey
+)
+
+// mismatchClause says that one parameter is not what was asked for. Each
+// parameter has a sentence of its own rather than a label dropped into a shared
+// one, because the word order around the name is not the same in every
+// language.
+func mismatchClause(ctx context.Context, param int, actual, expected string) string {
+	actual, expected = orNone(ctx, actual), orNone(ctx, expected)
+	switch param {
+	case paramLocal:
+		return i18n.T(ctx, "local endpoint is %s, not %s", actual, expected)
+	case paramRemote:
+		return i18n.T(ctx, "remote endpoint is %s, not %s", actual, expected)
+	case paramTtl:
+		return i18n.T(ctx, "TTL is %s, not %s", actual, expected)
+	case paramHopLimit:
+		return i18n.T(ctx, "hop limit is %s, not %s", actual, expected)
+	case paramMtu:
+		return i18n.T(ctx, "MTU is %s, not %s", actual, expected)
+	case paramIKey:
+		return i18n.T(ctx, "inbound key is %s, not %s", actual, expected)
+	default:
+		return i18n.T(ctx, "outbound key is %s, not %s", actual, expected)
+	}
+}
+
 // parameterChecks compares each requested attribute against the live one.
-func parameterChecks(desired link.TunnelSpec, observed link.Link) []VerifyCheck {
+func parameterChecks(ctx context.Context, desired link.TunnelSpec, observed link.Link) []VerifyCheck {
 	actual := observed.Tunnel
 	if actual == nil {
 		return []VerifyCheck{{
 			Name: CheckParameters, Fatal: true,
-			Detail:   "the interface exists but reports no tunnel attributes at all",
-			Expected: "tunnel attributes", Actual: "none",
+			Detail:   i18n.T(ctx, "the interface exists but reports no tunnel attributes at all"),
+			Expected: i18n.T(ctx, "tunnel attributes"), Actual: i18n.T(ctx, "none"),
 		}}
 	}
 
 	type comparison struct {
-		label            string
+		param            int
 		expected, actual string
 	}
 	// An IPv6 tunnel carries a hop limit rather than a TTL, and it is the same
@@ -192,41 +231,43 @@ func parameterChecks(desired link.TunnelSpec, observed link.Link) []VerifyCheck 
 	// the apply succeeded, verification compared two different fields, and the
 	// whole thing rolled back.
 	expectedTtl := desired.Ttl
-	ttlLabel := "TTL"
+	ttlParam := paramTtl
 	if link.IsIPv6Kind(desired.Kind) {
-		ttlLabel = "hop limit"
+		ttlParam = paramHopLimit
 		if desired.HopLimit != nil {
 			expectedTtl = *desired.HopLimit
 		}
 	}
 
 	comparisons := []comparison{
-		{"local endpoint", desired.Local, actual.Local},
-		{"remote endpoint", desired.Remote, actual.Remote},
-		{ttlLabel, itoa(int64(expectedTtl)), itoa(int64(actual.Ttl))},
-		{"MTU", itoa(int64(desired.Mtu)), itoa(int64(observed.MTU))},
-		{"inbound key", keyText(desired.IKey), keyText(actual.IKey)},
-		{"outbound key", keyText(desired.OKey), keyText(actual.OKey)},
+		{paramLocal, desired.Local, actual.Local},
+		{paramRemote, desired.Remote, actual.Remote},
+		{ttlParam, itoa(int64(expectedTtl)), itoa(int64(actual.Ttl))},
+		{paramMtu, itoa(int64(desired.Mtu)), itoa(int64(observed.MTU))},
+		{paramIKey, keyText(desired.IKey), keyText(actual.IKey)},
+		{paramOKey, keyText(desired.OKey), keyText(actual.OKey)},
 	}
 
 	var mismatches []string
 	for _, c := range comparisons {
 		if c.expected != c.actual {
-			mismatches = append(mismatches, fmt.Sprintf("%s is %s, not %s",
-				c.label, orNone(c.actual), orNone(c.expected)))
+			mismatches = append(mismatches, mismatchClause(ctx, c.param, c.actual, c.expected))
 		}
 	}
 	if len(mismatches) == 0 {
-		return []VerifyCheck{{Name: CheckParameters, Ok: true, Fatal: true, Detail: "every parameter matches"}}
+		return []VerifyCheck{{
+			Name: CheckParameters, Ok: true, Fatal: true, Detail: i18n.T(ctx, "every parameter matches"),
+		}}
 	}
 	return []VerifyCheck{{
 		Name: CheckParameters, Fatal: true,
-		Detail:   "the interface exists but " + strings.Join(mismatches, "; "),
+		Detail: i18n.T(ctx, "the interface exists but %s",
+			strings.Join(mismatches, clauseSeparator(i18n.Language(ctx)))),
 		Expected: describeSpec(desired), Actual: describeActual(observed),
 	}}
 }
 
-func addressCheck(desired []link.Address, observed link.Link) VerifyCheck {
+func addressCheck(ctx context.Context, desired []link.Address, observed link.Link) VerifyCheck {
 	var missing []string
 	for _, want := range desired {
 		found := false
@@ -243,12 +284,12 @@ func addressCheck(desired []link.Address, observed link.Link) VerifyCheck {
 	if len(missing) == 0 {
 		return VerifyCheck{
 			Name: CheckAddresses, Ok: true, Fatal: true,
-			Detail: fmt.Sprintf("all %d address(es) are present with the right prefix length", len(desired)),
+			Detail: i18n.T(ctx, "all %d address(es) are present with the right prefix length", len(desired)),
 		}
 	}
 	return VerifyCheck{
 		Name: CheckAddresses, Fatal: true,
-		Detail:   "missing from the interface: " + strings.Join(missing, ", "),
+		Detail:   i18n.T(ctx, "missing from the interface: %s", strings.Join(missing, ", ")),
 		Expected: addressText(desired), Actual: addressText(observed.Addresses),
 	}
 }
@@ -257,23 +298,23 @@ func addressCheck(desired []link.Address, observed link.Link) VerifyCheck {
 // from the UP and LOWER_UP flags, never from the operational state. A healthy
 // point-to-point tunnel device reports UNKNOWN, and requiring UP would fail
 // every working tunnel there is (§2, §9.3).
-func flagCheck(rec Record, observed link.Link) VerifyCheck {
+func flagCheck(ctx context.Context, rec Record, observed link.Link) VerifyCheck {
 	if !rec.IsEnabled {
 		return VerifyCheck{
 			Name: CheckFlags, Ok: !observed.IsUp, Fatal: true,
-			Expected: "not up", Actual: flagText(observed),
-			Detail: "this tunnel is configured to be down",
+			Expected: i18n.T(ctx, "not up"), Actual: flagText(ctx, observed),
+			Detail: i18n.T(ctx, "this tunnel is configured to be down"),
 		}
 	}
 	ok := observed.IsUp && observed.IsLowerUp
-	detail := fmt.Sprintf("the flags are %s and the operational state is %s, which is normal for a "+
-		"point-to-point tunnel", flagText(observed), orUnknown(observed.OperState))
+	detail := i18n.T(ctx, "the flags are %s and the operational state is %s, which is normal for a "+
+		"point-to-point tunnel", flagText(ctx, observed), orUnknown(ctx, observed.OperState))
 	if !ok {
-		detail = fmt.Sprintf("the flags are %s; both UP and LOWER_UP are required", flagText(observed))
+		detail = i18n.T(ctx, "the flags are %s; both UP and LOWER_UP are required", flagText(ctx, observed))
 	}
 	return VerifyCheck{
 		Name: CheckFlags, Ok: ok, Fatal: true,
-		Expected: "UP and LOWER_UP", Actual: flagText(observed), Detail: detail,
+		Expected: i18n.T(ctx, "UP and LOWER_UP"), Actual: flagText(ctx, observed), Detail: detail,
 	}
 }
 
@@ -289,7 +330,7 @@ func (s *Service) peerCheck(ctx context.Context, rec Record) VerifyCheck {
 	if len(rec.Addresses) == 0 {
 		return VerifyCheck{
 			Name: CheckPeerReachable, Skipped: true,
-			Detail: "this tunnel has no address, so there is nothing to probe from",
+			Detail: i18n.T(ctx, "this tunnel has no address, so there is nothing to probe from"),
 		}
 	}
 	primary := rec.Addresses[0]
@@ -297,14 +338,14 @@ func (s *Service) peerCheck(ctx context.Context, rec Record) VerifyCheck {
 	if target == "" {
 		return VerifyCheck{
 			Name: CheckPeerReachable, Skipped: true,
-			Detail: "no peer address is recorded for this tunnel, so there is nothing to probe",
+			Detail: i18n.T(ctx, "no peer address is recorded for this tunnel, so there is nothing to probe"),
 		}
 	}
 	prober := s.peerProber()
 	if prober == nil {
 		return VerifyCheck{
 			Name: CheckPeerReachable, Skipped: true,
-			Detail: "no prober is configured, so peer reachability was not checked",
+			Detail: i18n.T(ctx, "no prober is configured, so peer reachability was not checked"),
 		}
 	}
 
@@ -316,12 +357,12 @@ func (s *Service) peerCheck(ctx context.Context, rec Record) VerifyCheck {
 	case err != nil:
 		return VerifyCheck{
 			Name: CheckPeerReachable, Skipped: true,
-			Detail: "the peer could not be probed: " + err.Error(),
+			Detail: i18n.T(ctx, "the peer could not be probed: %s", err),
 		}
 	case result.Received > 0:
 		return VerifyCheck{
 			Name: CheckPeerReachable, Ok: true,
-			Detail: fmt.Sprintf("%d of %d probes to %s were answered", result.Received, result.Sent, target),
+			Detail: i18n.T(ctx, "%d of %d probes to %s were answered", result.Received, result.Sent, target),
 		}
 	default:
 		// Not fatal, and deliberately so: the other end may simply not be
@@ -329,7 +370,7 @@ func (s *Service) peerCheck(ctx context.Context, rec Record) VerifyCheck {
 		// tunnel between two servers.
 		return VerifyCheck{
 			Name: CheckPeerReachable,
-			Detail: fmt.Sprintf("none of the %d probes to %s were answered. That is expected while the "+
+			Detail: i18n.T(ctx, "none of the %d probes to %s were answered. That is expected while the "+
 				"other end is not configured yet; if it is configured, check that the keys, the MTU and "+
 				"the addresses match on both servers.", result.Sent, target),
 		}
@@ -341,26 +382,26 @@ func (s *Service) verifyDown(ctx context.Context, rec Record) VerifyReport {
 	var report VerifyReport
 	observed, err := s.links.Get(ctx, rec.InterfaceName)
 	if err != nil {
-		report.add(VerifyCheck{
+		report.add(ctx, VerifyCheck{
 			Name: CheckLinkExists, Ok: true, Fatal: true,
-			Detail: "the interface is gone, which satisfies being down",
+			Detail: i18n.T(ctx, "the interface is gone, which satisfies being down"),
 		})
 		report.Ok = true
 		return report
 	}
 	report.OperState = observed.OperState
-	report.add(VerifyCheck{
+	report.add(ctx, VerifyCheck{
 		Name: CheckFlags, Ok: !observed.IsUp, Fatal: true,
-		Expected: "not up", Actual: flagText(observed),
-		Detail: "the interface is still up",
+		Expected: i18n.T(ctx, "not up"), Actual: flagText(ctx, observed),
+		Detail: i18n.T(ctx, "the interface is still up"),
 	})
 	report.Ok = len(report.Failures) == 0
 	return report
 }
 
-func flagText(l link.Link) string {
+func flagText(ctx context.Context, l link.Link) string {
 	if len(l.Flags) == 0 {
-		return "none"
+		return i18n.T(ctx, "none")
 	}
 	return strings.Join(l.Flags, ",")
 }
@@ -372,23 +413,33 @@ func keyText(key *uint32) string {
 	return fmt.Sprintf("%d", *key)
 }
 
-func orNone(s string) string {
+func orNone(ctx context.Context, s string) string {
 	if s == "" {
-		return "unset"
+		return i18n.T(ctx, "unset")
 	}
 	return s
 }
 
-func orUnknown(s string) string {
+func orUnknown(ctx context.Context, s string) string {
 	if s == "" {
-		return "unknown"
+		return i18n.T(ctx, "unknown")
 	}
 	return s
+}
+
+// keyOrUnset is a key as it appears in the one-line descriptions below. They
+// are written in the syntax of `ip link`, which stays the same whatever the
+// language around it.
+func keyOrUnset(key *uint32) string {
+	if key == nil {
+		return "unset"
+	}
+	return keyText(key)
 }
 
 func describeSpec(spec link.TunnelSpec) string {
 	return fmt.Sprintf("%s local %s remote %s ttl %d mtu %d ikey %s okey %s",
-		spec.Kind, spec.Local, spec.Remote, spec.Ttl, spec.Mtu, orNone(keyText(spec.IKey)), orNone(keyText(spec.OKey)))
+		spec.Kind, spec.Local, spec.Remote, spec.Ttl, spec.Mtu, keyOrUnset(spec.IKey), keyOrUnset(spec.OKey))
 }
 
 func describeActual(observed link.Link) string {
@@ -397,5 +448,15 @@ func describeActual(observed link.Link) string {
 	}
 	return fmt.Sprintf("%s local %s remote %s ttl %d mtu %d ikey %s okey %s",
 		observed.Kind, observed.Tunnel.Local, observed.Tunnel.Remote, observed.Tunnel.Ttl, observed.MTU,
-		orNone(keyText(observed.Tunnel.IKey)), orNone(keyText(observed.Tunnel.OKey)))
+		keyOrUnset(observed.Tunnel.IKey), keyOrUnset(observed.Tunnel.OKey))
+}
+
+// clauseSeparator joins independent clauses -- the parameters that do not
+// match, the checks that failed -- with the punctuation of the language they
+// are said in.
+func clauseSeparator(lang string) string {
+	if lang == i18n.Farsi {
+		return "؛ "
+	}
+	return "; "
 }

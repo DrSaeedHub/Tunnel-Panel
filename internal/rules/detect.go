@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Every implementation is checked against the interface at compile time, so a
@@ -42,7 +43,9 @@ type Options struct {
 // capabilities endpoint can explain what is in use and why.
 type Detection struct {
 	Backend Backend
-	// Reason states in one sentence why this backend was chosen.
+	// Reason states in one sentence why this backend was chosen. It is decided
+	// once at startup and shown for as long as the panel runs, so it is kept in
+	// English and said with i18n.Tr where it is shown.
 	Reason string
 	// NftVersion and IptablesVersion are the version banners the tools printed,
 	// empty when the tool is absent or did not answer.
@@ -107,26 +110,26 @@ func Detect(ctx context.Context, opts Options) Detection {
 	switch {
 	case opts.DevMode:
 		d.Backend = NewFakeFor(nft)
-		d.Reason = "development mode: rules are rendered but never applied to this host"
+		d.Reason = i18n.N("development mode: rules are rendered but never applied to this host")
 	case opts.ForceIptables && ipt.Capabilities().Available:
 		d.Backend = ipt
-		d.Reason = "iptables was selected explicitly, so the panel keeps to the interface the " +
-			"rest of this host is managed with"
+		d.Reason = i18n.N("iptables was selected explicitly, so the panel keeps to the interface the " +
+			"rest of this host is managed with")
 	case d.NftVersion != "":
 		d.Backend = nft
-		d.Reason = "nft is available, so the panel owns one nftables table and replaces it " +
-			"atomically without touching anything else on this host"
+		d.Reason = i18n.N("nft is available, so the panel owns one nftables table and replaces it " +
+			"atomically without touching anything else on this host")
 	case ipt.Capabilities().Available:
 		d.Backend = ipt
-		d.Reason = "nft was not found, so the panel falls back to iptables with its own chains"
+		d.Reason = i18n.N("nft was not found, so the panel falls back to iptables with its own chains")
 	default:
 		// Neither tool is here. The unavailable nftables backend is returned
 		// rather than a fake: a fake would report success for rules that were
 		// never installed, which is the one failure mode this whole project
 		// exists to prevent.
 		d.Backend = nft
-		d.Reason = "neither nft nor iptables was found on this host, so forwarding rules cannot " +
-			"be applied here"
+		d.Reason = i18n.N("neither nft nor iptables was found on this host, so forwarding rules cannot " +
+			"be applied here")
 	}
 	return d
 }

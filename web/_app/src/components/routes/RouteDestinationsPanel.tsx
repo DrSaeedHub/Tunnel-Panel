@@ -26,6 +26,7 @@ import {
 } from '@/lib/format'
 import { usePreferences } from '@/providers/PreferencesProvider'
 import { useToast } from '@/providers/ToastProvider'
+import { isolateText } from '@/lib/utils'
 import { Button } from '../ui/button'
 import { describeError } from '../ui/feedback'
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
@@ -399,21 +400,24 @@ function DestinationRow({
           {probe.result.reachable ? (
             <Check className="mt-0.5 size-3 shrink-0" aria-hidden="true" />
           ) : null}
-          {probe.result.reachable
-            ? t('routeDetail.destinations.reachable', {
-                latency: formatMs(probe.result.latency_ms ?? 0, digits) ?? '',
-              })
-            : probe.result.detail}
+          {probe.result.reachable ? (
+            t('routeDetail.destinations.reachable', {
+              latency: formatMs(probe.result.latency_ms ?? 0, digits) ?? '',
+            })
+          ) : (
+            <span dir="auto">{probe.result.detail}</span>
+          )}
         </p>
       ) : null}
 
       {/* The probe's own words when it failed, which is the difference
-          between a refused connection and a timeout. */}
+          between a refused connection and a timeout. They sit inside a
+          sentence of ours, so they are isolated in it. */}
       {health && health.state === 'Down' && health.detail ? (
         <p className="mt-1.5 text-2xs text-danger">
           {health.is_suppressed
-            ? t('routeDetail.destinations.downAndOut', { detail: health.detail })
-            : t('routeDetail.destinations.down', { detail: health.detail })}
+            ? t('routeDetail.destinations.downAndOut', { detail: isolateText(health.detail) })
+            : t('routeDetail.destinations.down', { detail: isolateText(health.detail) })}
         </p>
       ) : null}
 

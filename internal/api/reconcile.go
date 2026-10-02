@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/reconcile"
 )
@@ -100,8 +101,8 @@ func (s *Server) handleForget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"forgotten": true,
 		"tunnel":    forgotten,
-		"note": "The record has been dropped. The interface " + forgotten.InterfaceName +
-			" was not touched and is still on this host.",
+		"note": i18n.T(r.Context(), "The record has been dropped. The interface %s was not touched and "+
+			"is still on this host.", forgotten.InterfaceName),
 	})
 }
 
@@ -132,14 +133,14 @@ func (s *Server) handleIgnore(w http.ResponseWriter, r *http.Request) {
 	list, err := reconcile.SetIgnored(r.Context(), s.settings, req.InterfaceName, ignored, userID)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed,
-			capitalise(err.Error())+".", "interface_name", nil)
+			sentence(r.Context(), err.Error()), "interface_name", nil)
 		return
 	}
 
 	s.auditTunnel(r, model.AuditActionSettingUpdate, req.InterfaceName, req, nil, nil, start)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ignored_interfaces": list,
-		"note": "Ignoring an interface only stops it being reported. The panel never changes or removes " +
-			"an interface it does not manage either way.",
+		"note": i18n.T(r.Context(), "Ignoring an interface only stops it being reported. The panel never "+
+			"changes or removes an interface it does not manage either way."),
 	})
 }

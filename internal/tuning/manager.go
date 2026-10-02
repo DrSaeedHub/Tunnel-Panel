@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/persist"
 	"github.com/drs/gre-panel/internal/safety"
 )
@@ -128,6 +129,9 @@ func (m *Manager) HostFacts(liveConnections int) Facts {
 }
 
 // Report reads every parameter and pairs it with its recommendation.
+//
+// Titles, explanations, choice notes and units are in English, marked for
+// translation; whoever serves the report says them in the reader's language.
 func (m *Manager) Report(liveConnections int) Report {
 	facts := m.HostFacts(liveConnections)
 	report := Report{Facts: facts, SysctlPath: m.sysctlFile()}
@@ -205,7 +209,7 @@ func (m *Manager) Set(ctx context.Context, values map[string]string) (int, error
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
-		if err := m.Validate(key, value); err != nil {
+		if err := m.Validate(ctx, key, value); err != nil {
 			return 0, err
 		}
 	}
@@ -213,17 +217,18 @@ func (m *Manager) Set(ctx context.Context, values map[string]string) (int, error
 }
 
 // Validate checks one value against the parameter it is for, using what this
-// kernel says it supports rather than what the panel assumes.
-func (m *Manager) Validate(key, value string) error {
+// kernel says it supports rather than what the panel assumes. What is wrong is
+// said in a sentence naming the parameter, in the language ctx carries.
+func (m *Manager) Validate(ctx context.Context, key, value string) error {
 	parameter, ok := ParameterFor(key)
 	if !ok {
-		return fmt.Errorf("not a parameter the panel knows")
+		return i18n.Errorf(ctx, "%s is not a parameter the panel knows.", key)
 	}
 	allowed := make([]string, 0, len(parameter.Choices))
 	for _, choice := range m.offeredChoices(parameter) {
 		allowed = append(allowed, choice.Value)
 	}
-	return parameter.Validate(value, allowed)
+	return parameter.Validate(ctx, value, allowed)
 }
 
 // offeredChoices is what a choice parameter may be set to on this host.
@@ -345,7 +350,7 @@ func (m *Manager) commit(ctx context.Context, wanted map[string]string) (int, er
 	}
 	if m.Store != nil && m.Renderer != nil {
 		if _, err := m.Store.Write(ctx, path, m.Renderer.SysctlFile(values), false); err != nil {
-			return 0, fmt.Errorf("writing %s: %w", path, err)
+			return 0, i18n.Errorf(ctx, "writing %s: %w", path, err)
 		}
 	}
 
@@ -385,10 +390,10 @@ func (m *Manager) Revert(ctx context.Context) error {
 	}
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading %s: %w", path, err)
+		return i18n.Errorf(ctx, "reading %s: %w", path, err)
 	}
 	if !strings.Contains(string(content), persist.OwnershipMarker) {
-		return fmt.Errorf("%s was not written by the panel, so the panel will not remove it", path)
+		return i18n.Errorf(ctx, "%s was not written by the panel, so the panel will not remove it", path)
 	}
 
 	byKey := map[string]string{}

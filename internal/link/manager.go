@@ -2,6 +2,7 @@ package link
 
 import (
 	"github.com/drs/gre-panel/internal/exec"
+	"github.com/drs/gre-panel/internal/i18n"
 )
 
 // Every implementation is checked against the interface at compile time, so a
@@ -47,11 +48,11 @@ func Select(opts Options) LinkManager {
 
 // MergeCapabilities folds several managers' capabilities into the per-type view
 // the capabilities endpoint reports, attributing each type to the manager that
-// would actually serve it.
+// would actually serve it. Its notes are said in the panel's language.
 func MergeCapabilities(managers ...LinkManager) map[string]TypeSupport {
 	out := map[string]TypeSupport{}
 	for _, kind := range TunnelKinds() {
-		out[kind] = TypeSupport{Supported: false, Manager: "", Note: "no link manager can serve this type"}
+		out[kind] = TypeSupport{Supported: false, Manager: "", Note: i18n.P("no link manager can serve this type")}
 	}
 	for _, m := range managers {
 		if m == nil {

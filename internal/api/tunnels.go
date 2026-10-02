@@ -2,34 +2,21 @@ package api
 
 import (
 	"context"
-	_ "embed"
 	"net/http"
 	"net/netip"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/drs/gre-panel/internal/audit"
+	"github.com/drs/gre-panel/internal/i18n"
 	"github.com/drs/gre-panel/internal/link"
 	"github.com/drs/gre-panel/internal/model"
 	"github.com/drs/gre-panel/internal/pairing"
 	"github.com/drs/gre-panel/internal/tunnel"
 	"github.com/drs/gre-panel/internal/validate"
 )
-
-// sideInfoSummary is the canonical help text of §5.4, which the backend owns
-// and the frontend renders beside the side selector.
-//
-// It lives in a data file rather than in a Go string literal for one specific
-// reason: the text is quoted verbatim from the specification, and the sentence
-// that makes its point names the very words this codebase must never use to
-// label a side. Keeping it as data preserves the text exactly while leaving the
-// Go source free of them.
-//
-//go:embed side_info.txt
-var sideInfoSummary string
 
 // tunnelResponse is one tunnel as the API reports it: the stored desired state
 // plus what the kernel currently has, which are deliberately separate fields
@@ -523,8 +510,9 @@ func (s *Server) handlePairingCode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pairing_code": code,
 		"summary":      payload.Summarise(),
-		"note": "This code is configuration, not a credential. It carries the GRE key, which is not a " +
-			"security boundary, but it describes a specific pair of hosts and should not be posted publicly.",
+		"note": i18n.T(r.Context(), "This code is configuration, not a credential. It carries the GRE "+
+			"key, which is not a security boundary, but it describes a specific pair of hosts and should "+
+			"not be posted publicly."),
 	})
 }
 
@@ -541,9 +529,10 @@ func (s *Server) handleFromPairingCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := pairing.Decode(req.PairingCode)
+	payload, err := pairing.DecodeContext(r.Context(), req.PairingCode)
 	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, err.Error(), "pairing_code", nil)
+		writeError(w, http.StatusUnprocessableEntity, CodeValidationFailed, i18n.Tr(r.Context(), err.Error()),
+			"pairing_code", nil)
 		return
 	}
 
@@ -567,8 +556,8 @@ func (s *Server) handleFromPairingCode(w http.ResponseWriter, r *http.Request) {
 		"tunnel":       in,
 		"address_pool": hint,
 		"summary":      payload.Summarise(),
-		"note": "Nothing has been created. Review these values and submit them to create the tunnel on " +
-			"this server.",
+		"note": i18n.T(r.Context(), "Nothing has been created. Review these values and submit them to "+
+			"create the tunnel on this server."),
 	})
 }
 
@@ -639,8 +628,15 @@ type sideRole struct {
 
 // handleSideInfo serves the canonical help text of §5.4 plus the table it
 // summarises. The backend owns this text so both ends of every install give the
-// same answer.
+// same answer, in the language each operator reads it in.
+//
+// The summary is quoted verbatim from the specification. It used to be an
+// embedded data file, kept out of the Go source because its point is made by
+// naming the very words this codebase must never use to label a side; it is a
+// sentence here now so it can be said in the operator's language, and those
+// words still label nothing.
 func (s *Server) handleSideInfo(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	labels := s.settings.StringMap("tunnel.side_labels")
 	labelFor := func(slot string) string {
 		if labels[slot] != "" {
@@ -650,24 +646,30 @@ func (s *Server) handleSideInfo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"summary": strings.TrimSpace(sideInfoSummary),
+		"summary": i18n.T(ctx, "A and B are simply the two ends of one tunnel. The choice is arbitrary and "+
+			"neither end has a special role — GRE has no client, server, initiator, or responder. Use A on "+
+			"the first server you set up and B on the second. The only differences are that A takes the "+
+			"first address in the tunnel subnet and B takes the second, and that the local and remote "+
+			"endpoints are mirrored between them. Every other setting — key, MTU, TTL — must match exactly "+
+			"on both servers, or the tunnel will appear up while carrying no traffic."),
 		"sides": []sideRole{
 			{
 				Slot: "a", Label: labelFor("a"),
-				Endpoints:        "this server is the local endpoint and the peer is the remote one",
-				AddressInSubnet:  "the first usable address",
-				NameSubstitution: "the label for slot a",
+				Endpoints:        i18n.T(ctx, "this server is the local endpoint and the peer is the remote one"),
+				AddressInSubnet:  i18n.T(ctx, "the first usable address"),
+				NameSubstitution: i18n.T(ctx, "the label for slot a"),
 			},
 			{
 				Slot: "b", Label: labelFor("b"),
-				Endpoints:        "mirrored relative to slot a",
-				AddressInSubnet:  "the second usable address",
-				NameSubstitution: "the label for slot b",
+				Endpoints:        i18n.T(ctx, "mirrored relative to slot a"),
+				AddressInSubnet:  i18n.T(ctx, "the second usable address"),
+				NameSubstitution: i18n.T(ctx, "the label for slot b"),
 			},
 		},
+		// MTU and TTL are protocol terms and read the same in every language.
 		"identical_on_both_ends": []string{
-			"tunnel type", "inbound key", "outbound key", "MTU", "TTL",
-			"checksum flags", "sequence flags",
+			i18n.T(ctx, "tunnel type"), i18n.T(ctx, "inbound key"), i18n.T(ctx, "outbound key"), "MTU", "TTL",
+			i18n.T(ctx, "checksum flags"), i18n.T(ctx, "sequence flags"),
 		},
 		"tunnel_side_ids": map[string]int64{"a": model.TunnelSideA, "b": model.TunnelSideB},
 	})
@@ -682,7 +684,7 @@ func (s *Server) tunnelFromPath(w http.ResponseWriter, r *http.Request) (tunnel.
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
-			"The tunnel identifier in the path is not a number.", "id", nil)
+			i18n.T(r.Context(), "The tunnel identifier in the path is not a number."), "id", nil)
 		return tunnel.Record{}, false
 	}
 	rec, err := s.tunnels.Repo().ByID(r.Context(), id)
@@ -737,7 +739,7 @@ func (s *Server) auditTunnel(r *http.Request, actionID int64, target string, req
 		entry.UserID = &id
 	}
 	if err != nil {
-		entry.ErrorMessage = err.Error()
+		entry.ErrorMessage = i18n.Tr(r.Context(), err.Error())
 	}
 	s.audit.Write(r.Context(), entry)
 }
